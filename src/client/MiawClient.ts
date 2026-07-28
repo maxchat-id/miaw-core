@@ -2562,10 +2562,25 @@ export class MiawClient extends EventEmitter {
 
       const results = await this.socket.onWhatsApp(...cleanPhones);
 
-      return (results || []).map((result) => ({
-        exists: !!result?.exists,
-        jid: result?.jid,
-      }));
+      // Baileys omits non-existent numbers from the response, so index-based
+      // mapping loses entries. Index results by phone and return one entry per
+      // input, preserving order (ISSUE-01).
+      const byPhone = new Map<string, NonNullable<typeof results>[number]>();
+      for (const result of results || []) {
+        const phone = result?.jid
+          ? MessageHandler.formatJidToPhone(result.jid)
+          : undefined;
+        if (phone) {
+          byPhone.set(phone, result);
+        }
+      }
+
+      return cleanPhones.map((phone) => {
+        const result = byPhone.get(phone);
+        return result
+          ? { exists: !!result.exists, jid: result.jid }
+          : { exists: false, jid: undefined };
+      });
     } catch (error) {
       this.logger.error("Failed to check numbers:", error);
       return phones.map(() => ({
@@ -4569,8 +4584,11 @@ export class MiawClient extends EventEmitter {
       action
     );
 
+    // Baileys returns @lid jids for participants. Resolve back to
+    // @s.whatsapp.net so results correlate with the resolved GET participants
+    // list (ISSUE-07); falls back to the raw jid when no mapping is known.
     return results.map((result) => ({
-      jid: result.jid || "",
+      jid: this.resolveLidToJid(result.jid || ""),
       status: result.status,
       success: result.status === "200",
     }));
