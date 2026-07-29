@@ -116,16 +116,27 @@ import {
   cmdCatalogProductCreate,
   cmdCatalogProductUpdate,
   cmdCatalogProductDelete,
+  // Proxy commands (no connection required)
+  cmdProxyList,
+  cmdProxyTest,
+  cmdProxyTestAll,
 } from "./commands-index.js";
+import { resolveProxyFile } from "../utils/proxy-config.js";
 
 export interface CommandContext {
   clientConfig: {
     instanceId: string;
     sessionPath: string;
     debug?: boolean;
+    /** Set by bin/miaw-cli.ts from --proxy or a --proxy-file selection. */
+    proxy?: string;
   };
   jsonOutput?: boolean;
   flags?: { [key: string]: string | boolean };
+  /** Proxy list file from --proxy-file, for the `proxy` commands. */
+  proxyFile?: string;
+  /** Selection strategy from --proxy-strategy. */
+  proxyStrategy?: string;
 }
 
 /**
@@ -202,6 +213,42 @@ export async function runCommand(
           console.log(`❌ Unknown instance command: ${subCommand}`);
           console.log("Commands: ls, status, create, delete, connect, disconnect, logout");
         }
+        return false;
+    }
+  }
+
+  // Proxy commands (don't require connection - they probe the proxy directly).
+  // Must stay ABOVE getOrCreateClient() so no client is ever constructed.
+  if (command === "proxy") {
+    const subCommand = parsedArgs._[0] || "";
+    const subArgs = parsedArgs._.slice(1);
+    const proxyFile = resolveProxyFile(parsedArgs, context.flags, context.proxyFile);
+    const probeOptions = {
+      showIp: parsedArgs.ip === true,
+      ...(typeof parsedArgs.timeout === "number" && {
+        timeoutMs: parsedArgs.timeout,
+      }),
+    };
+
+    switch (subCommand) {
+      case "ls":
+      case "list":
+        return await cmdProxyList(proxyFile, jsonOutput);
+      case "test":
+        return await cmdProxyTest(
+          subArgs[0] || (context.flags?.proxy as string) || clientConfig.proxy,
+          probeOptions,
+          jsonOutput
+        );
+      case "test-all":
+        return await cmdProxyTestAll(proxyFile, probeOptions, jsonOutput);
+      default:
+        if (!subCommand) {
+          console.log("Usage: proxy <command>");
+        } else {
+          console.log(`❌ Unknown proxy command: ${subCommand}`);
+        }
+        console.log("Commands: list, test, test-all");
         return false;
     }
   }
@@ -1144,7 +1191,7 @@ export async function runCommand(
  * Parse command arguments.
  * Only auto-converts known numeric flags to numbers; all others stay as strings.
  */
-const NUMERIC_FLAGS = new Set(["limit", "count", "cursor"]);
+const NUMERIC_FLAGS = new Set(["limit", "count", "cursor", "timeout"]);
 
 function parseCommandArgs(args: string[]): any {
   const parsed: any = { _: [] };

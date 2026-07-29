@@ -105,6 +105,12 @@ export {
 } from "./misc.js";
 
 export {
+  cmdProxyList,
+  cmdProxyTest,
+  cmdProxyTestAll,
+} from "./proxy.js";
+
+export {
   cmdContactList,
   cmdContactInfo,
   cmdContactBusiness,
