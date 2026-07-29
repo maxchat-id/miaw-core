@@ -73,14 +73,34 @@ export function resolveProxyFile(
  * failure). It is discarded immediately after selection - no watcher, no
  * long-lived state.
  *
- * @throws if the file cannot be loaded or contains no usable proxies
+ * Parsing is non-strict: one malformed line should not stop every bot from
+ * connecting. Skipped entries are reported on stderr so they stay visible
+ * without polluting piped stdout.
+ *
+ * @throws if the file cannot be read, or if it yields no usable proxies
  */
 export async function selectProxyForInstance(
   filePath: string,
   strategy: ProxyRotationStrategy,
   instanceId: string
 ): Promise<string> {
-  const rotator = await ProxyRotator.fromFile(filePath, { strategy });
+  const skipped: string[] = [];
+
+  const rotator = await ProxyRotator.fromFile(filePath, {
+    strategy,
+    parse: {
+      strict: false,
+      onInvalid: (info) => skipped.push(`line ${info.line}: ${info.reason}`),
+    },
+  });
+
+  if (skipped.length > 0) {
+    console.error(
+      `⚠️  Skipped ${skipped.length} invalid entr${skipped.length === 1 ? "y" : "ies"} in ${filePath}:`
+    );
+    for (const detail of skipped) console.error(`   ${detail}`);
+  }
+
   try {
     const entry =
       strategy === "deterministic"
