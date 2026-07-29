@@ -79,6 +79,18 @@ All additive; no breaking changes.
   undici dispatcher and undici has no SOCKS transport. `proxy list` and `proxy test`
   report this per proxy. See [docs/PROXY.md](./docs/PROXY.md).
 
+## [1.9.2] - 2026-07-09
+
+**CommonJS-consumer fix** - Let `require()` resolve the package.
+
+### Fixed
+
+- The `exports` map only declared the `import` condition, so CommonJS /
+  `require()` resolution (e.g. `ts-node` compiling to CJS) failed with
+  `ERR_PACKAGE_PATH_NOT_EXPORTED`. Added a `default` condition pointing at the
+  same ESM build; on Node >=22.12 `require(esm)` now resolves it. The package
+  stays ESM-only — no separate CJS build was added.
+
 ## [1.9.1] - 2026-07-07
 
 **Message receipts** - Observe delivery/read/played status of messages you send.
