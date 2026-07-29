@@ -1512,7 +1512,7 @@ const client = new MiawClient({
 | `message_receipt` | `(receipt: MessageReceiptUpdate)` | Sent message delivered/read/played |
 | `presence`        | `(update: PresenceUpdate)` | Contact's presence changed           |
 | `connection`      | `(state: ConnectionState)` | Connection state changed             |
-| `disconnected`    | `(reason?: string)`        | Client disconnected                  |
+| `disconnected`    | `(reason?: string, statusCode?: number)` | Client disconnected. `reason` is `"intentional"` for an explicit `disconnect()`, otherwise the Baileys `DisconnectReason` name |
 | `reconnecting`    | `(attempt: number)`        | Attempting to reconnect              |
 | `error`           | `(error: Error)`           | Error occurred                       |
 | `session_saved`   | `()`                       | Session credentials saved            |

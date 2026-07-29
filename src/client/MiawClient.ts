@@ -7003,6 +7003,13 @@ export class MiawClient extends EventEmitter {
 
     this.updateConnectionState("disconnected");
     this.logger.info("Disconnected (session preserved)");
+
+    // The `disconnected` event previously fired only from handleDisconnect(),
+    // i.e. for involuntary drops - so an explicit disconnect() silently skipped
+    // it even though the event is documented simply as "Client disconnected".
+    // The "intentional" reason lets listeners tell the two apart; nothing in
+    // the library reconnects in response to this event.
+    this.emit("disconnected", "intentional", undefined);
   }
 
   /**
