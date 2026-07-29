@@ -17,6 +17,7 @@ import { runRepl } from "../src/cli/repl.js";
 import { runCommand } from "../src/cli/commands/index.js";
 import { initializeCLICleanup } from "../src/cli/utils/cleanup.js";
 import { getErrorMessage } from "../src/utils/type-guards.js";
+import { maskProxyUrl } from "../src/utils/proxy-agent.js";
 
 // Initialize CLI cleanup handlers for graceful shutdown
 initializeCLICleanup();
@@ -148,7 +149,7 @@ async function main() {
     console.log(`\n🚀 Starting miaw-cli REPL...`);
     console.log(`📂 Instance: ${instanceId}`);
     console.log(`📂 Session: ${sessionPath}`);
-    if (proxyUrl) console.log(`🌐 Proxy: ${proxyUrl}`);
+    if (proxyUrl) console.log(`🌐 Proxy: ${maskProxyUrl(proxyUrl)}`);
     console.log(`🔧 Debug: ${debugMode ? "ON" : "OFF"}\n`);
 
     try {

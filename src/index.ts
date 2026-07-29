@@ -129,6 +129,7 @@ export {
 export {
   createProxyAgents,
   validateProxyConfig,
+  maskProxyUrl,
 } from "./utils/proxy-agent.js";
 export type { ProxyAgents } from "./utils/proxy-agent.js";
 export type { ProxyConfig, LidMapping } from "./types/index.js";

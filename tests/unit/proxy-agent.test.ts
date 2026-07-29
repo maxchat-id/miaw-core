@@ -8,6 +8,7 @@ import { describe, it, expect } from "@jest/globals";
 import {
   validateProxyConfig,
   createProxyAgents,
+  maskProxyUrl,
 } from "../../src/utils/proxy-agent.js";
 import type { ProxyConfig } from "../../src/types/index.js";
 
@@ -188,6 +189,43 @@ describe("Proxy Agent Utilities", () => {
       it("should throw for empty string", async () => {
         await expect(createProxyAgents("")).rejects.toThrow();
       });
+    });
+  });
+
+  describe("maskProxyUrl", () => {
+    it("should mask the password", () => {
+      const masked = maskProxyUrl("http://user:s3cret@proxy.example.com:8080");
+      expect(masked).not.toContain("s3cret");
+      expect(masked).toContain("****");
+    });
+
+    it("should preserve the username", () => {
+      expect(maskProxyUrl("http://sticky-us-1:pw@proxy.example.com:8080")).toContain(
+        "sticky-us-1"
+      );
+    });
+
+    it("should leave a URL without credentials unchanged", () => {
+      expect(maskProxyUrl("socks5://proxy.example.com:1080")).toBe(
+        "socks5://proxy.example.com:1080"
+      );
+    });
+
+    it("should mask credentials supplied via ProxyConfig fields", () => {
+      const config: ProxyConfig = {
+        url: "http://proxy.example.com:8080",
+        username: "user",
+        password: "s3cret",
+      };
+      const masked = maskProxyUrl(config);
+      expect(masked).not.toContain("s3cret");
+      expect(masked).toContain("user");
+      expect(masked).toContain("****");
+    });
+
+    it("should return an unparseable string unchanged instead of throwing", () => {
+      expect(maskProxyUrl("not-a-url")).toBe("not-a-url");
+      expect(maskProxyUrl("")).toBe("");
     });
   });
 });

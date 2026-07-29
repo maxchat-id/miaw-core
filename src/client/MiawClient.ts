@@ -116,6 +116,7 @@ import {
 } from "../utils/validation.js";
 import {
   createProxyAgents,
+  maskProxyUrl,
   validateProxyConfig,
 } from "../utils/proxy-agent.js";
 
@@ -481,8 +482,9 @@ export class MiawClient extends EventEmitter {
     // Create agents from proxy config
     if (this.options.proxy) {
       if (!validateProxyConfig(this.options.proxy)) {
+        // Mask before interpolating - this message lands in logs and stack traces
         throw new Error(
-          `Invalid proxy configuration: ${typeof this.options.proxy === "string" ? this.options.proxy : this.options.proxy.url}`
+          `Invalid proxy configuration: ${maskProxyUrl(this.options.proxy)}`
         );
       }
 
@@ -505,17 +507,15 @@ export class MiawClient extends EventEmitter {
 
     if (!proxyUrl) return null;
 
+    const masked = maskProxyUrl(this.options.proxy!);
+
     try {
-      const parsed = new URL(proxyUrl);
-      if (parsed.password) {
-        parsed.password = "****";
-      }
       return {
-        url: parsed.toString(),
-        protocol: parsed.protocol.replace(":", ""),
+        url: masked,
+        protocol: new URL(proxyUrl).protocol.replace(":", ""),
       };
     } catch {
-      return { url: proxyUrl, protocol: "unknown" };
+      return { url: masked, protocol: "unknown" };
     }
   }
 

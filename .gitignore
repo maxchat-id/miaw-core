@@ -44,3 +44,10 @@ coverage/
 tmp/
 temp/
 *.tmp
+
+# Git worktrees
+.worktrees/
+
+# Proxy lists (contain credentials)
+proxies.txt
+proxies.json

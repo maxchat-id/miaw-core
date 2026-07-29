@@ -81,6 +81,38 @@ export async function createProxyAgents(
 }
 
 /**
+ * Masks the password in a proxy URL so it is safe to log or print.
+ *
+ * The username is preserved on purpose - proxy vendors commonly encode the
+ * region or sticky-session id in it, which makes it useful for diagnostics.
+ * Only the password is replaced.
+ *
+ * Never throws: an unparseable input is returned unchanged.
+ *
+ * @param config - Proxy URL string or ProxyConfig object
+ * @returns The URL with the password replaced by "****"
+ */
+export function maskProxyUrl(config: ProxyConfig | string): string {
+  const raw = typeof config === "string" ? config : config.url;
+
+  try {
+    const parsed = new URL(raw);
+    if (typeof config !== "string" && config.password) {
+      parsed.password = config.password;
+    }
+    if (typeof config !== "string" && config.username) {
+      parsed.username = config.username;
+    }
+    if (parsed.password) {
+      parsed.password = "****";
+    }
+    return parsed.toString();
+  } catch {
+    return raw;
+  }
+}
+
+/**
  * Validates a proxy configuration.
  * Checks that the URL is parseable and uses a supported protocol.
  *
