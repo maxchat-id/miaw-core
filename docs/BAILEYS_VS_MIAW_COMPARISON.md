@@ -53,7 +53,9 @@ This document provides a comprehensive comparison between [Baileys](https://gith
 | **Multiple Instances**                   | ✅      | ✅        | Full support in both                  |
 | **Browser Config**                       | ✅      | 🔶        | Fixed browser config in Miaw          |
 | **Custom Logger**                        | ✅      | ✅        | Pino-based in both                    |
-| **Proxy Support**                        | ✅      | ✅        | HTTP/SOCKS via `proxyUrl` config (v1.3.0) |
+| **Proxy Support**                        | ✅      | ✅        | HTTP/SOCKS via the `proxy` option (v1.3.0) |
+| **Proxy Lists / Rotation**               | ❌      | ✅        | `ProxyRotator` + TXT/JSON proxy files (v1.10.0) |
+| **Proxy Diagnostics**                    | ❌      | ✅        | `miaw-cli proxy test` — no connection needed (v1.10.0) |
 | **WebSocket Options**                    | ✅      | ❌        | Custom WS configuration               |
 
 ---

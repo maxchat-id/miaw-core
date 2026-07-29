@@ -101,11 +101,16 @@ export function getClient(): MiawClient | null {
 export async function runCmd(
   command: string,
   args: string[] = [],
-  options?: { jsonOutput?: boolean }
+  options?: {
+    jsonOutput?: boolean;
+    /** Global flags, as bin/miaw-cli.ts would deliver them in one-shot mode. */
+    flags?: { [key: string]: string | boolean };
+  }
 ): Promise<boolean | { success: boolean; switchToInstance?: string }> {
   const context: CommandContext = {
     clientConfig,
     jsonOutput: options?.jsonOutput ?? false,
+    ...(options?.flags && { flags: options.flags }),
   };
 
   return runCommand(command, args, context);

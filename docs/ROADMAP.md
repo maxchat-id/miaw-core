@@ -4,12 +4,12 @@ This roadmap focuses on **essential bot features** (< 1.0.0) that 90% of WhatsAp
 
 ## Version Status
 
-**Current Version:** 1.9.1
+**Current Version:** 1.10.0
 **Baileys Version:** 7.0.0-rc13
 **Node.js Required:** >= 18.0.0
 **Module System:** ESM-only
 **Status:** Stable Release
-**Last Updated:** 2026-06-26
+**Last Updated:** 2026-07-29
 
 ---
 
@@ -255,9 +255,9 @@ These shipped after the first stable release (see [CHANGELOG.md](../CHANGELOG.md
 - [x] **Validation utilities** - exported phone/JID validators and type guards
 - [x] **Custom logger support** - inject your own Pino-compatible logger
 
-### v1.3.0 - Proxy Support ✅
+### v1.3.0 - Proxy Support ✅ (2026-03-13)
 
-- [x] **HTTP/SOCKS proxy** - route the WhatsApp connection via `proxyUrl`
+- [x] **HTTP/SOCKS proxy** - route the WhatsApp connection via the `proxy` option; see [PROXY.md](./PROXY.md)
 - [x] **`getProxyInfo()`** - inspect the active proxy
 
 ### v1.4.0 / v1.4.1 - CLI Expansion + Baileys rc13 ✅ (2026-06-26)
@@ -309,6 +309,14 @@ These shipped after the first stable release (see [CHANGELOG.md](../CHANGELOG.md
 - [x] **Lifecycle** - `createCommunity`, `getCommunityInfo`, `getAllCommunities`, `updateCommunityName`/`Description`, `leaveCommunity`
 - [x] **Linking** - `createCommunityGroup`, `linkGroupToCommunity`/`unlinkGroupFromCommunity`, `getLinkedGroups`
 - [x] **Participants** - add/remove/promote/demote; **Invites** - link/accept/revoke/info; CLI `community` group
+
+### v1.10.0 - Proxy Files + Rotation ✅ (2026-07-29)
+
+- [x] **Proxy list files** - TXT / JSON, format auto-detection, per-entry validation, optional hot reload
+- [x] **`ProxyRotator`** - round-robin / random / weighted / deterministic-per-instance (rendezvous hashing)
+- [x] **CLI** - `proxy list`/`test`/`test-all` (no connection required), `--proxy-file`, `--proxy-strategy`
+- [x] **`maskProxyUrl()`** - credential masking everywhere; fixed two leak paths
+- [x] **[PROXY.md](./PROXY.md)** - dedicated proxy guide
 
 ---
 
@@ -456,6 +464,9 @@ If you need any of these features, please:
 | v1.7.1  | Outbound message capture                                   | ✅ Released |
 | v1.8.0  | Status posting + business extras                           | ✅ Released |
 | v1.9.0  | Communities (create/link/participants/invites)             | ✅ Released |
+| v1.9.1  | `message_receipt` event (delivery/read/played)             | ✅ Released |
+| v1.9.2  | CommonJS `require()` resolution fix (exports map)          | ✅ Released |
+| v1.10.0 | Proxy files + rotation + CLI diagnostics                   | ✅ Released |
 | next    | Community + group admin (settings, join-requests)          | 📋 Planned  |
 
 ---
@@ -625,6 +636,6 @@ Want to help implement a feature?
 ---
 
 **Last Updated:** 2026-06-26
-**Status:** Stable (v1.9.1, Baileys 7.0.0-rc13)
+**Status:** Stable (v1.10.0, Baileys 7.0.0-rc13)
 **Next Release:** Chat management + rich messages — see [Not-Yet-Implemented Baileys Features (Prioritized)](#not-yet-implemented-baileys-features-prioritized)
 **Path So Far:** v0.1.0 → … → v0.9.0 ✅ → v1.0.0 ✅ (Stable) → v1.1.0 ✅ (Baileys v7/ESM) → v1.2.0 ✅ → v1.3.0 ✅ (Proxy) → v1.4.x ✅ (CLI + rc13)

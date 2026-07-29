@@ -5,6 +5,87 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.0] - 2026-07-29
+
+**Proxy files, rotation, and CLI diagnostics** - builds on the v1.3.0 proxy core.
+All additive; no breaking changes.
+
+### Added
+
+- **`socks5h://` and `socks4a://` support.** These resolve DNS *at the proxy*;
+  plain `socks5://` / `socks4://` resolve locally, so the destination hostname still
+  leaks to your DNS resolver even though the connection is tunnelled. Both variants
+  were previously rejected as unsupported protocols despite the underlying agent
+  supporting them.
+- **Proxy list files** - `loadProxyList()` / `loadProxyListSync()` / `parseProxyList()`
+  read TXT (one per line, `#`/`;` comments, optional `weight=` and `label=` tokens,
+  scheme-less `host:port[:user:pass]` vendor forms) or JSON (array of strings and/or
+  objects, or a `{ "proxies": [...] }` wrapper). Format is auto-detected by extension
+  then by content. `validateProxyList()` partitions a list; `watchProxyList()` hot-reloads
+  a file.
+- **`ProxyRotator`** - `round-robin`, `random`, `weighted`, and `deterministic`
+  strategies, plus `ProxyRotator.fromFile()`, `setProxies()`, `getStats()`, and `close()`.
+  It returns a `ProxyPoolEntry` you pass to `new MiawClient({ proxy })`, so `getProxyInfo()`
+  and proxy validation keep working for rotated instances.
+- **`maskProxyUrl()`** - exported credential masking; `getProxyInfo()` now uses it.
+- **CLI**: `proxy list` (alias `ls`), `proxy test <url>`, `proxy test-all`. These need
+  **no WhatsApp connection** - they probe the proxy through the same agent Baileys uses,
+  so you can validate a proxy before spending a pairing attempt on it. `proxy test-all`
+  exits non-zero if any proxy fails, so it can gate a deploy.
+- **CLI global flags**: `--proxy-file <path>`, `--proxy-strategy <strategy>`
+  (default `deterministic`; `instance` accepted as an alias). Env fallbacks:
+  `MIAW_PROXY`, `MIAW_PROXY_FILE`, `MIAW_PROXY_STRATEGY`.
+- **[.env.example](./.env.example)** - documents every `MIAW_*` runtime variable,
+  including `MIAW_INSTANCE_ID` and `MIAW_SESSION_PATH`, which the CLI has always
+  read but which were never written down anywhere.
+- **[docs/DEPLOYMENT_PROXY.md](./docs/DEPLOYMENT_PROXY.md)** - operational notes for
+  deploying with proxies: why `instanceId` must be stable across rollouts, treating
+  proxy files as secrets, ConfigMap-safe hot reload, egress firewall rules, and the
+  sticky-session requirement.
+- **[docs/PROXY.md](./docs/PROXY.md)** - dedicated proxy guide covering configuration,
+  proxy files, rotation, CLI diagnostics, troubleshooting, security, and provider
+  selection. Replaces the internal `docs/PROXY_SUPPORT_PLAN.md`, which is removed.
+- 97 new tests (42 loader, 33 rotator, 22 CLI). The CLI proxy tests are the first in
+  `tests/integration/cli/` that run without a WhatsApp session.
+
+### Fixed
+
+- **Media uploads through a proxy were broken and always had been** (since v1.3.0).
+  `fetchAgent` was set to an undici `ProxyAgent`, but Baileys declares it as an
+  `https.Agent` and its Node upload path hands it to `https.request({ agent })`, which
+  cannot use a Dispatcher. Every `sendImage`/`sendVideo`/`sendDocument` through a proxy
+  failed with "Media upload failed on all hosts". `fetchAgent` is now the same
+  `http.Agent` as `wsAgent`. **Uploads are consequently proxied on SOCKS too**, which
+  the previous documentation said was impossible.
+- **Media downloads were never proxied.** Baileys downloads with
+  `fetch(url, { dispatcher })` and never wires a proxy into that path, and
+  `downloadMedia()` passed no options — so every download revealed the real IP
+  regardless of proxy settings. It now passes an undici Dispatcher explicitly.
+  This works for HTTP/HTTPS proxies; SOCKS downloads remain direct because undici
+  has no SOCKS transport.
+- `proxy test` reported a **407 Proxy Authentication Required as success**. A 407 comes
+  from the proxy itself and means the tunnel was refused, so nothing ever reached
+  WhatsApp - but the probe counted any HTTP status as reachable. `proxy test-all` would
+  therefore green-light a proxy list with wrong credentials, defeating the pre-flight
+  check it exists to provide. It now fails with `EPROXYAUTH` and a non-zero exit code.
+- Proxy credentials leaked in two places: `MiawClient` interpolated the raw proxy URL,
+  password included, into its "Invalid proxy configuration" error (which lands in logs
+  and stack traces), and the CLI printed the raw `--proxy` URL to the REPL startup
+  banner. Both are masked now.
+
+### Notes
+
+- `--proxy-strategy` defaults to `deterministic` so a given `instanceId` keeps a stable
+  egress IP across runs. **Rotation is for distributing instances across proxies, never
+  for rotating a live session's IP** - WhatsApp treats a session's source IP as a trust
+  signal, and churning it looks like account takeover.
+- Deterministic selection uses rendezvous hashing rather than `hash % length`, so adding
+  or removing a proxy remaps only the instances that were on it. Under modulo, one edit
+  to your proxy file would change the egress IP of every live session at once.
+- SOCKS proxies still route media over a direct connection: Node's `fetch()` requires an
+  undici dispatcher and undici has no SOCKS transport. `proxy list` and `proxy test`
+  report this per proxy. See [docs/PROXY.md](./docs/PROXY.md).
+
 ## [1.9.2] - 2026-07-09
 
 **CommonJS-consumer fix** - Let `require()` resolve the package.
@@ -339,6 +420,49 @@ unchanged.
 - **CLI statistics** - 63 commands implemented (up from 60), 59% coverage
 
 ---
+
+## [1.3.0] - 2026-03-13
+
+**Proxy support** - route a WhatsApp connection through a proxy, per instance.
+
+_Backfilled: this release shipped in commit `8def495` but was never recorded here._
+
+### Added
+
+- `proxy` option on `MiawClientOptions`, accepting a URL string or a `ProxyConfig`
+  object (`{ url, username?, password? }`). Supports HTTP, HTTPS, SOCKS4, and SOCKS5.
+- `createProxyAgents()` and `validateProxyConfig()` in `src/utils/proxy-agent.ts`.
+  Dual-agent approach: `https-proxy-agent` / `socks-proxy-agent` for the WebSocket
+  transport, `undici`'s `ProxyAgent` for media upload/download.
+- `agent` and `fetchAgent` escape-hatch options for supplying custom transports.
+- `MiawClient.getProxyInfo()` for inspecting the active proxy.
+- `--proxy <url>` CLI flag.
+
+### Notes
+
+- SOCKS proxies tunnel the WebSocket but not media transfers: Node's `fetch()` needs an
+  undici dispatcher and undici has no SOCKS transport, so media falls back to a direct
+  connection.
+
+## [1.2.0] - 2026-01-20
+
+**Code quality release** - configurable timeouts, validation utilities, and type safety.
+
+_Backfilled: this release shipped in commit `2e922d2` but was never recorded here._
+
+### Added
+
+- Configurable timeouts and exported `TIMEOUTS` / `THRESHOLDS` constants.
+- Validation utilities and type-guard helpers (`isError`, `getErrorMessage`,
+  `isBaileysMessage`, `isBaileysMessageUpsert`).
+- Custom logger support.
+- CLI: `send video`, `send audio`, `media download`; topic-specific help sub-commands
+  and expanded autocomplete.
+
+### Changed
+
+- Type-safety improvements throughout; 14 of 15 issues from the code review report
+  resolved. No breaking changes.
 
 ## [1.1.0] - 2026-01-02
 

@@ -28,6 +28,9 @@ For a detailed comparison, see [Baileys vs Miaw Core Comparison](./docs/BAILEYS_
 
 - **[CLI Guide](./docs/CLI.md)** - Command-line interface usage
 - **[Usage Guide](./docs/USAGE.md)** - Complete guide for all current features
+- **[Proxy Guide](./docs/PROXY.md)** - Proxies, proxy list files, and rotation strategies
+- **[Proxy Deployment Notes](./docs/DEPLOYMENT_PROXY.md)** - Operational guidance for deploying with proxies
+- **[LID Resolution](./docs/LID_RESOLUTION.md)** - Working with privacy-masked (`@lid`) JIDs
 - **[Baileys Comparison](./docs/BAILEYS_VS_MIAW_COMPARISON.md)** - Feature comparison with raw Baileys
 - **[Migration Guide](./docs/MIGRATION.md)** - Upgrading between versions
 - **[Test Coverage](./docs/TEST_COVERAGE_ANALYSIS.md)** - API coverage analysis
@@ -41,6 +44,7 @@ For a detailed comparison, see [Baileys vs Miaw Core Comparison](./docs/BAILEYS_
 - **Auto-Reconnection** - Handles connection drops and reconnects automatically
 - **Session Management** - File-based session storage with automatic persistence
 - **Multiple Instances** - Run multiple WhatsApp connections in a single process
+- **Proxy Support** - HTTP/HTTPS/SOCKS proxies, proxy list files, and per-instance rotation
 - **TypeScript Support** - Full type definitions for excellent IDE experience
 - **Event-Driven** - Easy-to-use event system for messages and connection states
 - **Normalized Messages** - Simplified message format, no more complex Baileys structures
@@ -177,7 +181,7 @@ npm run test:watch
 npm run test:coverage
 ```
 
-## Current Capabilities (v1.4.1)
+## Current Capabilities (v1.10.0)
 
 Built on **Baileys v7.0.0-rc13** - the latest WhatsApp Web protocol implementation.
 
@@ -192,6 +196,14 @@ Built on **Baileys v7.0.0-rc13** - the latest WhatsApp Web protocol implementati
 - ✅ Event-driven architecture
 - ✅ TypeScript support
 - ✅ Error handling
+
+### Networking
+
+- ✅ HTTP / HTTPS / SOCKS4 / SOCKS5 proxies, per instance
+- ✅ Proxy list files (TXT / JSON) with validation and hot reload
+- ✅ Rotation strategies (round-robin, random, weighted, deterministic-per-instance)
+- ✅ `miaw-cli proxy test` connectivity diagnostics — no WhatsApp connection needed
+- ⚠️ SOCKS proxies: media *downloads* use a direct connection ([details](./docs/PROXY.md#️-socks-media-downloads-use-a-direct-connection))
 
 ### Advanced Messaging
 

@@ -1,0 +1,6 @@
+# Proxies that are guaranteed unreachable, for offline failure-path tests.
+# Port 1 on loopback is never listening, so these always ECONNREFUSE
+# immediately - no network access and no timeout wait required.
+http://127.0.0.1:1
+http://127.0.0.1:2
+http://127.0.0.1:3
