@@ -34,12 +34,14 @@ export interface ProxyProbeResult {
   latencyMs: number | null;
   status: number | null;
   /**
-   * Whether media transfers would also go through this proxy.
-   * Computed, not probed: undici has no SOCKS transport, so SOCKS proxies
-   * leave fetch() - and therefore media upload/download - on a direct
-   * connection.
+   * Whether media *downloads* would also go through this proxy.
+   *
+   * Computed, not probed. Uploads are proxied for every supported protocol
+   * (they use a Node http.Agent). Downloads go through native fetch, which
+   * needs an undici Dispatcher, and undici has no SOCKS transport - so SOCKS
+   * downloads fall back to a direct connection.
    */
-  mediaProxied: boolean;
+  downloadProxied: boolean;
   exitIp: string | null;
   error: { code: string | null; message: string } | null;
 }
@@ -136,7 +138,7 @@ export async function probeProxy(
       ok: false,
       latencyMs: null,
       status: null,
-      mediaProxied: false,
+      downloadProxied: false,
       exitIp: null,
       error: {
         code: "EPROTONOSUPPORT",
@@ -147,7 +149,7 @@ export async function probeProxy(
   }
 
   const protocol = new URL(rawUrl).protocol.replace(":", "");
-  const mediaProxied = protocol === "http" || protocol === "https";
+  const downloadProxied = protocol === "http" || protocol === "https";
 
   let agent: Agent | undefined;
   try {
@@ -159,7 +161,7 @@ export async function probeProxy(
       ok: false,
       latencyMs: null,
       status: null,
-      mediaProxied,
+      downloadProxied,
       exitIp: null,
       error: { code: null, message: scrub(getErrorMessage(error), rawUrl) },
     };
@@ -181,7 +183,7 @@ export async function probeProxy(
         ok: false,
         latencyMs,
         status,
-        mediaProxied,
+        downloadProxied,
         exitIp: null,
         error: {
           code: "EPROXYAUTH",
@@ -210,7 +212,7 @@ export async function probeProxy(
       ok: true,
       latencyMs,
       status,
-      mediaProxied,
+      downloadProxied,
       exitIp,
       error: null,
     };
@@ -225,7 +227,7 @@ export async function probeProxy(
       ok: false,
       latencyMs: null,
       status: null,
-      mediaProxied,
+      downloadProxied,
       exitIp: null,
       error: { code, message: scrub(getErrorMessage(error), rawUrl) },
     };
@@ -282,7 +284,7 @@ export async function cmdProxyList(
       weight: entry.weight ?? 1,
       label: entry.label ?? null,
       valid: true,
-      mediaProxied: protocol === "http" || protocol === "https",
+      downloadProxied: protocol === "http" || protocol === "https",
     };
   });
 
@@ -318,7 +320,7 @@ export async function cmdProxyList(
         rows.map((r) => ({
           ...r,
           auth: r.hasAuth ? "Yes" : "No",
-          media: r.mediaProxied ? "Proxied" : "Direct",
+          media: r.downloadProxied ? "Proxied" : "DL direct",
           label: r.label ?? "-",
         })),
         [
@@ -355,10 +357,10 @@ export async function cmdProxyList(
     `\n✅ ${rows.length} ${rows.length === 1 ? "proxy" : "proxies"} loaded${protocols ? ` (${protocols})` : ""}`
   );
 
-  const socksCount = rows.filter((r) => !r.mediaProxied).length;
+  const socksCount = rows.filter((r) => !r.downloadProxied).length;
   if (socksCount > 0) {
     console.log(
-      `⚠️  ${socksCount} SOCKS prox${socksCount === 1 ? "y" : "ies"}: media transfers use a direct connection (see docs/PROXY.md)`
+      `⚠️  ${socksCount} SOCKS prox${socksCount === 1 ? "y" : "ies"}: media DOWNLOADS use a direct connection (uploads are proxied; see docs/PROXY.md)`
     );
   }
 
@@ -376,9 +378,9 @@ function printProbe(result: ProxyProbeResult): void {
     if (result.exitIp) {
       console.log(`   Exit IP:  ${result.exitIp}`);
     }
-    if (!result.mediaProxied) {
+    if (!result.downloadProxied) {
       console.log(
-        "   ⚠️  Media transfers will use a direct connection (SOCKS + fetch limitation)"
+        "   ⚠️  Media DOWNLOADS will use a direct connection (undici has no SOCKS transport)"
       );
     }
   } else {
@@ -519,7 +521,7 @@ export async function cmdProxyTestAll(
         protocol: r.protocol,
         latency: r.ok ? `${r.latencyMs}ms` : "-",
         detail: r.ok
-          ? `HTTP ${r.status}${r.mediaProxied ? "" : " (media direct)"}`
+          ? `HTTP ${r.status}${r.downloadProxied ? "" : " (dl direct)"}`
           : (r.error?.code ?? r.error?.message ?? "unknown"),
       })),
       [

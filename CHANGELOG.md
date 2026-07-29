@@ -43,6 +43,19 @@ All additive; no breaking changes.
 
 ### Fixed
 
+- **Media uploads through a proxy were broken and always had been** (since v1.3.0).
+  `fetchAgent` was set to an undici `ProxyAgent`, but Baileys declares it as an
+  `https.Agent` and its Node upload path hands it to `https.request({ agent })`, which
+  cannot use a Dispatcher. Every `sendImage`/`sendVideo`/`sendDocument` through a proxy
+  failed with "Media upload failed on all hosts". `fetchAgent` is now the same
+  `http.Agent` as `wsAgent`. **Uploads are consequently proxied on SOCKS too**, which
+  the previous documentation said was impossible.
+- **Media downloads were never proxied.** Baileys downloads with
+  `fetch(url, { dispatcher })` and never wires a proxy into that path, and
+  `downloadMedia()` passed no options — so every download revealed the real IP
+  regardless of proxy settings. It now passes an undici Dispatcher explicitly.
+  This works for HTTP/HTTPS proxies; SOCKS downloads remain direct because undici
+  has no SOCKS transport.
 - `proxy test` reported a **407 Proxy Authentication Required as success**. A 407 comes
   from the proxy itself and means the tunnel was refused, so nothing ever reached
   WhatsApp - but the probe counted any HTTP status as reachable. `proxy test-all` would

@@ -1443,14 +1443,14 @@ client.getProxyInfo();
 
 ### Supported Protocols
 
-| Protocol | WebSocket | Media Upload/Download |
-|----------|-----------|----------------------|
-| `http://`  | Yes | Yes |
-| `https://` | Yes | Yes |
-| `socks4://` / `socks4a://` | Yes | No (direct connection) |
-| `socks5://` / `socks5h://` | Yes | No (direct connection) |
+| Protocol | WebSocket | Media Upload | Media Download |
+|----------|-----------|--------------|----------------|
+| `http://`  | Yes | Yes | Yes |
+| `https://` | Yes | Yes | Yes |
+| `socks4://` / `socks4a://` | Yes | Yes | No (direct connection) |
+| `socks5://` / `socks5h://` | Yes | Yes | No (direct connection) |
 
-> **⚠️ SOCKS media traffic is not proxied.** SOCKS fully tunnels the WebSocket, but media uploads/downloads use Node's `fetch()`, which needs an undici dispatcher — and undici has no SOCKS transport. With a SOCKS proxy your media transfers reveal your real IP. Use an HTTP/HTTPS proxy if that matters.
+> **⚠️ SOCKS media *downloads* are not proxied.** Messages, presence and media uploads all tunnel correctly. Downloads go through native `fetch()`, which needs an undici dispatcher, and undici has no SOCKS transport — so `downloadMedia()` reveals your real IP. Use an HTTP/HTTPS proxy if that matters.
 
 ### Rotation Across Instances
 

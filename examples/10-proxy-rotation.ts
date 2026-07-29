@@ -8,11 +8,11 @@
  * - Inspecting the active proxy with getProxyInfo() (credentials masked)
  * - Failing over when a proxy dies
  *
- * ⚠️  SOCKS caveat: SOCKS proxies tunnel the WebSocket but NOT media
- * transfers. Node's fetch() needs an undici dispatcher and undici has no
- * SOCKS transport, so sendImage/sendVideo/downloadMedia and friends fall
- * back to a DIRECT connection and reveal your real IP. Use an HTTP/HTTPS
- * proxy if that matters. See docs/PROXY.md.
+ * ⚠️  SOCKS caveat: SOCKS tunnels the WebSocket AND media uploads, but not
+ * media DOWNLOADS. downloadMedia() uses native fetch(), which needs an undici
+ * dispatcher, and undici has no SOCKS transport - so downloads fall back to a
+ * DIRECT connection and reveal your real IP. Use an HTTP/HTTPS proxy if that
+ * matters. See docs/PROXY.md.
  *
  * Setup:
  *   cp examples/proxies.example.txt ./proxies.txt   # then edit it

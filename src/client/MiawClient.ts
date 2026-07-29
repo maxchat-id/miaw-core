@@ -217,6 +217,8 @@ export class MiawClient extends EventEmitter {
   private connectionWatchdogTimer: NodeJS.Timeout | null = null;
   private reconnectAttempts = 0;
   private reconnectTimer: NodeJS.Timeout | null = null;
+  /** undici Dispatcher used to route media downloads through the proxy. */
+  private downloadDispatcher: unknown;
   // Cached WA Web version (resolved once, reused across reconnects)
   private cachedVersion: WAVersion | null = null;
   private loggingOut = false;
@@ -332,6 +334,9 @@ export class MiawClient extends EventEmitter {
 
       // Resolve proxy agents if configured
       const proxyAgents = await this.resolveProxyAgents();
+      // Kept for downloadMedia(): Baileys never plumbs a proxy into its
+      // download path, so we have to supply the dispatcher ourselves.
+      this.downloadDispatcher = proxyAgents?.downloadDispatcher;
 
       // Create socket
       const debugMode = this.options.debug;
@@ -470,7 +475,11 @@ export class MiawClient extends EventEmitter {
    * Resolves proxy agents from configuration.
    * Direct agent/fetchAgent options take priority over proxy config.
    */
-  private async resolveProxyAgents(): Promise<{ wsAgent?: unknown; fetchAgent?: unknown } | undefined> {
+  private async resolveProxyAgents(): Promise<{
+    wsAgent?: unknown;
+    fetchAgent?: unknown;
+    downloadDispatcher?: unknown;
+  } | undefined> {
     // Direct agent options take priority
     if (this.options.agent || this.options.fetchAgent) {
       return {
@@ -2386,7 +2395,11 @@ export class MiawClient extends EventEmitter {
       const buffer = await downloadMediaMessage(
         message.raw,
         "buffer",
-        {},
+        // Baileys forwards `options` into its fetch() call, which is the only
+        // way to proxy a download - it never wires `fetchAgent` into this path.
+        this.downloadDispatcher
+          ? { options: { dispatcher: this.downloadDispatcher } as never }
+          : {},
         {
           logger: this.logger,
           // reuploadRequest allows re-uploading expired media

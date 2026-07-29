@@ -202,7 +202,7 @@ Built on **Baileys v7.0.0-rc13** - the latest WhatsApp Web protocol implementati
 - ✅ Proxy list files (TXT / JSON) with validation and hot reload
 - ✅ Rotation strategies (round-robin, random, weighted, deterministic-per-instance)
 - ✅ `miaw-cli proxy test` connectivity diagnostics — no WhatsApp connection needed
-- ⚠️ SOCKS proxies: media transfers use a direct connection ([details](./docs/PROXY.md#️-socks-media-traffic-uses-a-direct-connection))
+- ⚠️ SOCKS proxies: media *downloads* use a direct connection ([details](./docs/PROXY.md#️-socks-media-downloads-use-a-direct-connection))
 
 ### Advanced Messaging
 

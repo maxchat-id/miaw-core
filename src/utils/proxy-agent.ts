@@ -3,15 +3,31 @@ import type { ProxyConfig } from "../types/index.js";
 
 /**
  * Result of creating proxy agents for Baileys.
- * Baileys needs two separate agents:
- * - wsAgent: Node.js http.Agent for WebSocket connections (ws library)
- * - fetchAgent: undici Dispatcher for fetch() calls (media upload/download)
+ *
+ * Both are the SAME Node http.Agent, and that is deliberate. Baileys declares
+ * `fetchAgent?: Agent` importing from 'https', and on Node its media upload
+ * path (`uploadWithNodeHttp`) hands the value straight to `https.request({ agent })`.
+ * Passing an undici Dispatcher there - which is what this code used to do -
+ * makes every media upload through a proxy fail, because Node's https module
+ * cannot use a Dispatcher.
+ *
+ * Consequence worth knowing: because a SocksProxyAgent is also an http.Agent,
+ * media uploads are proxied for SOCKS too, not just HTTP/HTTPS.
  */
 export interface ProxyAgents {
   /** Agent for WebSocket connections (passed as `agent` to makeWASocket) */
   wsAgent: Agent;
-  /** Dispatcher for fetch requests (passed as `fetchAgent` to makeWASocket) */
-  fetchAgent: unknown;
+  /** Agent for media upload (passed as `fetchAgent` to makeWASocket) */
+  fetchAgent: Agent;
+  /**
+   * undici Dispatcher for media *downloads*.
+   *
+   * Baileys downloads with `fetch(url, { dispatcher })`, and native fetch only
+   * accepts an undici Dispatcher - an http.Agent is ignored there. undici ships
+   * no SOCKS transport, so this is `undefined` for SOCKS proxies and their
+   * downloads fall back to a direct connection.
+   */
+  downloadDispatcher?: unknown;
 }
 
 // socks5h / socks4a resolve DNS *at the proxy*. Plain socks5 / socks4 resolve
@@ -47,15 +63,22 @@ function buildProxyUrl(config: ProxyConfig | string): string {
 }
 
 /**
- * Creates proxy agents for both WebSocket and fetch connections.
+ * Creates the proxy agent Baileys needs, for every supported protocol.
  *
- * - WebSocket agent: Works with all proxy types (HTTP, HTTPS, SOCKS4, SOCKS5)
- * - Fetch agent: Works with HTTP/HTTPS proxies only (undici limitation).
- *   For SOCKS proxies, fetchAgent will be undefined and media operations
- *   will use a direct connection.
+ * Returns the same http.Agent as both `wsAgent` and `fetchAgent`:
+ *
+ * - `wsAgent` carries the WebSocket (messages, presence, the whole session).
+ * - `fetchAgent` carries **media uploads**. On Node, Baileys' upload path is
+ *   `https.request({ agent })`, so this must be an http.Agent - an undici
+ *   Dispatcher is silently unusable there and every upload fails.
+ *
+ * Media *downloads* are a separate story: Baileys fetches them with
+ * `fetch(url, { dispatcher })` and never wires `fetchAgent` into it, so
+ * downloads are not proxied for any protocol. That is an upstream gap, not
+ * something this function can influence.
  *
  * @param config - Proxy URL string or ProxyConfig object
- * @returns Object with wsAgent and fetchAgent
+ * @returns Object with wsAgent and fetchAgent (the same agent instance)
  */
 export async function createProxyAgents(
   config: ProxyConfig | string
@@ -69,7 +92,7 @@ export async function createProxyAgents(
     );
   }
 
-  // Create WebSocket agent (works with all proxy types)
+  // One http.Agent serves both transports (works for all supported protocols).
   let wsAgent: Agent;
   if (SOCKS_PROTOCOLS.includes(protocol)) {
     const { SocksProxyAgent } = await import("socks-proxy-agent");
@@ -79,14 +102,21 @@ export async function createProxyAgents(
     wsAgent = new HttpsProxyAgent(proxyUrl);
   }
 
-  // Create fetch agent (undici dispatcher - HTTP/HTTPS proxies only)
-  let fetchAgent: unknown = undefined;
+  const fetchAgent: Agent = wsAgent;
+
+  // Downloads go through native fetch, which only honours an undici Dispatcher.
+  // undici has no SOCKS transport, so SOCKS downloads stay direct.
+  let downloadDispatcher: unknown;
   if (HTTP_PROTOCOLS.includes(protocol)) {
     const { ProxyAgent: UndiciProxyAgent } = await import("undici");
-    fetchAgent = new UndiciProxyAgent({ uri: proxyUrl });
+    downloadDispatcher = new UndiciProxyAgent({ uri: proxyUrl });
   }
 
-  return { wsAgent, fetchAgent };
+  return {
+    wsAgent,
+    fetchAgent,
+    ...(downloadDispatcher !== undefined && { downloadDispatcher }),
+  };
 }
 
 /**

@@ -56,9 +56,10 @@ Native LID (v1.5.0), rich messages + pairing code (v1.6.0), chat management
 - **Interactive buttons / lists / templates** — deprecated by WhatsApp.
 - **`signalRepository.migrateSession`** — Baileys calls it internally already.
 - **Deactivate community** — no Baileys method (`leaveCommunity` is the closest).
-- **SOCKS media proxying** — blocked upstream, not deferred: Node's `fetch()`
-  requires an undici Dispatcher and undici ships no SOCKS transport. Use an
-  HTTP/HTTPS proxy, or supply your own `fetchAgent`. See [PROXY.md](./PROXY.md).
+- **SOCKS media *download* proxying** — blocked upstream, not deferred: downloads use
+  native `fetch(url, { dispatcher })`, which requires an undici Dispatcher, and undici
+  ships no SOCKS transport. Uploads and the WebSocket are proxied on SOCKS. Use an
+  HTTP/HTTPS proxy if downloads must be proxied. See [PROXY.md](./PROXY.md).
 - **Runtime proxy health-checking / automatic failover** — would need a
   connection-state feedback loop into the rotator. `miaw-cli proxy test-all`
   covers the pre-flight case; `weight: 0` is the designed drain mechanism.

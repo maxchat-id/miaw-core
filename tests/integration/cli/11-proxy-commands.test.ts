@@ -117,7 +117,7 @@ describe("CLI: proxy commands", () => {
       const { output } = await run(["list"], {
         flags: { "proxy-file": PROXY_TXT },
       });
-      expect(output).toContain("media transfers use a direct connection");
+      expect(output).toContain("media DOWNLOADS use a direct connection");
     });
 
     it("should emit a well-formed --json payload", async () => {
@@ -153,7 +153,7 @@ describe("CLI: proxy commands", () => {
       );
       expect(us1.weight).toBe(3);
       expect(us1.label).toBe("us");
-      expect(us1.mediaProxied).toBe(false);
+      expect(us1.downloadProxied).toBe(false);
     });
 
     it("should load a .json file and mask its credentials", async () => {
@@ -210,20 +210,20 @@ describe("CLI: proxy commands", () => {
       expect(payload.target).toBe("https://web.whatsapp.com/");
     });
 
-    it("should mark SOCKS proxies as media-unproxied", async () => {
+    it("should mark SOCKS proxies as download-unproxied (uploads ARE proxied)", async () => {
       const { output } = await run(["test", "socks5://127.0.0.1:1"], {
         jsonOutput: true,
       });
       const payload = JSON.parse(output);
       expect(payload.protocol).toBe("socks5");
-      expect(payload.mediaProxied).toBe(false);
+      expect(payload.downloadProxied).toBe(false);
     });
 
-    it("should mark HTTP proxies as media-proxied", async () => {
+    it("should mark HTTP proxies as download-proxied", async () => {
       const { output } = await run(["test", "http://127.0.0.1:1"], {
         jsonOutput: true,
       });
-      expect(JSON.parse(output).mediaProxied).toBe(true);
+      expect(JSON.parse(output).downloadProxied).toBe(true);
     });
 
     it("should mask credentials in the result", async () => {

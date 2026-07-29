@@ -656,12 +656,12 @@ proxy list --proxy-file ./proxies.txt
 ┌─────┬──────────────────────────────────────┬──────────┬──────┬────────┬─────────┬───────┐
 │ #   │ Proxy                                │ Protocol │ Auth │ Weight │ Media   │ Label │
 ├─────┼──────────────────────────────────────┼──────────┼──────┼────────┼─────────┼───────┤
-│ 0   │ socks5://us1.example.com:1080        │ socks5   │ No   │ 3      │ Direct  │ us    │
+│ 0   │ socks5://us1.example.com:1080        │ socks5   │ No   │ 3      │ DL direct │ us  │
 │ 1   │ http://euuser:****@eu1.example.com:8080 │ http  │ Yes  │ 2      │ Proxied │ eu    │
 └─────┴──────────────────────────────────────┴──────────┴──────┴────────┴─────────┴───────┘
 
 ✅ 2 proxies loaded (1 socks5, 1 http)
-⚠️  1 SOCKS proxy: media transfers use a direct connection (see docs/PROXY.md)
+⚠️  1 SOCKS proxy: media DOWNLOADS use a direct connection (uploads are proxied; see docs/PROXY.md)
 ```
 
 Invalid lines are reported in a second table and skipped — one typo never hides the rest of the file.
@@ -698,7 +698,7 @@ npx miaw-cli proxy test socks5://proxy.example.com:1080 --json
 ✅ socks5://proxy.example.com:1080
    Protocol: socks5
    Latency:  412ms (HTTP 200)
-   ⚠️  Media transfers will use a direct connection (SOCKS + fetch limitation)
+   ⚠️  Media DOWNLOADS will use a direct connection (undici has no SOCKS transport)
 ```
 
 Failure:
@@ -741,7 +741,7 @@ npx miaw-cli proxy test-all --proxy-file ./proxies.txt || exit 1
 │ Status │ Proxy                            │ Protocol │ Latency │ Detail               │
 ├────────┼──────────────────────────────────┼──────────┼─────────┼──────────────────────┤
 │ OK     │ http://eu1.example.com:8080      │ http     │ 188ms   │ HTTP 200             │
-│ OK     │ socks5://us1.example.com:1080    │ socks5   │ 412ms   │ HTTP 200 (media direct) │
+│ OK     │ socks5://us1.example.com:1080    │ socks5   │ 412ms   │ HTTP 200 (dl direct)    │
 │ FAIL   │ http://dead.example.com:8080     │ http     │ -       │ ECONNREFUSED         │
 └────────┴──────────────────────────────────┴──────────┴─────────┴──────────────────────┘
 

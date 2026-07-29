@@ -14,7 +14,7 @@
 socks5://us1.example.com:1080                        weight=3 label=us
 socks5://myuser:mypassword@us2.example.com:1080
 
-# HTTP/HTTPS proxies also carry MEDIA traffic; SOCKS does not.
+# HTTP/HTTPS proxies also carry media DOWNLOADS; SOCKS does not (uploads are fine).
 http://eu1.example.com:8080                          weight=2 label=eu
 https://asia1.example.com:8443                       label=asia
 

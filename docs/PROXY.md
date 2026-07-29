@@ -140,14 +140,17 @@ new MiawClient({
 
 ## Protocol Support
 
-| Protocol | WebSocket (messages) | Media upload/download | DNS resolved by |
-|----------|----------------------|-----------------------|-----------------|
-| `http://` | Yes | Yes | proxy |
-| `https://` | Yes | Yes | proxy |
-| `socks4://` | Yes | **No — direct connection** | you (leaks) |
-| `socks4a://` | Yes | **No — direct connection** | proxy |
-| `socks5://` | Yes | **No — direct connection** | you (leaks) |
-| `socks5h://` | Yes | **No — direct connection** | proxy |
+| Protocol | WebSocket (messages) | Media upload | Media download | DNS resolved by |
+|----------|----------------------|--------------|----------------|-----------------|
+| `http://` | Yes | Yes | Yes | proxy |
+| `https://` | Yes | Yes | Yes | proxy |
+| `socks4://` | Yes | Yes | **No — direct** | you (leaks) |
+| `socks4a://` | Yes | Yes | **No — direct** | proxy |
+| `socks5://` | Yes | Yes | **No — direct** | you (leaks) |
+| `socks5h://` | Yes | Yes | **No — direct** | proxy |
+
+_Verified empirically against Baileys 7.0.0-rc13 by routing real traffic through a
+local proxy and inspecting which hosts it was asked to tunnel._
 
 ### DNS leaks with plain `socks5://`
 
@@ -161,30 +164,41 @@ asked to connect to. `socks5://` asks for an IP address; `socks5h://` asks for
 `web.whatsapp.com`. **Prefer `socks5h://` unless you specifically need local
 resolution** (e.g. a split-horizon DNS setup where only you can resolve the name).
 
-### ⚠️ SOCKS media traffic uses a direct connection
+### ⚠️ SOCKS media *downloads* use a direct connection
 
-**If you use a SOCKS proxy, your media transfers reveal your real IP address.**
+**With a SOCKS proxy, downloading media reveals your real IP.** Messages, presence, the
+whole session, and media *uploads* all go through the proxy — only downloads escape it.
 
-**What leaks.** `sendImage()`, `sendVideo()`, `sendAudio()`, `sendDocument()`, `sendSticker()`, and `downloadMedia()` all talk to WhatsApp's media CDN over Node's `fetch()`. Your messages, presence, and the entire session go through the proxy; these CDN requests do not.
+**What leaks.** `downloadMedia()` only. `sendImage()`, `sendVideo()`, `sendAudio()`,
+`sendDocument()` and `sendSticker()` are proxied on every supported protocol.
 
-**Why.** Node's `fetch()` routes through an undici `Dispatcher`, and undici implements no SOCKS transport. The WebSocket uses a Node `http.Agent`, which `socks-proxy-agent` provides — so the session tunnels correctly while `fetch()` has nothing to attach to and falls back to a direct connection.
+**Why.** The two media directions use different HTTP clients inside Baileys. Uploads go
+through Node's `https.request({ agent })`, which accepts the same `http.Agent` that
+carries the WebSocket — and `socks-proxy-agent` provides one. Downloads go through
+native `fetch(url, { dispatcher })`, which accepts *only* an undici `Dispatcher`, and
+undici implements no SOCKS transport. So there is simply nothing to hand it.
 
-**What it means in practice.** WhatsApp sees your session arriving from the proxy IP and your media arriving from your real IP. Whether that matters depends on why you're using a proxy: for egress control in a container it may be fatal (the direct route may not exist at all, and media will simply fail); for IP separation it undermines the point.
+**What it means in practice.** WhatsApp's CDN sees your real IP when you fetch incoming
+media. For IP separation that partly undermines the point; for egress control in a
+locked-down container it is worse — the direct route may not exist at all and downloads
+will fail outright.
 
 **Fixes, best first:**
 
-1. **Use an HTTP or HTTPS proxy.** Both transports are proxied. Most providers offer HTTP alongside SOCKS on the same endpoint.
-2. **Front the SOCKS proxy with a local HTTP CONNECT shim**, then point miaw-core at the shim over `http://`.
-3. **Supply your own `fetchAgent`** — any undici-compatible dispatcher that can reach a SOCKS proxy.
+1. **Use an HTTP or HTTPS proxy.** Every transport is proxied, downloads included. Most
+   providers offer HTTP alongside SOCKS on the same endpoint.
+2. **Front the SOCKS proxy with a local HTTP CONNECT shim** and point miaw-core at the
+   shim over `http://`.
 
-**How to verify.** Compare the exit IP the proxy gives you against your real one:
+**How to verify.** Compare the exit IP against your real one:
 
 ```bash
-npx miaw-cli proxy test socks5://proxy.example.com:1080 --ip
+npx miaw-cli proxy test socks5h://proxy.example.com:1080 --ip
 curl -s https://api.ipify.org    # your real IP
 ```
 
-`proxy list` and `proxy test` both report this per proxy, so you never have to remember which of your entries are SOCKS.
+`proxy list` and `proxy test` flag this per proxy, so you never have to remember which
+entries are SOCKS.
 
 ---
 

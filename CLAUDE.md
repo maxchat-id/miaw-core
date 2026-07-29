@@ -219,10 +219,13 @@ Sessions are stored at `{sessionPath}/{instanceId}/` using Baileys' multi-file a
 - The option is named **`proxy`**, not `proxyUrl`. It accepts a URL string or a
   `ProxyConfig` object. `agent` / `fetchAgent` are escape hatches that override it.
 - `createProxyAgents()` ([src/utils/proxy-agent.ts](src/utils/proxy-agent.ts)) returns
-  `{ wsAgent, fetchAgent }`. `wsAgent` is a Node `http.Agent` that works for all four
-  protocols and is usable directly with `https.request` — that is how the CLI probes a
-  proxy without a WhatsApp connection. `fetchAgent` is an undici Dispatcher and is
-  **`undefined` for SOCKS**, so media transfers fall back to a direct connection.
+  `{ wsAgent, fetchAgent, downloadDispatcher }`. **`wsAgent` and `fetchAgent` are the
+  same `http.Agent`** — Baileys' upload path is `https.request({ agent })` on Node, so
+  handing it an undici Dispatcher silently breaks every upload. `downloadDispatcher` is
+  the undici Dispatcher, needed because downloads use `fetch(url, { dispatcher })`; it
+  is **`undefined` for SOCKS** since undici has no SOCKS transport, so SOCKS downloads
+  go direct. Baileys never plumbs a proxy into its download path, so `downloadMedia()`
+  passes the dispatcher explicitly.
 - **Never print a raw proxy URL.** Route everything — including error strings, which the
   proxy-agent libraries sometimes populate with the full URL — through `maskProxyUrl()`.
 - Rotation ([src/utils/proxy-rotator.ts](src/utils/proxy-rotator.ts)) returns a
@@ -297,7 +300,7 @@ See [tests/README.md](tests/README.md) for detailed testing guide.
 - `qrcode-terminal` - QR code display in terminal
 - `cli-table3` - CLI table formatting
 - `https-proxy-agent` / `socks-proxy-agent` - proxy agents for the WebSocket transport
-- `undici` - proxy dispatcher for `fetch()` (media). **No SOCKS support** - see Proxy Support below
+- `undici` - proxy dispatcher for media *downloads*. **No SOCKS support** - see Proxy Support below
 
 **Dev:**
 - `jest` + `ts-jest` - Testing framework
