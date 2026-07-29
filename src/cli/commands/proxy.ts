@@ -383,7 +383,9 @@ export async function cmdProxyTest(
     return false;
   }
 
-  console.error(`🔍 Testing proxy via ${TEST_TARGET} ...`);
+  if (!jsonOutput) {
+    console.error(`🔍 Testing proxy via ${TEST_TARGET} ...`);
+  }
   const result = await probeProxy(url, options);
 
   if (jsonOutput) {
