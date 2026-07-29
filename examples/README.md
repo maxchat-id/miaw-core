@@ -134,6 +134,31 @@ Business and social features:
 
 **Run:** `ts-node examples/09-business-social.ts`
 
+### 10-proxy-rotation.ts (v1.10.0)
+Connecting through proxies, and giving each instance its own egress IP:
+
+**Single proxy:**
+- Configuring one proxy from `MIAW_PROXY`
+- Inspecting it with `getProxyInfo()` (credentials masked)
+
+**Multi-instance rotation:**
+- Loading a proxy list file with `ProxyRotator.fromFile()`
+- Assigning each `instanceId` a **stable** proxy via the deterministic strategy
+- Hot-reloading the proxy file
+- Why rotation distributes instances across proxies and must never rotate a *live* session's IP
+
+**Failover:**
+- Detecting a dead proxy from the `connection` event
+- Dropping it from the pool and re-selecting, without disturbing your other bots
+
+**Setup:** `cp examples/proxies.example.txt ./proxies.txt`, then edit it. Validate with
+`npx miaw-cli proxy test-all --proxy-file ./proxies.txt` before running.
+
+> ⚠️ SOCKS proxies do not carry media transfers — those fall back to a direct
+> connection and reveal your real IP. See [PROXY.md](../docs/PROXY.md).
+
+**Run:** `ts-node examples/10-proxy-rotation.ts [multi|single|failover]`
+
 ---
 
 ## Running Examples
@@ -170,5 +195,6 @@ All examples support `!help` to see available commands.
 
 See the main documentation:
 - [USAGE.md](../docs/USAGE.md) - Complete usage guide
+- [PROXY.md](../docs/PROXY.md) - Proxy configuration, rotation, and troubleshooting
 - [ROADMAP.md](../docs/ROADMAP.md) - Feature roadmap
 - [CHANGELOG.md](../CHANGELOG.md) - Version history

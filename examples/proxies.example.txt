@@ -1,0 +1,37 @@
+# Example proxy list. Copy to ./proxies.txt and edit.
+#
+#   cp examples/proxies.example.txt ./proxies.txt
+#
+# proxies.txt and proxies.json are gitignored - they contain credentials.
+# chmod 600 ./proxies.txt is a good idea too.
+#
+# Validate it before use:
+#   npx miaw-cli proxy list     --proxy-file ./proxies.txt
+#   npx miaw-cli proxy test-all --proxy-file ./proxies.txt
+
+# ── Full URL form ────────────────────────────────────────────────────────
+# Optional trailing weight= and label= tokens.
+socks5://us1.example.com:1080                        weight=3 label=us
+socks5://myuser:mypassword@us2.example.com:1080
+
+# HTTP/HTTPS proxies also carry MEDIA traffic; SOCKS does not.
+http://eu1.example.com:8080                          weight=2 label=eu
+https://asia1.example.com:8443                       label=asia
+
+# A password containing @ : / ? # or % must be percent-encoded here.
+# "p@ss#1" becomes "p%40ss%231":
+# http://myuser:p%40ss%231@eu2.example.com:8080
+
+# Weight 0 drains a proxy: it stays documented but is never selected.
+# http://maintenance.example.com:8080                weight=0 label=draining
+
+# ── Scheme-less vendor forms ─────────────────────────────────────────────
+# Expanded using defaultProtocol (http unless you override it).
+# 1.2.3.4:8080
+# 5.6.7.8:8080:myuser:mypassword
+
+# ── Comments ─────────────────────────────────────────────────────────────
+; Semicolons work too.
+# A line is a comment only when its FIRST non-whitespace character is # or ;
+# so an inline # is never stripped - it would corrupt passwords.
+# Write a literal # inside a password as %23.
