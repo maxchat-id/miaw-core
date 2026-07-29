@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Key abstraction**: miaw-core handles all Baileys boilerplate so developers can focus on bot logic instead of connection lifecycle, auth state management, and message parsing.
 
-**Current Version**: 1.9.1
+**Current Version**: 1.10.0
 **Baileys Version**: 7.0.0-rc13
 **Module System**: ESM-only (`"type": "module"`)
 **Node.js Required**: >= 18.0.0
@@ -34,7 +34,7 @@ npm test                    # Run all tests
 npm run test:watch          # Watch mode
 npm run test:coverage       # Generate coverage report
 
-# CLI integration tests (77 tests, real WhatsApp connection)
+# CLI integration tests (99 tests, real WhatsApp connection)
 npm run test:cli            # Run all CLI tests (skips if not connected)
 
 # Interactive manual testing (80+ API methods)
@@ -174,6 +174,11 @@ The CLI tool ([src/cli/](src/cli/)) is a separate subsystem with its own archite
 - **Client Cache** ([src/cli/utils/client-cache.ts](src/cli/utils/client-cache.ts)) - Singleton cache for MiawClient instances (prevents duplicate connections)
 - **Command Handlers** ([src/cli/commands/](src/cli/commands/)) - Modular command implementations
 
+**Dispatch order invariant**: in `runCommand()`, the `instance` and `proxy` command
+blocks are handled **before** `getOrCreateClient()` is called, because neither needs a
+WhatsApp connection. New command blocks must go *after* that call unless they genuinely
+work offline — appending one in the wrong place silently forces a client construction.
+
 **REPL Features:**
 - Auto-connects on start (uses existing session if available)
 - Tab completion for commands, subcommands, and instance IDs
@@ -209,6 +214,25 @@ Sessions are stored at `{sessionPath}/{instanceId}/` using Baileys' multi-file a
 **Subsequent connections**: Auto-loads session, no QR code needed
 **Logout**: MUST call `clearSession()` after logout to allow fresh QR authentication
 
+### Proxy Support
+
+- The option is named **`proxy`**, not `proxyUrl`. It accepts a URL string or a
+  `ProxyConfig` object. `agent` / `fetchAgent` are escape hatches that override it.
+- `createProxyAgents()` ([src/utils/proxy-agent.ts](src/utils/proxy-agent.ts)) returns
+  `{ wsAgent, fetchAgent }`. `wsAgent` is a Node `http.Agent` that works for all four
+  protocols and is usable directly with `https.request` — that is how the CLI probes a
+  proxy without a WhatsApp connection. `fetchAgent` is an undici Dispatcher and is
+  **`undefined` for SOCKS**, so media transfers fall back to a direct connection.
+- **Never print a raw proxy URL.** Route everything — including error strings, which the
+  proxy-agent libraries sometimes populate with the full URL — through `maskProxyUrl()`.
+- Rotation ([src/utils/proxy-rotator.ts](src/utils/proxy-rotator.ts)) returns a
+  `ProxyPoolEntry` for `new MiawClient({ proxy })`, deliberately not a pre-built agent:
+  passing `agent` instead would make `resolveProxyAgents()` return early, disabling
+  `getProxyInfo()` and dropping the `fetchAgent`.
+- The default strategy is `deterministic` (rendezvous hashing on `instanceId`). **Do not
+  rotate a live session's IP** — WhatsApp reads that as account takeover.
+- See [docs/PROXY.md](docs/PROXY.md).
+
 ### Adding New Client Methods
 
 When adding new methods to MiawClient:
@@ -243,12 +267,14 @@ See [tests/README.md](tests/README.md) for detailed testing guide.
 
 **Interactive testing**: Use `npm run test:manual` to test all 92 API methods with a real WhatsApp connection. This is the fastest way to verify functionality during development.
 
-**CLI integration tests**: 77 tests across 10 files in `tests/integration/cli/`. Key architecture:
+**CLI integration tests**: 99 tests across 11 files in `tests/integration/cli/`. Key architecture:
 
 - Shared setup in `cli-setup.ts` pre-warms the client cache via `getOrCreateClient()` so `runCommand()` finds the connected client
 - All files share one WhatsApp connection (`--runInBand`); only the last file disconnects
 - Connection-dependent tests skip with `if (!isConnected()) return;`
 - Console output assertions use `captureConsole()` in `try/finally` blocks
+- Exception: `11-proxy-commands.test.ts` needs no connection at all (proxy commands
+  dispatch before `getOrCreateClient()`), so it runs unconditionally and offline
 
 ---
 
@@ -270,6 +296,8 @@ See [tests/README.md](tests/README.md) for detailed testing guide.
 - `@hapi/boom` - HTTP-friendly error objects
 - `qrcode-terminal` - QR code display in terminal
 - `cli-table3` - CLI table formatting
+- `https-proxy-agent` / `socks-proxy-agent` - proxy agents for the WebSocket transport
+- `undici` - proxy dispatcher for `fetch()` (media). **No SOCKS support** - see Proxy Support below
 
 **Dev:**
 - `jest` + `ts-jest` - Testing framework
@@ -294,7 +322,10 @@ src/
 docs/                   # Documentation
 ├── CLI.md             # CLI usage guide
 ├── USAGE.md           # Complete API usage guide
+├── PROXY.md           # Proxy guide (files, rotation, troubleshooting)
+├── LID_RESOLUTION.md  # Privacy-masked (@lid) JID resolution guide
 ├── ROADMAP.md         # Feature roadmap
+├── DEFERRED_FEATURES.md  # Backlog of deliberately deferred Baileys features
 ├── MIGRATION.md       # Version migration guide
 ├── TEST_COVERAGE_ANALYSIS.md  # API coverage report
 └── BAILEYS_VS_MIAW_COMPARISON.md  # Comparison with raw Baileys
@@ -302,7 +333,7 @@ docs/                   # Documentation
 tests/
 ├── fixtures/           # Test assets (images, documents)
 ├── integration/        # Integration tests (require real WhatsApp)
-│   └── cli/           # CLI command tests (77 tests, 10 files)
+│   └── cli/           # CLI command tests (99 tests, 11 files)
 ├── unit/              # Unit tests
 └── README.md          # Testing guide
 

@@ -1415,83 +1415,30 @@ bot2.on("message", (msg) => console.log("Bot 2:", msg.text));
 
 ## Proxy Support
 
-_Added in v1.3.0_
+_Added in v1.3.0 · proxy files and rotation added in v1.10.0_
 
-Each MiawClient instance can connect through a proxy for IP rotation, geographic distribution, or privacy. Supports HTTP, HTTPS, SOCKS4, and SOCKS5 proxies.
-
-### Basic Proxy Usage
+Each MiawClient instance can connect through its own proxy, for geographic distribution, IP separation across instances, or network egress control. Supports HTTP, HTTPS, SOCKS4, and SOCKS5.
 
 ```typescript
 import { MiawClient } from "miaw-core";
 
-// Using a proxy URL string
+// A proxy URL string...
 const client = new MiawClient({
   instanceId: "bot-1",
   proxy: "socks5://proxy.example.com:1080",
 });
 
-// Using a ProxyConfig object (with separate auth)
+// ...or a ProxyConfig object, which URL-encodes credentials for you
+// (use this if the password contains @ : / ? # or %)
 const client2 = new MiawClient({
   instanceId: "bot-2",
-  proxy: {
-    url: "http://proxy.example.com:8080",
-    username: "user",
-    password: "pass",
-  },
+  proxy: { url: "http://proxy.example.com:8080", username: "user", password: "p@ss" },
 });
 
-await client.connect(); // Connects through the proxy
-```
+await client.connect();
 
-### Proxy Info
-
-```typescript
-// Get current proxy info (credentials masked)
-const info = client.getProxyInfo();
-// { url: "socks5://proxy.example.com:1080/", protocol: "socks5" }
-```
-
-### Multiple Instances with Different Proxies
-
-```typescript
-const instances = [
-  { id: "us-bot", proxy: "socks5://us-proxy.example.com:1080" },
-  { id: "eu-bot", proxy: "socks5://eu-proxy.example.com:1080" },
-  { id: "asia-bot", proxy: "http://asia-proxy.example.com:8080" },
-];
-
-for (const { id, proxy } of instances) {
-  const client = new MiawClient({
-    instanceId: id,
-    sessionPath: "./sessions",
-    proxy,
-  });
-  await client.connect();
-}
-```
-
-### Custom Agent (Advanced)
-
-For advanced use cases, you can pass your own agents directly instead of a proxy URL:
-
-```typescript
-import { HttpsProxyAgent } from "https-proxy-agent";
-
-const client = new MiawClient({
-  instanceId: "advanced-bot",
-  agent: new HttpsProxyAgent("http://proxy:8080"),    // WebSocket agent
-  fetchAgent: myCustomDispatcher,                      // undici Dispatcher for media
-});
-```
-
-### Proxy Validation
-
-```typescript
-import { validateProxyConfig } from "miaw-core";
-
-validateProxyConfig("socks5://proxy:1080");  // true
-validateProxyConfig("http://proxy:8080");    // true
-validateProxyConfig("ftp://invalid:21");     // false
+client.getProxyInfo();
+// { url: "socks5://proxy.example.com:1080/", protocol: "socks5" }  (password masked)
 ```
 
 ### Supported Protocols
@@ -1503,7 +1450,24 @@ validateProxyConfig("ftp://invalid:21");     // false
 | `socks4://` | Yes | No (direct connection) |
 | `socks5://` | Yes | No (direct connection) |
 
-> **Note**: SOCKS proxies fully tunnel the WebSocket connection to WhatsApp. However, media uploads/downloads (which use Node.js `fetch()`) fall back to a direct connection when using SOCKS, because Node.js `fetch()` requires an undici-compatible dispatcher which doesn't support SOCKS natively. HTTP/HTTPS proxies work for both.
+> **⚠️ SOCKS media traffic is not proxied.** SOCKS fully tunnels the WebSocket, but media uploads/downloads use Node's `fetch()`, which needs an undici dispatcher — and undici has no SOCKS transport. With a SOCKS proxy your media transfers reveal your real IP. Use an HTTP/HTTPS proxy if that matters.
+
+### Rotation Across Instances
+
+```typescript
+import { ProxyRotator } from "miaw-core";
+
+const rotator = await ProxyRotator.fromFile("./proxies.txt");
+
+// Deterministic by default: bot-3 gets the same proxy on every run, so its
+// session keeps a stable egress IP. Never rotate a live session's IP.
+const client = new MiawClient({
+  instanceId: "bot-3",
+  proxy: rotator.forInstance("bot-3"),
+});
+```
+
+> **Full guide**: see [PROXY.md](./PROXY.md) for proxy list files, rotation strategies, custom agents, CLI diagnostics, provider selection, and troubleshooting.
 
 ## Session Management
 
