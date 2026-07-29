@@ -1,0 +1,11 @@
+[
+  "socks5://us1.example.com:1080",
+  { "url": "http://eu1.example.com:8080", "weight": 2, "label": "eu" },
+  {
+    "url": "http://asia1.example.com:8080",
+    "username": "asiauser",
+    "password": "s3cretpassword",
+    "weight": 5,
+    "label": "asia"
+  }
+]
