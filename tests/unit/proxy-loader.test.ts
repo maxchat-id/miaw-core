@@ -358,6 +358,15 @@ describe("Proxy List Loader", () => {
       watcher = undefined;
     });
 
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+    /**
+     * fs.watchFile takes its baseline stat asynchronously. Writing in the
+     * same tick races that: if the baseline lands after the write, prev and
+     * curr are identical and no change is ever reported. Give it a beat.
+     */
+    const settleBaseline = () => sleep(200);
+
     /** Waits for the next onChange, or rejects on timeout. */
     function nextChange(
       file: string,
@@ -381,6 +390,7 @@ describe("Proxy List Loader", () => {
 
       const { promise, watcher: w } = nextChange(file);
       watcher = w;
+      await settleBaseline();
 
       fs.writeFileSync(
         file,
@@ -402,11 +412,12 @@ describe("Proxy List Loader", () => {
         debounceMs: 20,
         onError: (e) => errors.push(e),
       });
+      await settleBaseline();
 
       // Simulates the truncate-then-write race.
       fs.writeFileSync(file, "");
 
-      await new Promise((r) => setTimeout(r, 400));
+      await sleep(400);
 
       expect(changes).toHaveLength(0);
       expect(errors.length).toBeGreaterThan(0);
@@ -424,9 +435,10 @@ describe("Proxy List Loader", () => {
         debounceMs: 20,
         onError: (e) => errors.push(e),
       });
+      await settleBaseline();
 
       fs.rmSync(file);
-      await new Promise((r) => setTimeout(r, 300));
+      await sleep(400);
       expect(errors.some((e) => /disappeared/.test(e.message))).toBe(true);
 
       // The file coming back must still be picked up.
@@ -434,7 +446,7 @@ describe("Proxy List Loader", () => {
         file,
         "http://a.example.com:8080\nhttp://b.example.com:8080\n"
       );
-      await new Promise((r) => setTimeout(r, 400));
+      await sleep(500);
       expect(changes.length).toBeGreaterThan(0);
       expect(changes[changes.length - 1]).toHaveLength(2);
     });
@@ -448,6 +460,7 @@ describe("Proxy List Loader", () => {
         interval: 50,
         debounceMs: 20,
       });
+      await settleBaseline();
 
       w.close();
       w.close(); // idempotent
@@ -456,7 +469,7 @@ describe("Proxy List Loader", () => {
         file,
         "http://a.example.com:8080\nhttp://b.example.com:8080\n"
       );
-      await new Promise((r) => setTimeout(r, 300));
+      await sleep(400);
 
       expect(changes).toHaveLength(0);
     });

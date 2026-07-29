@@ -134,6 +134,32 @@ export {
 export type { ProxyAgents } from "./utils/proxy-agent.js";
 export type { ProxyConfig, LidMapping } from "./types/index.js";
 
+// v1.10.0 Proxy list files
+export {
+  parseProxyList,
+  loadProxyList,
+  loadProxyListSync,
+  validateProxyList,
+  watchProxyList,
+} from "./utils/proxy-loader.js";
+export type {
+  ProxyPoolEntry,
+  ProxyFileFormat,
+  ProxyDefaultProtocol,
+  ProxyParseOptions,
+  ProxyListWatchOptions,
+  ProxyListWatcher,
+} from "./utils/proxy-loader.js";
+
+// v1.10.0 Proxy rotation
+export { ProxyRotator } from "./utils/proxy-rotator.js";
+export type {
+  ProxyRotationStrategy,
+  ProxyRotatorOptions,
+  ProxyRotatorStats,
+  ProxyRotatorFromFileOptions,
+} from "./utils/proxy-rotator.js";
+
 // v1.2.0 Constants
 export { TIMEOUTS, THRESHOLDS } from "./constants/timeouts.js";
 export { CACHE_CONFIG } from "./constants/cache.js";
