@@ -35,6 +35,13 @@ All additive; no breaking changes.
 - **CLI global flags**: `--proxy-file <path>`, `--proxy-strategy <strategy>`
   (default `deterministic`; `instance` accepted as an alias). Env fallbacks:
   `MIAW_PROXY`, `MIAW_PROXY_FILE`, `MIAW_PROXY_STRATEGY`.
+- **[.env.example](./.env.example)** - documents every `MIAW_*` runtime variable,
+  including `MIAW_INSTANCE_ID` and `MIAW_SESSION_PATH`, which the CLI has always
+  read but which were never written down anywhere.
+- **[docs/DEPLOYMENT_PROXY.md](./docs/DEPLOYMENT_PROXY.md)** - operational notes for
+  deploying with proxies: why `instanceId` must be stable across rollouts, treating
+  proxy files as secrets, ConfigMap-safe hot reload, egress firewall rules, and the
+  sticky-session requirement.
 - **[docs/PROXY.md](./docs/PROXY.md)** - dedicated proxy guide covering configuration,
   proxy files, rotation, CLI diagnostics, troubleshooting, security, and provider
   selection. Replaces the internal `docs/PROXY_SUPPORT_PLAN.md`, which is removed.

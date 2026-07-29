@@ -29,6 +29,7 @@ For a detailed comparison, see [Baileys vs Miaw Core Comparison](./docs/BAILEYS_
 - **[CLI Guide](./docs/CLI.md)** - Command-line interface usage
 - **[Usage Guide](./docs/USAGE.md)** - Complete guide for all current features
 - **[Proxy Guide](./docs/PROXY.md)** - Proxies, proxy list files, and rotation strategies
+- **[Proxy Deployment Notes](./docs/DEPLOYMENT_PROXY.md)** - Operational guidance for deploying with proxies
 - **[LID Resolution](./docs/LID_RESOLUTION.md)** - Working with privacy-masked (`@lid`) JIDs
 - **[Baileys Comparison](./docs/BAILEYS_VS_MIAW_COMPARISON.md)** - Feature comparison with raw Baileys
 - **[Migration Guide](./docs/MIGRATION.md)** - Upgrading between versions

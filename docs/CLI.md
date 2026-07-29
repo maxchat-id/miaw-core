@@ -1348,5 +1348,6 @@ If that fails, the problem is the proxy, not miaw-core. If it succeeds but Whats
 
 - [Usage Guide](./USAGE.md) - Programmatic API usage
 - [Proxy Guide](./PROXY.md) - Proxy configuration, rotation, and troubleshooting
+- [Proxy Deployment Notes](./DEPLOYMENT_PROXY.md) - Operational guidance for deployments
 - [Examples](../examples/) - Code examples
 - [Roadmap](./ROADMAP.md) - Planned features

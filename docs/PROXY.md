@@ -2,7 +2,7 @@
 
 miaw-core can route a WhatsApp connection through an HTTP, HTTPS, SOCKS4, or SOCKS5 proxy — per instance, so twenty bots in one process can each have their own egress IP. Proxy support shipped in v1.3.0; proxy list files, rotation strategies, and the CLI diagnostics landed in v1.10.0.
 
-For the short version, see [Proxy Support in USAGE.md](./USAGE.md#proxy-support). For the CLI command reference, see [CLI.md](./CLI.md#proxy-operations).
+For the short version, see [Proxy Support in USAGE.md](./USAGE.md#proxy-support). For the CLI command reference, see [CLI.md](./CLI.md#proxy-operations). **Deploying this?** See [DEPLOYMENT_PROXY.md](./DEPLOYMENT_PROXY.md).
 
 ---
 

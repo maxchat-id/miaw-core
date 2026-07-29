@@ -326,6 +326,7 @@ docs/                   # Documentation
 ├── CLI.md             # CLI usage guide
 ├── USAGE.md           # Complete API usage guide
 ├── PROXY.md           # Proxy guide (files, rotation, troubleshooting)
+├── DEPLOYMENT_PROXY.md # Operational notes for deploying with proxies
 ├── LID_RESOLUTION.md  # Privacy-masked (@lid) JID resolution guide
 ├── ROADMAP.md         # Feature roadmap
 ├── DEFERRED_FEATURES.md  # Backlog of deliberately deferred Baileys features

@@ -465,6 +465,7 @@ If you need any of these features, please:
 | v1.8.0  | Status posting + business extras                           | ✅ Released |
 | v1.9.0  | Communities (create/link/participants/invites)             | ✅ Released |
 | v1.9.1  | `message_receipt` event (delivery/read/played)             | ✅ Released |
+| v1.9.2  | CommonJS `require()` resolution fix (exports map)          | ✅ Released |
 | v1.10.0 | Proxy files + rotation + CLI diagnostics                   | ✅ Released |
 | next    | Community + group admin (settings, join-requests)          | 📋 Planned  |
 
