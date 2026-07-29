@@ -81,35 +81,47 @@ function requestThrough(
   timeoutMs: number,
   method: "HEAD" | "GET" = "HEAD"
 ): Promise<{ status: number; body: string }> {
-  return new Promise((resolve, reject) => {
-    const req = https.request(target, { method, agent }, (res) => {
-      const chunks: Buffer[] = [];
-      res.on("data", (chunk: Buffer) => {
-        if (method === "GET") chunks.push(chunk);
+  let settle: () => void = () => {};
+
+  const attempt = new Promise<{ status: number; body: string }>(
+    (resolve, reject) => {
+      const req = https.request(target, { method, agent }, (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk: Buffer) => {
+          if (method === "GET") chunks.push(chunk);
+        });
+        res.on("end", () =>
+          resolve({
+            status: res.statusCode ?? 0,
+            body: Buffer.concat(chunks).toString("utf-8").trim(),
+          })
+        );
+        res.on("error", reject);
       });
-      res.on("end", () =>
-        resolve({
-          status: res.statusCode ?? 0,
-          body: Buffer.concat(chunks).toString("utf-8").trim(),
-        })
-      );
-      res.on("error", reject);
-    });
 
-    // https.request's `timeout` option only covers socket inactivity, so a
-    // proxy that accepts the connection and then stalls would hang forever.
-    // Add a hard deadline on top.
-    const hardDeadline = setTimeout(() => {
-      req.destroy(new Error(`Timed out after ${timeoutMs}ms`));
+      req.setTimeout(timeoutMs, () => {
+        req.destroy(new Error(`Socket timed out after ${timeoutMs}ms`));
+      });
+      req.on("error", reject);
+      settle = () => req.destroy();
+      req.end();
+    }
+  );
+
+  // `req.setTimeout` only covers socket inactivity, and `req.destroy()` cannot
+  // abort a TCP connect still in flight inside the proxy agent - a blackholed
+  // proxy host would otherwise hang for the OS connect timeout (~75s) no matter
+  // what --timeout said. Racing guarantees the caller is released on schedule;
+  // the caller then destroys the agent, which tears down the lingering socket.
+  const deadline = new Promise<never>((_, reject) => {
+    const timer = setTimeout(() => {
+      settle();
+      reject(new Error(`Timed out after ${timeoutMs}ms`));
     }, timeoutMs);
-
-    req.setTimeout(timeoutMs, () => {
-      req.destroy(new Error(`Socket timed out after ${timeoutMs}ms`));
-    });
-    req.on("error", reject);
-    req.on("close", () => clearTimeout(hardDeadline));
-    req.end();
+    timer.unref?.();
   });
+
+  return Promise.race([attempt, deadline]);
 }
 
 /**

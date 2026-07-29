@@ -275,6 +275,41 @@ describe("CLI: proxy commands", () => {
       }
     }, 20000);
 
+    it("should honour --timeout even when the proxy host blackholes", async () => {
+      // Regression: req.destroy() cannot abort a TCP connect still in flight
+      // inside the agent, so a blackholed host used to hang for the OS connect
+      // timeout (~75s) regardless of --timeout. 198.51.100.0/24 is TEST-NET-2,
+      // reserved and unroutable, so the connect never completes.
+      const start = Date.now();
+      const { ok, output } = await run(
+        ["test", "http://198.51.100.1:9999", "--timeout", "1200"],
+        { jsonOutput: true }
+      );
+      const elapsed = Date.now() - start;
+
+      expect(ok).toBe(false);
+      expect(JSON.parse(output).ok).toBe(false);
+      // Generous ceiling, but far below the ~75s OS connect timeout.
+      expect(elapsed).toBeLessThan(15000);
+    }, 30000);
+
+    it("should read --ip and --timeout from context.flags (one-shot mode)", async () => {
+      // Regression: bin/miaw-cli.ts strips every --flag before calling
+      // runCommand, so one-shot mode delivers these via context.flags while the
+      // REPL delivers them via parsedArgs. Reading only parsedArgs made --ip a
+      // silent no-op from the command line.
+      const start = Date.now();
+      const { output } = await run(["test", "http://198.51.100.1:9999"], {
+        jsonOutput: true,
+        flags: { ip: true, timeout: "1200" },
+      });
+      const elapsed = Date.now() - start;
+
+      // The timeout flag took effect, proving context.flags was consulted.
+      expect(elapsed).toBeLessThan(15000);
+      expect(JSON.parse(output).exitIp).toBeNull();
+    }, 30000);
+
     // Opt-in: set TEST_PROXY_URL to exercise a real proxy end to end.
     const realProxy = process.env.TEST_PROXY_URL;
     (realProxy ? it : it.skip)(

@@ -223,11 +223,23 @@ export async function runCommand(
     const subCommand = parsedArgs._[0] || "";
     const subArgs = parsedArgs._.slice(1);
     const proxyFile = resolveProxyFile(parsedArgs, context.flags, context.proxyFile);
+
+    // Flags arrive from two different places: one-shot mode strips every
+    // --flag in bin/miaw-cli.ts before calling runCommand (so they land in
+    // context.flags), while the REPL passes the raw tokenized line (so they
+    // land in parsedArgs). Both must be read or the flag silently no-ops.
+    const showIp = parsedArgs.ip === true || context.flags?.ip === true;
+    const rawTimeout = parsedArgs.timeout ?? context.flags?.timeout;
+    const timeoutMs =
+      typeof rawTimeout === "number"
+        ? rawTimeout
+        : typeof rawTimeout === "string" && /^\d+$/.test(rawTimeout)
+          ? Number(rawTimeout)
+          : undefined;
+
     const probeOptions = {
-      showIp: parsedArgs.ip === true,
-      ...(typeof parsedArgs.timeout === "number" && {
-        timeoutMs: parsedArgs.timeout,
-      }),
+      showIp,
+      ...(timeoutMs !== undefined && { timeoutMs }),
     };
 
     switch (subCommand) {
