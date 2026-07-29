@@ -141,7 +141,7 @@ export async function probeProxy(
       error: {
         code: "EPROTONOSUPPORT",
         message:
-          "Unsupported proxy protocol. Supported: http, https, socks4, socks5",
+          "Unsupported proxy protocol. Supported: http, https, socks4, socks4a, socks5, socks5h",
       },
     };
   }
@@ -169,6 +169,27 @@ export async function probeProxy(
   try {
     const { status } = await requestThrough(TEST_TARGET, agent, timeoutMs);
     const latencyMs = Math.round(performance.now() - start);
+
+    // 407 comes from the PROXY, not the target: the tunnel was refused, so no
+    // traffic ever reached WhatsApp. Reporting this as reachable would make
+    // `proxy test-all` green-light a list with bad credentials - exactly the
+    // pre-flight check it exists to provide.
+    if (status === 407) {
+      return {
+        url: masked,
+        protocol,
+        ok: false,
+        latencyMs,
+        status,
+        mediaProxied,
+        exitIp: null,
+        error: {
+          code: "EPROXYAUTH",
+          message:
+            "407 Proxy Authentication Required - the proxy rejected these credentials",
+        },
+      };
+    }
 
     let exitIp: string | null = null;
     if (options.showIp) {

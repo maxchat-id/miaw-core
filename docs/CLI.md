@@ -91,7 +91,7 @@ These flags work with any command:
 |------|-------------|---------|
 | `--instance-id <id>` | Specify instance ID | `default` |
 | `--session-path <path>` | Session directory path | `./sessions-cli` |
-| `--proxy <url>` | Proxy URL (http, https, socks4, socks5) | - |
+| `--proxy <url>` | Proxy URL (http, https, socks4, socks4a, socks5, socks5h) | - |
 | `--proxy-file <path>` | Proxy list file (TXT one-per-line, or JSON array) | - |
 | `--proxy-strategy <s>` | Selection from `--proxy-file`: `round-robin`, `random`, `weighted`, `deterministic` (alias `instance`) | `deterministic` |
 | `--json` | Output as JSON instead of tables | - |

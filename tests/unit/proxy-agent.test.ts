@@ -37,6 +37,18 @@ describe("Proxy Agent Utilities", () => {
         );
       });
 
+      it("should accept SOCKS5h proxy URL (DNS resolved at the proxy)", () => {
+        expect(validateProxyConfig("socks5h://proxy.example.com:1080")).toBe(
+          true
+        );
+      });
+
+      it("should accept SOCKS4a proxy URL (DNS resolved at the proxy)", () => {
+        expect(validateProxyConfig("socks4a://proxy.example.com:1080")).toBe(
+          true
+        );
+      });
+
       it("should accept SOCKS proxy URL (generic)", () => {
         expect(validateProxyConfig("socks://proxy.example.com:1080")).toBe(
           true

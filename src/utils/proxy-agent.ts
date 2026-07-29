@@ -14,7 +14,16 @@ export interface ProxyAgents {
   fetchAgent: unknown;
 }
 
-const SOCKS_PROTOCOLS = ["socks:", "socks4:", "socks5:"];
+// socks5h / socks4a resolve DNS *at the proxy*. Plain socks5 / socks4 resolve
+// locally, which leaks the destination hostname to your DNS resolver even though
+// the connection itself is tunnelled - use the h/a variants if that matters.
+const SOCKS_PROTOCOLS = [
+  "socks:",
+  "socks4:",
+  "socks4a:",
+  "socks5:",
+  "socks5h:",
+];
 const HTTP_PROTOCOLS = ["http:", "https:"];
 const SUPPORTED_PROTOCOLS = [...SOCKS_PROTOCOLS, ...HTTP_PROTOCOLS];
 

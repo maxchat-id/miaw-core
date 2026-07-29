@@ -140,12 +140,26 @@ new MiawClient({
 
 ## Protocol Support
 
-| Protocol | WebSocket (messages) | Media upload/download |
-|----------|----------------------|-----------------------|
-| `http://` | Yes | Yes |
-| `https://` | Yes | Yes |
-| `socks4://` | Yes | **No — direct connection** |
-| `socks5://` | Yes | **No — direct connection** |
+| Protocol | WebSocket (messages) | Media upload/download | DNS resolved by |
+|----------|----------------------|-----------------------|-----------------|
+| `http://` | Yes | Yes | proxy |
+| `https://` | Yes | Yes | proxy |
+| `socks4://` | Yes | **No — direct connection** | you (leaks) |
+| `socks4a://` | Yes | **No — direct connection** | proxy |
+| `socks5://` | Yes | **No — direct connection** | you (leaks) |
+| `socks5h://` | Yes | **No — direct connection** | proxy |
+
+### DNS leaks with plain `socks5://`
+
+`socks5://` and `socks4://` resolve the destination hostname **locally**, before the
+tunnel opens. The connection is proxied but the DNS query is not, so your resolver —
+and your ISP — still sees every host you contact. The `socks5h://` and `socks4a://`
+variants hand the hostname to the proxy and let it resolve, which closes that gap.
+
+You can watch the difference: point each at a proxy you control and look at what it's
+asked to connect to. `socks5://` asks for an IP address; `socks5h://` asks for
+`web.whatsapp.com`. **Prefer `socks5h://` unless you specifically need local
+resolution** (e.g. a split-horizon DNS setup where only you can resolve the name).
 
 ### ⚠️ SOCKS media traffic uses a direct connection
 

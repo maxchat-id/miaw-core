@@ -1447,8 +1447,8 @@ client.getProxyInfo();
 |----------|-----------|----------------------|
 | `http://`  | Yes | Yes |
 | `https://` | Yes | Yes |
-| `socks4://` | Yes | No (direct connection) |
-| `socks5://` | Yes | No (direct connection) |
+| `socks4://` / `socks4a://` | Yes | No (direct connection) |
+| `socks5://` / `socks5h://` | Yes | No (direct connection) |
 
 > **⚠️ SOCKS media traffic is not proxied.** SOCKS fully tunnels the WebSocket, but media uploads/downloads use Node's `fetch()`, which needs an undici dispatcher — and undici has no SOCKS transport. With a SOCKS proxy your media transfers reveal your real IP. Use an HTTP/HTTPS proxy if that matters.
 

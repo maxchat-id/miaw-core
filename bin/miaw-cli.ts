@@ -87,7 +87,7 @@ USAGE:
 GLOBAL FLAGS:
   --instance-id <id>                          Instance ID (default: "default")
   --session-path <path>                       Session directory
-  --proxy <url>                               Proxy URL (http, https, socks4, socks5)
+  --proxy <url>                               Proxy URL (http/https/socks4/socks4a/socks5/socks5h)
   --proxy-file <path>                         Proxy list file (.txt one-per-line, or .json array)
   --proxy-strategy <strategy>                 Pick from --proxy-file: round-robin | random |
                                               weighted | deterministic (default: deterministic)

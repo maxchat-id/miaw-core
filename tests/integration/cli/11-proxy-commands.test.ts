@@ -13,6 +13,8 @@
 
 import { describe, it, expect } from "@jest/globals";
 import * as fs from "node:fs";
+import * as http from "node:http";
+import * as net from "node:net";
 import * as path from "node:path";
 import { runCmd, captureConsole } from "./cli-setup.js";
 
@@ -232,6 +234,46 @@ describe("CLI: proxy commands", () => {
       expect(output).not.toContain(FIXTURE_SECRET);
       expect(JSON.parse(output).url).toContain("****");
     });
+
+    it("should treat a 407 from the proxy as FAILURE, not success", async () => {
+      // Regression: a 407 comes from the proxy itself, meaning the tunnel was
+      // refused and nothing reached the target. Reporting it as reachable made
+      // `proxy test-all` green-light proxy lists with wrong credentials.
+      //
+      // Self-contained: this proxy always rejects, so the test stays offline
+      // and never has to reach the real target.
+      const proxy = http.createServer();
+      proxy.on("connect", (_req, socket: net.Socket) => {
+        socket.write(
+          "HTTP/1.1 407 Proxy Authentication Required\r\n" +
+            'Proxy-Authenticate: Basic realm="test"\r\n\r\n'
+        );
+        socket.destroy();
+      });
+
+      await new Promise<void>((resolve) =>
+        proxy.listen(0, "127.0.0.1", resolve)
+      );
+      const { port } = proxy.address() as net.AddressInfo;
+
+      try {
+        const { ok, output } = await run(
+          ["test", `http://wrong:creds@127.0.0.1:${port}`],
+          { jsonOutput: true }
+        );
+
+        expect(ok).toBe(false);
+
+        const payload = JSON.parse(output);
+        expect(payload.ok).toBe(false);
+        expect(payload.status).toBe(407);
+        expect(payload.error.code).toBe("EPROXYAUTH");
+        expect(payload.exitIp).toBeNull();
+        expect(output).not.toContain("creds");
+      } finally {
+        await new Promise<void>((resolve) => proxy.close(() => resolve()));
+      }
+    }, 20000);
 
     // Opt-in: set TEST_PROXY_URL to exercise a real proxy end to end.
     const realProxy = process.env.TEST_PROXY_URL;

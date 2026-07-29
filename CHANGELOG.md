@@ -12,6 +12,11 @@ All additive; no breaking changes.
 
 ### Added
 
+- **`socks5h://` and `socks4a://` support.** These resolve DNS *at the proxy*;
+  plain `socks5://` / `socks4://` resolve locally, so the destination hostname still
+  leaks to your DNS resolver even though the connection is tunnelled. Both variants
+  were previously rejected as unsupported protocols despite the underlying agent
+  supporting them.
 - **Proxy list files** - `loadProxyList()` / `loadProxyListSync()` / `parseProxyList()`
   read TXT (one per line, `#`/`;` comments, optional `weight=` and `label=` tokens,
   scheme-less `host:port[:user:pass]` vendor forms) or JSON (array of strings and/or
@@ -38,6 +43,11 @@ All additive; no breaking changes.
 
 ### Fixed
 
+- `proxy test` reported a **407 Proxy Authentication Required as success**. A 407 comes
+  from the proxy itself and means the tunnel was refused, so nothing ever reached
+  WhatsApp - but the probe counted any HTTP status as reachable. `proxy test-all` would
+  therefore green-light a proxy list with wrong credentials, defeating the pre-flight
+  check it exists to provide. It now fails with `EPROXYAUTH` and a non-zero exit code.
 - Proxy credentials leaked in two places: `MiawClient` interpolated the raw proxy URL,
   password included, into its "Invalid proxy configuration" error (which lands in logs
   and stack traces), and the CLI printed the raw `--proxy` URL to the REPL startup
