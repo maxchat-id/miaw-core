@@ -44,3 +44,12 @@ coverage/
 tmp/
 temp/
 *.tmp
+
+# Git worktrees
+.worktrees/
+
+# Proxy lists (contain credentials).
+# Anchored to the repo root on purpose: unanchored patterns match at any depth
+# and would silently swallow tests/fixtures/proxies.* .
+/proxies.txt
+/proxies.json

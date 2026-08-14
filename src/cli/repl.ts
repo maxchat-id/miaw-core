@@ -35,7 +35,7 @@ interface CommandNode {
 const commandTree: Record<string, CommandNode> = {
   // REPL-specific commands
   help: {
-    subcommands: ["instance", "get", "load", "send", "media", "chat", "story", "group", "community", "check", "contact", "profile", "label", "business", "catalog"],
+    subcommands: ["instance", "get", "load", "send", "media", "chat", "story", "group", "community", "check", "contact", "profile", "label", "business", "catalog", "proxy"],
   },
   status: {},
   exit: { aliases: ["quit"] },
@@ -133,6 +133,10 @@ const commandTree: Record<string, CommandNode> = {
       product: ["create", "update", "delete"],
     },
     flags: ["--phone", "--limit", "--cursor", "--image", "--url", "--retailerId", "--hidden", "--json"],
+  },
+  proxy: {
+    subcommands: ["list", "ls", "test", "test-all"],
+    flags: ["--proxy-file", "--ip", "--timeout", "--json"],
   },
 };
 
@@ -336,6 +340,10 @@ export interface ClientConfig {
   sessionPath: string;
   debug?: boolean;
   proxy?: string;
+  /** Proxy list file from --proxy-file, so REPL `proxy` commands inherit it. */
+  proxyFile?: string;
+  /** Selection strategy from --proxy-strategy. */
+  proxyStrategy?: string;
 }
 
 /**
@@ -544,6 +552,8 @@ export async function runRepl(config: ClientConfig): Promise<void> {
       const result = await runCommand(command, args, {
         clientConfig: config,
         jsonOutput: false,
+        ...(config.proxyFile && { proxyFile: config.proxyFile }),
+        ...(config.proxyStrategy && { proxyStrategy: config.proxyStrategy }),
       });
 
       // Check if command suggests switching to a different instance
@@ -663,12 +673,15 @@ function showReplHelp(topic: string = ""): void {
     case "catalog":
       showHelpCatalog();
       return;
+    case "proxy":
+      showHelpProxy();
+      return;
     case "":
       // Show full help
       break;
     default:
       console.log(`❌ Unknown help topic: ${topic}`);
-      console.log(`Available topics: instance, get, load, send, media, group, check, contact, profile, label, catalog`);
+      console.log(`Available topics: instance, get, load, send, media, group, check, contact, profile, label, catalog, proxy`);
       console.log(`Usage: help [topic]`);
       return;
   }
@@ -680,7 +693,7 @@ function showReplHelp(topic: string = ""): void {
 ╚════════════════════════════════════════════════════════════════════════╝
 
 REPL-SPECIFIC:
-  help [topic]                                Show help (topics: instance, get, send, group, contact, profile, label, catalog)
+  help [topic]                                Show help (topics: instance, get, send, group, contact, profile, label, catalog, proxy)
   status                                      Show connection status
   use <instance-id>                           Switch active instance
   connect [id]                                Connect to WhatsApp
@@ -706,6 +719,7 @@ COMMANDS (use "help <command>" for details):
   label       Label management (WhatsApp Business)
   business    Business profile & cover photo (WhatsApp Business)
   catalog     Catalog management (WhatsApp Business)
+  proxy       Inspect and test proxies (no connection needed)
 
 QUICK EXAMPLES:
   get groups --limit 5                        List first 5 groups
@@ -1053,6 +1067,37 @@ EXAMPLE:
 NOTES:
   - Catalog only available for WhatsApp Business accounts
   - Currency: valid ISO code (IDR, USD, EUR, etc.)
+`);
+}
+
+function showHelpProxy(): void {
+  console.log(`
+╔════════════════════════════════════════════════════════════════════════╗
+║                            Proxy Commands                              ║
+╚════════════════════════════════════════════════════════════════════════╝
+
+COMMANDS:
+  proxy list, proxy ls                        Show proxies parsed from the proxy file
+  proxy test <url>                            Test one proxy's reachability + latency
+  proxy test-all                              Test every proxy in the proxy file
+
+OPTIONS:
+  --proxy-file <path>                         Proxy list file (.txt or .json)
+  --ip                                        Also report the exit IP (extra request)
+  --timeout <ms>                              Per-proxy timeout (default: 10000)
+
+EXAMPLES:
+  proxy list --proxy-file ./proxies.txt
+  proxy test socks5://proxy.example.com:1080
+  proxy test http://user:pass@proxy.example.com:8080 --ip
+  proxy test-all --proxy-file ./proxies.txt
+
+NOTES:
+  - These commands need no WhatsApp connection: test a proxy before
+    spending a pairing attempt on it.
+  - Passwords are masked in all output.
+  - SOCKS proxies tunnel the WebSocket but NOT media transfers, which fall
+    back to a direct connection. See docs/PROXY.md.
 `);
 }
 

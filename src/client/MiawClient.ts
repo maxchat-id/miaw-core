@@ -116,6 +116,7 @@ import {
 } from "../utils/validation.js";
 import {
   createProxyAgents,
+  maskProxyUrl,
   validateProxyConfig,
 } from "../utils/proxy-agent.js";
 
@@ -222,6 +223,8 @@ export class MiawClient extends EventEmitter {
   // surface as `message_own`. Bounded FIFO — the echo arrives within seconds.
   private selfSentIds = new Set<string>();
   private selfSentOrder: string[] = [];
+  /** undici Dispatcher used to route media downloads through the proxy. */
+  private downloadDispatcher: unknown;
   // Cached WA Web version (resolved once, reused across reconnects)
   private cachedVersion: WAVersion | null = null;
   private loggingOut = false;
@@ -337,6 +340,9 @@ export class MiawClient extends EventEmitter {
 
       // Resolve proxy agents if configured
       const proxyAgents = await this.resolveProxyAgents();
+      // Kept for downloadMedia(): Baileys never plumbs a proxy into its
+      // download path, so we have to supply the dispatcher ourselves.
+      this.downloadDispatcher = proxyAgents?.downloadDispatcher;
 
       // Create socket
       const debugMode = this.options.debug;
@@ -485,7 +491,11 @@ export class MiawClient extends EventEmitter {
    * Resolves proxy agents from configuration.
    * Direct agent/fetchAgent options take priority over proxy config.
    */
-  private async resolveProxyAgents(): Promise<{ wsAgent?: unknown; fetchAgent?: unknown } | undefined> {
+  private async resolveProxyAgents(): Promise<{
+    wsAgent?: unknown;
+    fetchAgent?: unknown;
+    downloadDispatcher?: unknown;
+  } | undefined> {
     // Direct agent options take priority
     if (this.options.agent || this.options.fetchAgent) {
       return {
@@ -497,8 +507,9 @@ export class MiawClient extends EventEmitter {
     // Create agents from proxy config
     if (this.options.proxy) {
       if (!validateProxyConfig(this.options.proxy)) {
+        // Mask before interpolating - this message lands in logs and stack traces
         throw new Error(
-          `Invalid proxy configuration: ${typeof this.options.proxy === "string" ? this.options.proxy : this.options.proxy.url}`
+          `Invalid proxy configuration: ${maskProxyUrl(this.options.proxy)}`
         );
       }
 
@@ -521,17 +532,15 @@ export class MiawClient extends EventEmitter {
 
     if (!proxyUrl) return null;
 
+    const masked = maskProxyUrl(this.options.proxy!);
+
     try {
-      const parsed = new URL(proxyUrl);
-      if (parsed.password) {
-        parsed.password = "****";
-      }
       return {
-        url: parsed.toString(),
-        protocol: parsed.protocol.replace(":", ""),
+        url: masked,
+        protocol: new URL(proxyUrl).protocol.replace(":", ""),
       };
     } catch {
-      return { url: proxyUrl, protocol: "unknown" };
+      return { url: masked, protocol: "unknown" };
     }
   }
 
@@ -2483,7 +2492,11 @@ export class MiawClient extends EventEmitter {
       const buffer = await downloadMediaMessage(
         message.raw,
         "buffer",
-        {},
+        // Baileys forwards `options` into its fetch() call, which is the only
+        // way to proxy a download - it never wires `fetchAgent` into this path.
+        this.downloadDispatcher
+          ? { options: { dispatcher: this.downloadDispatcher } as never }
+          : {},
         {
           logger: this.logger,
           // reuploadRequest allows re-uploading expired media
@@ -7105,6 +7118,13 @@ export class MiawClient extends EventEmitter {
 
     this.updateConnectionState("disconnected");
     this.logger.info("Disconnected (session preserved)");
+
+    // The `disconnected` event previously fired only from handleDisconnect(),
+    // i.e. for involuntary drops - so an explicit disconnect() silently skipped
+    // it even though the event is documented simply as "Client disconnected".
+    // The "intentional" reason lets listeners tell the two apart; nothing in
+    // the library reconnects in response to this event.
+    this.emit("disconnected", "intentional", undefined);
   }
 
   /**

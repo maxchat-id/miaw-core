@@ -1,0 +1,18 @@
+# Test proxy list fixture - these hosts are NOT real, do not expect them to resolve.
+# Used by tests/integration/cli/11-proxy-commands.test.ts
+
+# US region
+socks5://us1.example.com:1080            weight=3 label=us
+socks5://us2.example.com:1080
+
+# EU region - with authentication (the password must never appear in CLI output)
+http://euuser:s3cretpassword@eu1.example.com:8080   weight=2 label=eu
+
+; Asia region (semicolon comments work too)
+https://asia1.example.com:8443
+
+# Scheme-less vendor form: host:port
+1.2.3.4:8080
+
+# This line is invalid and must be reported without aborting the whole file
+ftp://not-a-proxy.example.com:21

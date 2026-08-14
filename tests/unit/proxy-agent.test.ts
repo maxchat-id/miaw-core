@@ -8,6 +8,7 @@ import { describe, it, expect } from "@jest/globals";
 import {
   validateProxyConfig,
   createProxyAgents,
+  maskProxyUrl,
 } from "../../src/utils/proxy-agent.js";
 import type { ProxyConfig } from "../../src/types/index.js";
 
@@ -32,6 +33,18 @@ describe("Proxy Agent Utilities", () => {
 
       it("should accept SOCKS5 proxy URL", () => {
         expect(validateProxyConfig("socks5://proxy.example.com:1080")).toBe(
+          true
+        );
+      });
+
+      it("should accept SOCKS5h proxy URL (DNS resolved at the proxy)", () => {
+        expect(validateProxyConfig("socks5h://proxy.example.com:1080")).toBe(
+          true
+        );
+      });
+
+      it("should accept SOCKS4a proxy URL (DNS resolved at the proxy)", () => {
+        expect(validateProxyConfig("socks4a://proxy.example.com:1080")).toBe(
           true
         );
       });
@@ -104,41 +117,29 @@ describe("Proxy Agent Utilities", () => {
         );
 
         expect(agents.wsAgent).toBeDefined();
-        expect(agents.fetchAgent).toBeDefined();
+        expect(agents.fetchAgent).toBe(agents.wsAgent);
+        expect(agents.downloadDispatcher).toBeDefined();
         expect(agents.wsAgent.constructor.name).toBe("HttpsProxyAgent");
       });
     });
 
     describe("SOCKS proxies", () => {
-      it("should create wsAgent but no fetchAgent for SOCKS5 proxy", async () => {
-        const agents = await createProxyAgents(
-          "socks5://proxy.example.com:1080"
-        );
+      // fetchAgent carries media UPLOADS via https.request({ agent }), so it
+      // must be the same http.Agent as wsAgent - including for SOCKS. Only
+      // downloadDispatcher (undici, which has no SOCKS transport) is absent.
+      it.each(["socks5", "socks4", "socks", "socks5h", "socks4a"])(
+        "should reuse wsAgent as fetchAgent and omit downloadDispatcher for %s",
+        async (scheme) => {
+          const agents = await createProxyAgents(
+            `${scheme}://proxy.example.com:1080`
+          );
 
-        expect(agents.wsAgent).toBeDefined();
-        expect(agents.fetchAgent).toBeUndefined();
-        expect(agents.wsAgent.constructor.name).toBe("SocksProxyAgent");
-      });
-
-      it("should create wsAgent but no fetchAgent for SOCKS4 proxy", async () => {
-        const agents = await createProxyAgents(
-          "socks4://proxy.example.com:1080"
-        );
-
-        expect(agents.wsAgent).toBeDefined();
-        expect(agents.fetchAgent).toBeUndefined();
-        expect(agents.wsAgent.constructor.name).toBe("SocksProxyAgent");
-      });
-
-      it("should create wsAgent but no fetchAgent for generic SOCKS proxy", async () => {
-        const agents = await createProxyAgents(
-          "socks://proxy.example.com:1080"
-        );
-
-        expect(agents.wsAgent).toBeDefined();
-        expect(agents.fetchAgent).toBeUndefined();
-        expect(agents.wsAgent.constructor.name).toBe("SocksProxyAgent");
-      });
+          expect(agents.wsAgent).toBeDefined();
+          expect(agents.wsAgent.constructor.name).toBe("SocksProxyAgent");
+          expect(agents.fetchAgent).toBe(agents.wsAgent);
+          expect(agents.downloadDispatcher).toBeUndefined();
+        }
+      );
     });
 
     describe("ProxyConfig object", () => {
@@ -148,7 +149,8 @@ describe("Proxy Agent Utilities", () => {
         });
 
         expect(agents.wsAgent).toBeDefined();
-        expect(agents.fetchAgent).toBeDefined();
+        expect(agents.fetchAgent).toBe(agents.wsAgent);
+        expect(agents.downloadDispatcher).toBeDefined();
       });
 
       it("should merge separate auth credentials into URL", async () => {
@@ -159,7 +161,8 @@ describe("Proxy Agent Utilities", () => {
         });
 
         expect(agents.wsAgent).toBeDefined();
-        expect(agents.fetchAgent).toBeDefined();
+        expect(agents.fetchAgent).toBe(agents.wsAgent);
+        expect(agents.downloadDispatcher).toBeDefined();
       });
 
       it("should handle SOCKS5 ProxyConfig with auth", async () => {
@@ -170,7 +173,8 @@ describe("Proxy Agent Utilities", () => {
         });
 
         expect(agents.wsAgent).toBeDefined();
-        expect(agents.fetchAgent).toBeUndefined();
+        expect(agents.fetchAgent).toBe(agents.wsAgent);
+        expect(agents.downloadDispatcher).toBeUndefined();
       });
     });
 
@@ -188,6 +192,43 @@ describe("Proxy Agent Utilities", () => {
       it("should throw for empty string", async () => {
         await expect(createProxyAgents("")).rejects.toThrow();
       });
+    });
+  });
+
+  describe("maskProxyUrl", () => {
+    it("should mask the password", () => {
+      const masked = maskProxyUrl("http://user:s3cret@proxy.example.com:8080");
+      expect(masked).not.toContain("s3cret");
+      expect(masked).toContain("****");
+    });
+
+    it("should preserve the username", () => {
+      expect(maskProxyUrl("http://sticky-us-1:pw@proxy.example.com:8080")).toContain(
+        "sticky-us-1"
+      );
+    });
+
+    it("should leave a URL without credentials unchanged", () => {
+      expect(maskProxyUrl("socks5://proxy.example.com:1080")).toBe(
+        "socks5://proxy.example.com:1080"
+      );
+    });
+
+    it("should mask credentials supplied via ProxyConfig fields", () => {
+      const config: ProxyConfig = {
+        url: "http://proxy.example.com:8080",
+        username: "user",
+        password: "s3cret",
+      };
+      const masked = maskProxyUrl(config);
+      expect(masked).not.toContain("s3cret");
+      expect(masked).toContain("user");
+      expect(masked).toContain("****");
+    });
+
+    it("should return an unparseable string unchanged instead of throwing", () => {
+      expect(maskProxyUrl("not-a-url")).toBe("not-a-url");
+      expect(maskProxyUrl("")).toBe("");
     });
   });
 });

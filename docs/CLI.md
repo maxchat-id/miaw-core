@@ -91,7 +91,9 @@ These flags work with any command:
 |------|-------------|---------|
 | `--instance-id <id>` | Specify instance ID | `default` |
 | `--session-path <path>` | Session directory path | `./sessions-cli` |
-| `--proxy <url>` | Proxy URL (http, https, socks4, socks5) | - |
+| `--proxy <url>` | Proxy URL (http, https, socks4, socks4a, socks5, socks5h) | - |
+| `--proxy-file <path>` | Proxy list file (TXT one-per-line, or JSON array) | - |
+| `--proxy-strategy <s>` | Selection from `--proxy-file`: `round-robin`, `random`, `weighted`, `deterministic` (alias `instance`) | `deterministic` |
 | `--json` | Output as JSON instead of tables | - |
 | `--debug` | Enable verbose logging | - |
 | `--help` | Show help message | - |
@@ -110,6 +112,11 @@ npx miaw-cli --proxy socks5://proxy.example.com:1080 get groups
 
 # Connect through an HTTP proxy with auth
 npx miaw-cli --proxy http://user:pass@proxy.example.com:8080 send text 6281234567890 "Hello"
+
+# Pick a proxy from a list file. Deterministic by default, so "bot-3"
+# resolves to the same proxy on every invocation and its session keeps a
+# stable egress IP.
+npx miaw-cli --instance-id bot-3 --proxy-file ./proxies.txt get groups
 
 # JSON output
 npx miaw-cli get groups --json
@@ -615,6 +622,137 @@ npx miaw-cli check 6281234567890 --json
 ✅ 2/3 numbers are on WhatsApp
 ```
 
+### Proxy Operations
+
+Inspect and test proxies. **These commands require no WhatsApp connection** — they probe the proxy directly, so you can validate one before spending a pairing attempt on it. Passwords are masked in all output.
+
+See the [Proxy Guide](./PROXY.md) for configuration, rotation strategies, and troubleshooting.
+
+#### Proxy List
+
+```bash
+npx miaw-cli proxy list [--proxy-file <path>]
+npx miaw-cli proxy ls   [--proxy-file <path>]
+```
+
+**Examples:**
+
+```bash
+npx miaw-cli proxy list --proxy-file ./proxies.txt
+npx miaw-cli proxy list --proxy-file ./proxies.json --json
+
+# Or set it once
+MIAW_PROXY_FILE=./proxies.txt npx miaw-cli proxy list
+
+# In REPL
+proxy list --proxy-file ./proxies.txt
+```
+
+**Output:**
+
+```
+📄 ./proxies.txt (txt)
+
+┌─────┬──────────────────────────────────────┬──────────┬──────┬────────┬─────────┬───────┐
+│ #   │ Proxy                                │ Protocol │ Auth │ Weight │ Media   │ Label │
+├─────┼──────────────────────────────────────┼──────────┼──────┼────────┼─────────┼───────┤
+│ 0   │ socks5://us1.example.com:1080        │ socks5   │ No   │ 3      │ DL direct │ us  │
+│ 1   │ http://euuser:****@eu1.example.com:8080 │ http  │ Yes  │ 2      │ Proxied │ eu    │
+└─────┴──────────────────────────────────────┴──────────┴──────┴────────┴─────────┴───────┘
+
+✅ 2 proxies loaded (1 socks5, 1 http)
+⚠️  1 SOCKS proxy: media DOWNLOADS use a direct connection (uploads are proxied; see docs/PROXY.md)
+```
+
+Invalid lines are reported in a second table and skipped — one typo never hides the rest of the file.
+
+#### Test Proxy
+
+```bash
+npx miaw-cli proxy test <url> [--ip] [--timeout <ms>]
+```
+
+Opens an HTTPS request to `web.whatsapp.com` through the proxy's WebSocket agent — the same agent Baileys uses — and reports latency.
+
+**Options:**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--ip` | Also report the exit IP (makes an extra request to a third-party echo service) | off |
+| `--timeout <ms>` | Per-proxy timeout | `10000` |
+
+**Examples:**
+
+```bash
+npx miaw-cli proxy test socks5://proxy.example.com:1080
+npx miaw-cli proxy test http://user:pass@proxy.example.com:8080 --ip
+npx miaw-cli proxy test socks5://slow.example.com:1080 --timeout 3000
+npx miaw-cli proxy test socks5://proxy.example.com:1080 --json
+```
+
+**Output:**
+
+```
+🔍 Testing proxy via https://web.whatsapp.com/ ...
+
+✅ socks5://proxy.example.com:1080
+   Protocol: socks5
+   Latency:  412ms (HTTP 200)
+   ⚠️  Media DOWNLOADS will use a direct connection (undici has no SOCKS transport)
+```
+
+Failure:
+
+```
+❌ http://proxy.example.com:8080
+   Protocol: http
+   Error:    ECONNREFUSED - connect ECONNREFUSED 10.0.0.1:8080
+```
+
+**Notes:**
+
+- Exits non-zero when the proxy is unreachable.
+- Any HTTP status counts as success — the question is whether the tunnel establishes, not whether WhatsApp approves. A flagged datacenter IP passes this probe and can still be refused at connect time.
+
+#### Test All Proxies
+
+```bash
+npx miaw-cli proxy test-all [--proxy-file <path>] [--ip] [--timeout <ms>]
+```
+
+Tests every proxy in the list file, 5 at a time.
+
+**Examples:**
+
+```bash
+npx miaw-cli proxy test-all --proxy-file ./proxies.txt
+npx miaw-cli proxy test-all --proxy-file ./proxies.txt --json
+
+# Gate a deploy on the whole list being reachable
+npx miaw-cli proxy test-all --proxy-file ./proxies.txt || exit 1
+```
+
+**Output:**
+
+```
+🔍 Testing 4 proxies via https://web.whatsapp.com/ (5 at a time) ...
+
+┌────────┬──────────────────────────────────┬──────────┬─────────┬──────────────────────┐
+│ Status │ Proxy                            │ Protocol │ Latency │ Detail               │
+├────────┼──────────────────────────────────┼──────────┼─────────┼──────────────────────┤
+│ OK     │ http://eu1.example.com:8080      │ http     │ 188ms   │ HTTP 200             │
+│ OK     │ socks5://us1.example.com:1080    │ socks5   │ 412ms   │ HTTP 200 (dl direct)    │
+│ FAIL   │ http://dead.example.com:8080     │ http     │ -       │ ECONNREFUSED         │
+└────────┴──────────────────────────────────┴──────────┴─────────┴──────────────────────┘
+
+⚠️  2/3 proxies reachable (median 300ms)
+```
+
+**Notes:**
+
+- Results are sorted fastest-first with failures last.
+- Exits non-zero if **any** proxy fails.
+
 ### Contact Operations
 
 Manage and query contacts.
@@ -1091,7 +1229,14 @@ Configure defaults via environment variables:
 # .env file
 MIAW_INSTANCE_ID=my-bot
 MIAW_SESSION_PATH=./my-sessions
+
+# Proxy (equivalent to --proxy / --proxy-file / --proxy-strategy)
+MIAW_PROXY=socks5://user:pass@proxy.example.com:1080
+MIAW_PROXY_FILE=./proxies.txt
+MIAW_PROXY_STRATEGY=deterministic
 ```
+
+> Prefer environment variables over CLI flags for anything containing a password — flags land in your shell history and in the process list.
 
 Or set inline:
 ```bash
@@ -1179,6 +1324,16 @@ npx miaw-cli --help
 npm install miaw-core@latest
 ```
 
+### Proxy Connection Fails
+
+Test the proxy in isolation first — it needs no WhatsApp connection:
+
+```bash
+npx miaw-cli proxy test <your-proxy-url>
+```
+
+If that fails, the problem is the proxy, not miaw-core. If it succeeds but WhatsApp still won't connect, the tunnel is fine and the IP itself is likely the issue (flagged datacenter range, or a session whose IP changed). The [Proxy Guide's symptom table](./PROXY.md#symptom-table) maps each error code to a fix.
+
 ## Comparison: CLI vs Programmatic
 
 | Aspect | CLI | Programmatic |
@@ -1192,5 +1347,7 @@ npm install miaw-core@latest
 ## See Also
 
 - [Usage Guide](./USAGE.md) - Programmatic API usage
+- [Proxy Guide](./PROXY.md) - Proxy configuration, rotation, and troubleshooting
+- [Proxy Deployment Notes](./DEPLOYMENT_PROXY.md) - Operational guidance for deployments
 - [Examples](../examples/) - Code examples
 - [Roadmap](./ROADMAP.md) - Planned features

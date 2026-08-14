@@ -17,6 +17,11 @@ import { runRepl } from "../src/cli/repl.js";
 import { runCommand } from "../src/cli/commands/index.js";
 import { initializeCLICleanup } from "../src/cli/utils/cleanup.js";
 import { getErrorMessage } from "../src/utils/type-guards.js";
+import { maskProxyUrl } from "../src/utils/proxy-agent.js";
+import {
+  parseProxyStrategy,
+  selectProxyForInstance,
+} from "../src/cli/utils/proxy-config.js";
 
 // Initialize CLI cleanup handlers for graceful shutdown
 initializeCLICleanup();
@@ -28,6 +33,10 @@ dotenv.config({ path: ".env.test" });
 // Default configuration
 const DEFAULT_INSTANCE_ID = process.env.MIAW_INSTANCE_ID || "default";
 const DEFAULT_SESSION_PATH = process.env.MIAW_SESSION_PATH || "./sessions-cli";
+// Proxy credentials belong in .env, not in shell history.
+const DEFAULT_PROXY = process.env.MIAW_PROXY || undefined;
+const DEFAULT_PROXY_FILE = process.env.MIAW_PROXY_FILE || undefined;
+const DEFAULT_PROXY_STRATEGY_ENV = process.env.MIAW_PROXY_STRATEGY || undefined;
 
 /**
  * Parse CLI arguments
@@ -78,7 +87,10 @@ USAGE:
 GLOBAL FLAGS:
   --instance-id <id>                          Instance ID (default: "default")
   --session-path <path>                       Session directory
-  --proxy <url>                               Proxy URL (http, https, socks4, socks5)
+  --proxy <url>                               Proxy URL (http/https/socks4/socks4a/socks5/socks5h)
+  --proxy-file <path>                         Proxy list file (.txt one-per-line, or .json array)
+  --proxy-strategy <strategy>                 Pick from --proxy-file: round-robin | random |
+                                              weighted | deterministic (default: deterministic)
   --json                                      Output as JSON
   --debug                                     Enable verbose logging
 
@@ -93,6 +105,7 @@ COMMANDS:
   profile     Profile management (picture, name, status)
   label       Label management - WhatsApp Business (list, chats, add, chat)
   catalog     Catalog management - WhatsApp Business (list, collections, product)
+  proxy       Inspect and test proxies (list, test, test-all) - no connection needed
 
 COMMON OPTIONS:
   --limit N                                   Limit number of results
@@ -103,6 +116,8 @@ EXAMPLES:
   miaw-cli send text 6281234567890 "Hello"
   miaw-cli group participants add 120363xxx@g.us 628xxx
   miaw-cli contact add 6281234567890 "John Doe"
+  miaw-cli proxy test socks5://proxy.example.com:1080
+  miaw-cli --instance-id bot-3 --proxy-file ./proxies.txt get groups
 
 REPL MODE:
   Run 'miaw-cli' without arguments to start interactive mode.
@@ -132,8 +147,35 @@ async function main() {
   const jsonOutput = flags.json === true;
   const debugMode = flags.debug === true;
 
-  // Extract proxy flag
-  const proxyUrl = flags.proxy as string | undefined;
+  // Extract proxy flags (CLI flag wins over the MIAW_PROXY* env fallbacks)
+  const explicitProxy = (flags.proxy as string | undefined) || DEFAULT_PROXY;
+  const proxyFile = (flags["proxy-file"] as string | undefined) || DEFAULT_PROXY_FILE;
+
+  let proxyStrategy;
+  try {
+    proxyStrategy = parseProxyStrategy(
+      (flags["proxy-strategy"] as string | undefined) || DEFAULT_PROXY_STRATEGY_ENV
+    );
+  } catch (error: unknown) {
+    console.error(`❌ ${getErrorMessage(error)}`);
+    process.exit(1);
+  }
+
+  // Precedence: an explicit --proxy always wins; otherwise a --proxy-file
+  // selects one proxy for this process. The default strategy is
+  // deterministic so a given instanceId keeps a stable egress IP across
+  // invocations - round-robin here would silently rotate a live session's IP.
+  let proxyUrl = explicitProxy;
+  if (explicitProxy && proxyFile) {
+    console.log("⚠️  --proxy overrides --proxy-file");
+  } else if (!explicitProxy && proxyFile) {
+    try {
+      proxyUrl = await selectProxyForInstance(proxyFile, proxyStrategy, instanceId);
+    } catch (error: unknown) {
+      console.error(`❌ Failed to select a proxy from ${proxyFile}: ${getErrorMessage(error)}`);
+      process.exit(1);
+    }
+  }
 
   // Create client configuration
   const clientConfig = {
@@ -141,6 +183,8 @@ async function main() {
     sessionPath,
     debug: debugMode,
     ...(proxyUrl && { proxy: proxyUrl }),
+    ...(proxyFile && { proxyFile }),
+    proxyStrategy,
   };
 
   // No command provided - start REPL
@@ -148,7 +192,7 @@ async function main() {
     console.log(`\n🚀 Starting miaw-cli REPL...`);
     console.log(`📂 Instance: ${instanceId}`);
     console.log(`📂 Session: ${sessionPath}`);
-    if (proxyUrl) console.log(`🌐 Proxy: ${proxyUrl}`);
+    if (proxyUrl) console.log(`🌐 Proxy: ${maskProxyUrl(proxyUrl)}`);
     console.log(`🔧 Debug: ${debugMode ? "ON" : "OFF"}\n`);
 
     try {
@@ -166,6 +210,8 @@ async function main() {
       clientConfig,
       jsonOutput,
       flags,
+      ...(proxyFile && { proxyFile }),
+      proxyStrategy,
     });
 
     if (!success) {
