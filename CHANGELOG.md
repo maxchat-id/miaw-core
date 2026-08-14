@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.0] - 2026-08-15
+
+**Runtime-tunable options, own-send and receipt events.** All additive; no
+breaking changes.
+
+### Added
+
+- **`getRuntimeOptions()` / `setRuntimeOptions()`** and the `RuntimeOptions`
+  type. `debug`, `autoReconnect`, `maxReconnectAttempts` and `reconnectDelay`
+  can now be changed on a live client. Previously only `enableDebug()` /
+  `disableDebug()` were reachable at runtime, so changing a reconnect setting
+  meant rebuilding the client — and rebuilding rebinds the transport, which for
+  a proxied session means a new IP mid-session. The four are deliberately the
+  only ones: `proxy`, `agent` and `browser` are bound when the socket is built,
+  and the pairing options only matter while pairing. Reconnect values are read
+  when an attempt is made, so they apply from the next attempt onward.
+- **`message_receipt` event** — surfaces 1:1 delivery, read and played
+  acknowledgements, which were previously dropped.
+- **`message_own` event** — fires for a message sent from the paired phone
+  rather than through this client, so a bot can see the other half of the
+  conversation. Sends made through the client are suppressed: baileys replays
+  them through `messages.upsert`, and echoing those would double-count.
+- **`quotedMessageId`** on normalized messages, read from
+  `contextInfo.stanzaId`, so a reply can be tied to what it replies to.
+
+### Fixed
+
+- `documentWithCaptionMessage` is normalized as a `document`. It was falling
+  through as an unknown type, so captioned documents arrived with no media
+  metadata.
+- `checkNumbers()` mapped results to the wrong input when WhatsApp returned
+  them out of order or omitted an entry; a batch could report the wrong number
+  as registered.
+- Group admin JIDs are resolved through the LID cache, so a privacy-masked
+  admin is no longer reported as a different participant.
+- `dispose()` no longer leaves a reconnect attempt scheduled. The attempt would
+  fire against a disposed client and emit an unhandled `error`, crashing the
+  process.
+
 ## [1.10.0] - 2026-07-29
 
 **Proxy files, rotation, and CLI diagnostics** - builds on the v1.3.0 proxy core.

@@ -181,7 +181,7 @@ npm run test:watch
 npm run test:coverage
 ```
 
-## Current Capabilities (v1.10.0)
+## Current Capabilities (v1.11.0)
 
 Built on **Baileys v7.0.0-rc13** - the latest WhatsApp Web protocol implementation.
 
@@ -294,4 +294,4 @@ Built on top of [@whiskeysockets/baileys](https://github.com/WhiskeySockets/Bail
 
 ---
 
-**Version:** 1.4.1 | **Baileys:** 7.0.0-rc13 | **Status:** Stable | **Updated:** 2026-06-26
+**Version:** 1.11.0 | **Baileys:** 7.0.0-rc13 | **Status:** Stable | **Updated:** 2026-08-15
