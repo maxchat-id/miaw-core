@@ -388,6 +388,28 @@ export interface SendTextOptions {
 /**
  * Media source - can be a file path, URL, or Buffer
  */
+/**
+ * The options a running client can safely change without being rebuilt.
+ *
+ * Deliberately narrow. The transport is bound at construction, so `proxy`,
+ * `agent` and `browser` cannot be changed here — a new socket is required, and
+ * WhatsApp reads a mid-session IP change as an account takeover. Pairing
+ * options only matter while pairing.
+ *
+ * The reconnect values apply from the next reconnect attempt onward; an
+ * attempt already scheduled keeps the delay it was scheduled with.
+ */
+export interface RuntimeOptions {
+  /** Verbose logging, including libsignal session logs. */
+  debug: boolean;
+  /** Whether to reconnect automatically after an involuntary drop. */
+  autoReconnect: boolean;
+  /** Attempts before giving up. `Infinity` means never give up. */
+  maxReconnectAttempts: number;
+  /** Base delay in ms; the backoff doubles it per attempt. */
+  reconnectDelay: number;
+}
+
 export type MediaSource =
   | string // File path or URL
   | Buffer;

@@ -25,6 +25,7 @@ import {
 } from "../utils/console-filter.js";
 import {
   MiawClientOptions,
+  RuntimeOptions,
   ConnectionState,
   SendTextOptions,
   SendMessageResult,
@@ -7350,6 +7351,48 @@ export class MiawClient extends EventEmitter {
    */
   isDebugEnabled(): boolean {
     return this.options.debug;
+  }
+
+  /**
+   * Read the options that can be changed on a running client.
+   */
+  getRuntimeOptions(): RuntimeOptions {
+    return {
+      debug: this.options.debug,
+      autoReconnect: this.options.autoReconnect,
+      maxReconnectAttempts: this.options.maxReconnectAttempts,
+      reconnectDelay: this.options.reconnectDelay,
+    };
+  }
+
+  /**
+   * Change options on a running client, applying only the keys supplied.
+   *
+   * The reconnect values are read when an attempt is made rather than captured
+   * at construction, so they take effect from the next attempt. `debug` is
+   * routed through enableDebug()/disableDebug() so the logger, the socket
+   * logger and the libsignal console filter stay in step.
+   *
+   * @returns The full set of runtime options after the change.
+   */
+  setRuntimeOptions(patch: Partial<RuntimeOptions>): RuntimeOptions {
+    if (patch.autoReconnect !== undefined) {
+      this.options.autoReconnect = patch.autoReconnect;
+    }
+    if (patch.maxReconnectAttempts !== undefined) {
+      this.options.maxReconnectAttempts = patch.maxReconnectAttempts;
+    }
+    if (patch.reconnectDelay !== undefined) {
+      this.options.reconnectDelay = patch.reconnectDelay;
+    }
+    if (patch.debug !== undefined && patch.debug !== this.options.debug) {
+      if (patch.debug) {
+        this.enableDebug();
+      } else {
+        this.disableDebug();
+      }
+    }
+    return this.getRuntimeOptions();
   }
 
   /**
