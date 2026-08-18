@@ -19,6 +19,7 @@ import { Boom } from "@hapi/boom";
 import { EventEmitter } from "node:events";
 import { MiawLogger } from "../types/logger.js";
 import { createFilteredLogger } from "../utils/filtered-logger.js";
+import { shouldSyncHistoryType } from "../utils/history-sync.js";
 import {
   enableConsoleFilter,
   disableConsoleFilter,
@@ -368,12 +369,12 @@ export class MiawClient extends EventEmitter {
         // Enable full history sync to populate stores (controlled by syncFullHistory option)
         syncFullHistory: this.options.syncFullHistory,
         fireInitQueries: true,
-        // Debug callback to see if history sync notifications are received
+        // Gated by sync type, not by a flat boolean — see shouldSyncHistoryType.
         shouldSyncHistoryMessage: (msg: any) => {
           if (debugMode) {
             logger.debug(`[shouldSyncHistoryMessage] syncType: ${msg.syncType}`);
           }
-          return this.options.syncFullHistory;
+          return shouldSyncHistoryType(this.options.syncFullHistory, msg.syncType);
         },
         // Proxy support: agent for WebSocket, fetchAgent for media HTTP requests
         ...(proxyAgents?.wsAgent ? { agent: proxyAgents.wsAgent as import("node:https").Agent } : {}),
