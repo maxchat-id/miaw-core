@@ -1,6 +1,6 @@
 import { useMultiFileAuthState } from "@whiskeysockets/baileys";
 import { join } from "node:path";
-import { rmSync, existsSync } from "node:fs";
+import { readdirSync, rmSync, existsSync } from "node:fs";
 
 /**
  * Handles authentication state management
@@ -33,13 +33,21 @@ export class AuthHandler {
   /**
    * Clear all session files for this instance.
    * This is needed when logged out to allow fresh QR code authentication.
+   *
+   * The directory itself is kept. A socket that is shutting down keeps writing
+   * keys for a moment, and `useMultiFileAuthState` only recreates the directory
+   * on the next initialize() — a write landing in that gap fails with ENOENT as
+   * an unhandled rejection, which is enough to abort the pairing that follows a
+   * logout.
    */
   clearSession(): boolean {
     const authPath = this.getAuthPath();
-    if (existsSync(authPath)) {
-      rmSync(authPath, { recursive: true, force: true });
-      return true;
+    if (!existsSync(authPath)) {
+      return false;
     }
-    return false;
+    for (const entry of readdirSync(authPath)) {
+      rmSync(join(authPath, entry), { recursive: true, force: true });
+    }
+    return true;
   }
 }
