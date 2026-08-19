@@ -1539,6 +1539,21 @@ export class MiawClient extends EventEmitter {
   }
 
   /**
+   * Whether this disconnect will be followed by a reconnect attempt.
+   *
+   * Kept in step with the branches in handleDisconnect(): every reason that
+   * returns false there must be listed here, or the state will claim a
+   * reconnect that never comes.
+   */
+  private willReconnectAfter(statusCode: number | undefined): boolean {
+    if (!this.options.autoReconnect) return false;
+    if (this.loggingOut) return false;
+    if (statusCode === DisconnectReason.loggedOut) return false;
+    if (statusCode === DisconnectReason.connectionReplaced) return false;
+    return true;
+  }
+
+  /**
    * Handle disconnection
    * @returns true if should reconnect
    */
@@ -1547,7 +1562,16 @@ export class MiawClient extends EventEmitter {
     const reason = DisconnectReason[statusCode] || "unknown";
 
     this.logger.info("Disconnected:", reason, "Code:", statusCode);
-    this.updateConnectionState("disconnected");
+
+    // A drop we intend to recover from is `reconnecting`, not `disconnected`.
+    // `restartRequired` (515) is WhatsApp's post-pairing handshake step, and
+    // reporting it as idle let callers treat a session mid-registration as one
+    // that needed connecting — miaw-api's connectIfIdle() did exactly that and
+    // tore down the handshake, which WhatsApp then rejected as loggedOut,
+    // wiping the freshly issued credentials.
+    this.updateConnectionState(
+      this.willReconnectAfter(statusCode) ? "reconnecting" : "disconnected"
+    );
     this.emit("disconnected", reason, statusCode);
 
     // Reset label sync state so next connection will trigger fresh sync
