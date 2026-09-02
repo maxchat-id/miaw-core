@@ -4,7 +4,7 @@ This roadmap focuses on **essential bot features** (< 1.0.0) that 90% of WhatsAp
 
 ## Version Status
 
-**Current Version:** 1.10.0
+**Current Version:** 1.11.0
 **Baileys Version:** 7.0.0-rc13
 **Node.js Required:** >= 18.0.0
 **Module System:** ESM-only
@@ -318,6 +318,17 @@ These shipped after the first stable release (see [CHANGELOG.md](../CHANGELOG.md
 - [x] **`maskProxyUrl()`** - credential masking everywhere; fixed two leak paths
 - [x] **[PROXY.md](./PROXY.md)** - dedicated proxy guide
 
+### v1.11.0 - Per-Instance Proxies ✅ (2026-09-02)
+
+- [x] **Per-instance proxy pins** - `miaw-cli instance set-proxy <id> <url|--label|--from-env|--from-file>`, persisted in `<session-path>/instances.json` (0600); label pins store no credentials
+- [x] **`setProxy()`** - stage a proxy for the next `connect()`; never touches a live socket, refused under a custom `agent`
+- [x] **`getProxyInfo()` liveness** - `active` / `pending` expose a staged-but-not-applied change
+- [x] **Per-target proxy resolution** - `--proxy-file` selection is keyed on the instance a command targets, not the one the process started with
+- [x] **Fixed: the CLI silently dropped the proxy** - `instance` handlers discarded it and the client cache ignored it, so REPL `connect <id>` cached a proxy-less client and traffic went direct
+- [x] **Complete dead-proxy failover recipe** - reuses one client; the previous snippet ended at a comment
+- [x] **[DEPLOYMENT_INSTANCE_PROXY.md](./DEPLOYMENT_INSTANCE_PROXY.md)** - operator guide for the new persistent pin store
+- [x] ⚠️ **Breaking:** `ProxyRotator` now defaults to `deterministic`, matching the docs; `next()` without an `instanceId` throws
+
 ---
 
 ## Not-Yet-Implemented Baileys Features (Prioritized)
@@ -467,6 +478,7 @@ If you need any of these features, please:
 | v1.9.1  | `message_receipt` event (delivery/read/played)             | ✅ Released |
 | v1.9.2  | CommonJS `require()` resolution fix (exports map)          | ✅ Released |
 | v1.10.0 | Proxy files + rotation + CLI diagnostics                   | ✅ Released |
+| v1.11.0 | Per-instance proxy pins + `setProxy()`                     | ✅ Released |
 | next    | Community + group admin (settings, join-requests)          | 📋 Planned  |
 
 ---
@@ -635,7 +647,7 @@ Want to help implement a feature?
 
 ---
 
-**Last Updated:** 2026-06-26
-**Status:** Stable (v1.10.0, Baileys 7.0.0-rc13)
+**Last Updated:** 2026-09-02
+**Status:** Stable (v1.11.0, Baileys 7.0.0-rc13)
 **Next Release:** Chat management + rich messages — see [Not-Yet-Implemented Baileys Features (Prioritized)](#not-yet-implemented-baileys-features-prioritized)
 **Path So Far:** v0.1.0 → … → v0.9.0 ✅ → v1.0.0 ✅ (Stable) → v1.1.0 ✅ (Baileys v7/ESM) → v1.2.0 ✅ → v1.3.0 ✅ (Proxy) → v1.4.x ✅ (CLI + rc13)

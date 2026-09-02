@@ -4,6 +4,7 @@ This guide helps you migrate between versions of Miaw Core.
 
 ## Table of Contents
 
+- [v1.10.x to v1.11.0](#v110x-to-v1110)
 - [v1.4.0 to v1.4.1](#v140-to-v141)
 - [v1.1.x to v1.2.0](#v11x-to-v120)
 - [v1.0.x to v1.1.0](#v10x-to-v110)
@@ -11,6 +12,75 @@ This guide helps you migrate between versions of Miaw Core.
 - [v0.8.x to v0.9.0](#v08x-to-v090)
 - [v0.7.x to v0.8.0](#v07x-to-v080)
 - [Breaking Changes Summary](#breaking-changes-summary)
+
+---
+
+## v1.10.x to v1.11.0
+
+**Status:** Released — 2026-09-02
+**Breaking Changes:** One, affecting library users of `ProxyRotator` only ⚠️
+
+### Breaking: `ProxyRotator` defaults to `deterministic`
+
+`new ProxyRotator(urls)` previously defaulted to `round-robin`, contradicting
+both `PROXY.md` (which is headed "`deterministic` — the default, and why") and
+`CLAUDE.md`. Only the CLI actually applied `deterministic`.
+
+The mismatch was silent and dangerous: following the documentation gave you
+round-robin, which hands a long-lived session a different egress IP on every
+call — the exact pattern WhatsApp reads as account takeover. The code was
+changed to match the docs so the default fails safe.
+
+**What breaks:** `rotator.next()` with **no `instanceId`**. Deterministic
+selection needs an id, so it now throws a message naming the fix.
+
+```typescript
+// Before (worked, round-robin)
+const rotator = new ProxyRotator(urls);
+rotator.next();
+
+// After — either pass the instance id (recommended)
+rotator.next(instanceId);      // or rotator.forInstance(instanceId)
+
+// ...or opt back into round-robin explicitly
+const rotator = new ProxyRotator({ proxies: urls, strategy: "round-robin" });
+rotator.next();
+```
+
+Unaffected: any rotator constructed with an explicit `strategy`, and any
+`next(instanceId)` call. The sibling `miaw-api` does both, so it needs no
+change. CLI users are unaffected — the CLI already defaulted to
+`deterministic`.
+
+### New, no migration required
+
+- **`client.setProxy(proxy)`** stages a proxy for the **next** `connect()`.
+  It never touches a live socket, because changing a connected session's egress
+  IP is read as account takeover. Applying it is an explicit `disconnect()` /
+  `connect()` you write — see the failover recipe in
+  [PROXY.md](./PROXY.md#handling-a-dead-proxy).
+- **`getProxyInfo()` gained `active` and `pending`.** Purely additive; the
+  `{ url, protocol }` fields and the `null`-for-custom-agent contract are
+  unchanged, so existing callers keep working.
+- **Per-instance CLI pins.** `miaw-cli instance set-proxy <id> ...` persists an
+  assignment in `<session-path>/instances.json`. New file, read only by 1.11.0+
+  and ignored by older versions.
+
+### If you deploy with proxies
+
+`instances.json` is new persistent, secret-grade state that must live on the
+same volume as your sessions. Read
+[DEPLOYMENT_INSTANCE_PROXY.md](./DEPLOYMENT_INSTANCE_PROXY.md) before upgrading
+— in particular, a cluster-wide `MIAW_PROXY` silently outranks every pin.
+
+### Fixed behaviour you may have been relying on
+
+The CLI previously dropped the proxy on `instance create`/`connect`/
+`disconnect`/`logout`, and the client cache ignored the proxy entirely — so a
+REPL `connect <id>` cached a proxy-less client that later commands reused, and
+traffic went direct. If you worked around this (for example by always passing
+`--proxy` explicitly), the workaround is no longer needed, though it still
+takes precedence.
 
 ---
 
@@ -464,6 +534,7 @@ await client.updateProfileStatus("Available for chats");
 
 | Version | Change                                           | Migration Required |
 | ------- | ------------------------------------------------ | ------------------ |
+| v1.11.0 | `ProxyRotator` defaults to `deterministic`       | Yes, if calling `next()` with no instanceId |
 | v1.0.0  | New `dispose()` method                           | Recommended        |
 | v1.0.0  | `getLidMappings()` returns object instead of Map | Yes, if using      |
 | v0.9.0  | Label operations added                           | No (new features)  |

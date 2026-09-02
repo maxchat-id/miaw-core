@@ -56,6 +56,7 @@ This document provides a comprehensive comparison between [Baileys](https://gith
 | **Proxy Support**                        | ✅      | ✅        | HTTP/SOCKS via the `proxy` option (v1.3.0) |
 | **Proxy Lists / Rotation**               | ❌      | ✅        | `ProxyRotator` + TXT/JSON proxy files (v1.10.0) |
 | **Proxy Diagnostics**                    | ❌      | ✅        | `miaw-cli proxy test` — no connection needed (v1.10.0) |
+| **Per-Instance Proxy Pins**              | ❌      | ✅        | `instance set-proxy` persists an assignment; `setProxy()` restages (v1.11.0) |
 | **WebSocket Options**                    | ✅      | ❌        | Custom WS configuration               |
 
 ---

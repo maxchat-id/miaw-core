@@ -134,7 +134,7 @@ Business and social features:
 
 **Run:** `ts-node examples/09-business-social.ts`
 
-### 10-proxy-rotation.ts (v1.10.0)
+### 10-proxy-rotation.ts (v1.10.0, failover updated in v1.11.0)
 Connecting through proxies, and giving each instance its own egress IP:
 
 **Single proxy:**
@@ -148,8 +148,14 @@ Connecting through proxies, and giving each instance its own egress IP:
 - Why rotation distributes instances across proxies and must never rotate a *live* session's IP
 
 **Failover:**
-- Detecting a dead proxy from the `connection` event
+- Detecting a dead proxy from the `disconnected` event, ignoring `"intentional"`
+  (your own `disconnect()`) and requiring several consecutive failures — one
+  blip is not a dead proxy
 - Dropping it from the pool and re-selecting, without disturbing your other bots
+- Applying the replacement to the **same** client with `disconnect()` →
+  `setProxy()` → `connect()`. Reusing the client keeps the session, the stores
+  and your event handlers; building a second one on the same `instanceId` would
+  put two writers on one auth state
 
 **Setup:** `cp examples/proxies.example.txt ./proxies.txt`, then edit it. Validate with
 `npx miaw-cli proxy test-all --proxy-file ./proxies.txt` before running.
