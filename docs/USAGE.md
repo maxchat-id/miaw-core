@@ -122,7 +122,7 @@ const client = new MiawClient({
 | `connectionTimeout`    | `number`  | `120000`       | Connection establishment timeout                    |
 | `proxy`                | `string \| ProxyConfig` | _none_ | Proxy URL or config object (see [Proxy Support](#proxy-support)) |
 | `agent`                | `Agent`   | _none_         | Custom WebSocket agent (advanced, overrides proxy)  |
-| `fetchAgent`           | `unknown` | _none_         | Custom fetch dispatcher (advanced, overrides proxy) |
+| `fetchAgent`           | `unknown` | _none_         | Custom media-upload agent (advanced, overrides proxy). Must be an `http.Agent`, **not** an undici Dispatcher |
 
 ## Authentication
 

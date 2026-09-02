@@ -98,12 +98,24 @@ export interface MiawClientOptions {
   /**
    * Custom agent for WebSocket connections (advanced).
    * Takes priority over proxy config. Must be a Node.js http.Agent.
+   * Supplying this makes getProxyInfo() return null, because there is no URL
+   * to report.
    */
   agent?: Agent;
 
   /**
-   * Custom agent for HTTP fetch requests - media upload/download (advanced).
-   * Takes priority over proxy config. Must be an undici-compatible Dispatcher.
+   * Custom agent for media UPLOADS (advanced).
+   * Takes priority over proxy config.
+   *
+   * Must be a Node.js `http.Agent`, NOT an undici Dispatcher: Baileys' Node
+   * upload path is `https.request({ agent })`, which cannot use a Dispatcher -
+   * passing one makes every media upload through the proxy fail silently.
+   * Typed `unknown` only because Baileys' own declaration is imprecise; it is
+   * cast to a node:https Agent at the makeWASocket call site.
+   *
+   * Media *downloads* are not covered by this option at all - Baileys fetches
+   * them with `fetch(url, { dispatcher })`. Use the `proxy` option if you need
+   * downloads proxied.
    */
   fetchAgent?: unknown;
 

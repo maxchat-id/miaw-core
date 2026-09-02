@@ -127,14 +127,18 @@ Bypass miaw-core's agent construction entirely:
 ```typescript
 import { HttpsProxyAgent } from "https-proxy-agent";
 
+const agent = new HttpsProxyAgent("http://proxy:8080");
+
 new MiawClient({
   instanceId: "advanced-bot",
-  agent: new HttpsProxyAgent("http://proxy:8080"),  // WebSocket transport
-  fetchAgent: myUndiciDispatcher,                    // media transport
+  agent,       // WebSocket transport
+  fetchAgent: agent,  // media UPLOADS - an http.Agent, NOT an undici Dispatcher
 });
 ```
 
-`agent` and `fetchAgent` take precedence over `proxy`. Note the trade-off: when you supply them, miaw-core skips validation and `getProxyInfo()` returns `null`, because it has no URL to report. Use `proxy` unless you specifically need a custom transport (a local CONNECT shim, a mutual-TLS agent, connection-pool tuning).
+> **`fetchAgent` must be a Node.js `http.Agent`.** Baileys' upload path on Node is `https.request({ agent })`, which cannot use an undici `Dispatcher` - handing it one makes every media upload through the proxy fail. This is why `createProxyAgents()` returns the *same* agent instance for both `wsAgent` and `fetchAgent`. Media *downloads* are a separate path (`fetch(url, { dispatcher })`) and are not covered by `fetchAgent` at all.
+
+`agent` and `fetchAgent` take precedence over `proxy`. Note the trade-off: when you supply them, miaw-core skips validation and `getProxyInfo()` returns `null`, because it has no URL to report - that means "no miaw-core-managed proxy", not "no proxy". Use `proxy` unless you specifically need a custom transport (a local CONNECT shim, a mutual-TLS agent, connection-pool tuning).
 
 ---
 
@@ -492,7 +496,7 @@ Baileys has connection timeouts of its own. A proxy that consistently exceeds ~2
 | `407 Proxy Authentication Required` | Missing or wrong credentials | Add username/password; use the object form if they contain special characters |
 | `SOCKS: Authentication failed` | Wrong SOCKS5 credentials | Verify; some providers want the region baked into the username |
 | Probe passes, WhatsApp 401s or loops | The IP is flagged, or you rotated a live session's IP | Use a residential proxy; switch to `deterministic` |
-| Text sends fine, media fails | SOCKS proxy, no route for direct traffic | See [the SOCKS caveat](#️-socks-media-traffic-uses-a-direct-connection) |
+| Text sends fine, media fails | SOCKS proxy, no route for direct traffic | See [the SOCKS caveat](#️-socks-media-downloads-use-a-direct-connection) |
 | `Unsupported proxy protocol` | Scheme isn't http/https/socks4/socks5 | Fix the scheme; `socks://` is treated as SOCKS5 |
 | `Invalid proxy configuration` | Unparseable URL | Percent-encode special characters, or use the object form |
 
@@ -548,7 +552,7 @@ Vendor-agnostic — this is what to evaluate, not who to buy from.
 
 **Sticky sessions.** This one is decisive. Many providers rotate your exit IP every request or every few minutes by default. That is the opposite of what a persisted WhatsApp session needs. **The sticky-session lifetime must be at least as long as your session lifetime — which is indefinite.** If a provider caps stickiness at 30 minutes, it is unsuitable, whatever else it offers.
 
-**Protocol availability.** Given [the SOCKS media caveat](#️-socks-media-traffic-uses-a-direct-connection), confirm HTTP/HTTPS is on offer, not just SOCKS5.
+**Protocol availability.** Given [the SOCKS media caveat](#️-socks-media-downloads-use-a-direct-connection), confirm HTTP/HTTPS is on offer, not just SOCKS5.
 
 **Per-IP concurrency limits.** Some plans allow one connection per IP. Every WhatsApp instance holds a long-lived WebSocket plus intermittent media transfers, so a limit of one will bite immediately.
 
@@ -576,7 +580,7 @@ Confirm: it connects; latency is acceptable from where you actually run; the exi
 
 | Export | Signature | Purpose |
 |--------|-----------|---------|
-| `createProxyAgents` | `(config) => Promise<{ wsAgent, fetchAgent }>` | Builds both transports. `fetchAgent` is `undefined` for SOCKS. |
+| `createProxyAgents` | `(config) => Promise<{ wsAgent, fetchAgent, downloadDispatcher? }>` | `wsAgent` and `fetchAgent` are the **same** `http.Agent`. `downloadDispatcher` is the undici Dispatcher for downloads, and is `undefined` for SOCKS. |
 | `validateProxyConfig` | `(config) => boolean` | URL parseable and protocol supported. |
 | `maskProxyUrl` | `(config) => string` | Password-masked URL, safe to print. Never throws. |
 | `parseProxyList` | `(content, options?) => ProxyPoolEntry[]` | Parses in-memory content. |
