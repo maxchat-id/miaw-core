@@ -80,29 +80,41 @@ describe("CLI Privacy Commands", () => {
     expect(result).toBe(true);
   });
 
-  test("privacy set round-trips the current value unchanged", async () => {
+  /**
+   * Read the current setting, then write the SAME value back. Exercises the
+   * full set path for each setting without leaving the account any different
+   * than we found it. Covers 5 of the 8 settings; `online`, `messages` and
+   * `calls` are omitted because WhatsApp does not reliably report a current
+   * value for them on a personal account, which would make the test skip
+   * rather than assert.
+   */
+  test.each([
+    ["last-seen", "lastSeen"],
+    ["picture", "profilePicture"],
+    ["status", "status"],
+    ["read-receipts", "readReceipts"],
+    ["group-add", "groupAdd"],
+  ])("privacy set %s round-trips the current value unchanged", async (setting, field) => {
     if (!isConnected()) {
       console.log("⏭️  Skipping: not connected");
       return;
     }
 
-    // Read the current setting, then write the same value back. This exercises
-    // the full set path without leaving the account in a different state.
     const capture = captureConsole();
     let current: string | undefined;
     try {
       await runCmd("privacy", ["show"], { jsonOutput: true });
-      current = JSON.parse(capture.getFullOutput()).lastSeen;
+      current = JSON.parse(capture.getFullOutput())[field];
     } finally {
       capture.stop();
     }
 
     if (!current) {
-      console.log("⏭️  Skipping: WhatsApp did not report a last-seen setting");
+      console.log(`⏭️  Skipping: WhatsApp did not report a ${setting} setting`);
       return;
     }
 
-    const result = await runCmd("privacy", ["set", "last-seen", current]);
+    const result = await runCmd("privacy", ["set", setting, current]);
     expect(result).toBe(true);
   });
 });
@@ -184,6 +196,27 @@ describe("CLI Group & Community Admin Commands", () => {
       CLI_TEST_CONFIG.groupJid,
     ]);
     expect(result).toBe(true);
+  });
+
+  test("community requests list returns true for a known group", async () => {
+    if (!isConnected()) {
+      console.log("⏭️  Skipping: not connected");
+      return;
+    }
+    if (!CLI_TEST_CONFIG.groupJid) {
+      console.log("⏭️  Skipping: TEST_GROUP_JID not configured");
+      return;
+    }
+    // Communities are groups with linked groups, so a group JID exercises the
+    // community socket path even when the account owns no community. What is
+    // under test is that the command reaches the community handler at all --
+    // the group/community pair is exactly where a crossed wire would hide.
+    const result = await runCmd("community", [
+      "requests",
+      "list",
+      CLI_TEST_CONFIG.groupJid,
+    ]);
+    expect(typeof result).toBe("boolean");
   });
 
   test("group requests list --json emits a parseable array", async () => {

@@ -17,7 +17,7 @@
  * import chain (same pattern as repl-tokenize.test.ts).
  */
 
-import { describe, it, expect, jest, beforeEach, afterEach } from "@jest/globals";
+import { describe, it, expect, jest } from "@jest/globals";
 
 jest.unstable_mockModule("@whiskeysockets/baileys", () => ({
   default: jest.fn(),

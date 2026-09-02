@@ -238,6 +238,35 @@ describe("v1.12.0 group & community admin", () => {
       expect(socketMocks.groupJoinApprovalMode).not.toHaveBeenCalled();
       expect(socketMocks.groupToggleEphemeral).not.toHaveBeenCalled();
     });
+
+    // The join-request pair is where a crossed wire would do the most damage —
+    // admitting or rejecting someone against the wrong surface — and it was the
+    // one pair this block did not cover.
+    it("join-request reads and writes stay on their own surface", async () => {
+      socketMocks.groupRequestParticipantsList.mockResolvedValue([]);
+      socketMocks.communityRequestParticipantsList.mockResolvedValue([]);
+      socketMocks.groupRequestParticipantsUpdate.mockResolvedValue([]);
+      socketMocks.communityRequestParticipantsUpdate.mockResolvedValue([]);
+      const client = makeConnectedClient();
+
+      await client.getGroupJoinRequests(GJID);
+      await client.approveGroupJoinRequests(GJID, ["6281"]);
+      await client.rejectGroupJoinRequests(GJID, ["6281"]);
+
+      expect(socketMocks.communityRequestParticipantsList).not.toHaveBeenCalled();
+      expect(socketMocks.communityRequestParticipantsUpdate).not.toHaveBeenCalled();
+
+      jest.clearAllMocks();
+      socketMocks.communityRequestParticipantsList.mockResolvedValue([]);
+      socketMocks.communityRequestParticipantsUpdate.mockResolvedValue([]);
+
+      await client.getCommunityJoinRequests(CJID);
+      await client.approveCommunityJoinRequests(CJID, ["6281"]);
+      await client.rejectCommunityJoinRequests(CJID, ["6281"]);
+
+      expect(socketMocks.groupRequestParticipantsList).not.toHaveBeenCalled();
+      expect(socketMocks.groupRequestParticipantsUpdate).not.toHaveBeenCalled();
+    });
   });
 
   describe("join requests - listing", () => {
@@ -368,6 +397,38 @@ describe("v1.12.0 group & community admin", () => {
         "approve"
       );
       expect(socketMocks.groupRequestParticipantsUpdate).not.toHaveBeenCalled();
+    });
+
+    it("community reject uses the community socket method", async () => {
+      socketMocks.communityRequestParticipantsUpdate.mockResolvedValue([
+        { jid: "6281@s.whatsapp.net", status: "200" },
+      ]);
+      const client = makeConnectedClient();
+
+      const result = await client.rejectCommunityJoinRequests(CJID, ["6281"]);
+
+      expect(socketMocks.communityRequestParticipantsUpdate).toHaveBeenCalledWith(
+        CJID,
+        ["6281@s.whatsapp.net"],
+        "reject"
+      );
+      expect(socketMocks.groupRequestParticipantsUpdate).not.toHaveBeenCalled();
+      expect(result[0]?.success).toBe(true);
+    });
+
+    it("community reject does not silently approve", async () => {
+      socketMocks.communityRequestParticipantsUpdate.mockResolvedValue([
+        { jid: "6281@s.whatsapp.net", status: "200" },
+      ]);
+      const client = makeConnectedClient();
+
+      await client.rejectCommunityJoinRequests(CJID, ["6281"]);
+
+      // The action argument is the whole difference between admitting someone
+      // to a community and turning them away; assert it explicitly rather than
+      // trusting the call-shape assertion above.
+      const action = socketMocks.communityRequestParticipantsUpdate.mock.calls[0]?.[2];
+      expect(action).toBe("reject");
     });
   });
 
