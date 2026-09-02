@@ -101,6 +101,25 @@ no breaking changes.
 - **CLI docs gap.** `chat` commands were entirely undocumented in
   [CLI.md](docs/CLI.md) despite shipping in v1.7.0; they now have a section.
 
+### Verified live
+
+Against a real WhatsApp connection (Baileys rc14):
+
+- **`profilePictureUrl`** — the upstream tctoken-nesting fix. 2 of 5 real
+  contacts resolved to live URLs; the rest correctly returned `null`.
+- **`getPrivacySettings()`** — WhatsApp returned 16 categories; the 8 with
+  Baileys setters map onto typed fields and the other 8 survive under `raw`.
+- **All 19 v1.12.0 write paths** — every group setting toggled and restored with
+  a read-back confirming the change landed, plus 1:1 ephemeral, privacy
+  round-trips, `sendGroupInvite`, pin/unpin, and `createCallLink`. 19/19.
+- **`BrowserPresets.android()`** — WhatsApp issued a QR rather than a 428, so
+  the `Platform.ANDROID` handshake is accepted. End-to-end view-once *receipt*
+  is not yet confirmed; see [FOLLOW_UPS.md](docs/FOLLOW_UPS.md) section 7.
+- **No regressions from rc14.** The CLI integration suite has 15 pre-existing
+  failures, unrelated to this release — running the same six suites against
+  rc13 produced a byte-identical failure set. They are catalogued in
+  [FOLLOW_UPS.md](docs/FOLLOW_UPS.md) section 9.
+
 ### Internal
 
 - `jest.config.js` sets `maxWorkers: 1`. The live-connection suites share a

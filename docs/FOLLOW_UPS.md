@@ -163,9 +163,30 @@ Verified live for rc14 specifically:
   unrecognized keys, half the response would have been lost silently.
 - **`getBlocklist()`**, **`getGroupJoinRequests()`** — both return correctly.
 
-Still **not** verified live: the Android browser identity and view-once receipt.
-That needs a second physical device to pair a spare `instanceId` against, since
-switching the primary session's identity means re-pairing it.
+- **All 19 v1.12.0 write paths** — group announce/restrict/member-add/join-approval/
+  ephemeral (each toggled and restored, with a read-back confirming the setting
+  actually changed), 1:1 ephemeral, three privacy setters round-tripped,
+  `sendGroupInvite`, `pinMessage`/`unpinMessage`, and `createCallLink`. 19/19.
+- **`BrowserPresets.android("13")`** — a spare instance pairing with the Android
+  tuple got a QR from WhatsApp rather than a 428, so the `Platform.ANDROID`
+  handshake is accepted.
+
+Two live findings became fixes, both invisible to unit tests because a mocked
+socket never rejects: `sendGroupInvite` failing on any pictureless group, and
+`parseEphemeral` treating a missing argument as "off".
+
+Still **not** verified end-to-end: **view-once receipt** over the Android
+identity. The handshake is proven; actually receiving view-once media needs the
+spare instance paired (scanning its QR links it as an additional device on the
+same account) and then a view-once image sent to it from a phone. Worth doing
+before relying on that feature.
+
+Also worth fixing in `.env.test`: `TEST_CONTACT_PHONE_A` and
+`TEST_CONTACT_PHONE_B` are **the same number**, and it is the bot's own. That
+makes every "send to someone else" test a send-to-self, and it is why
+`blockContact` returned `forbidden` during verification — WhatsApp refuses a
+self-block, correctly. Set B to a real second number to get honest coverage of
+forwarding, blocking and contact tests.
 
 ---
 
