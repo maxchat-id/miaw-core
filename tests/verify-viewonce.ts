@@ -7,9 +7,9 @@
  * The primary session is untouched — this links an additional device on the
  * same WhatsApp account, which is what the Android identity requires.
  *
- *   npx tsx scripts-viewonce.ts
+ *   npx tsx tests/verify-viewonce.ts
  */
-import { MiawClient, BrowserPresets } from "./src/index.js";
+import { MiawClient, BrowserPresets } from "../src/index.js";
 import qrcode from "qrcode-terminal";
 import * as fs from "node:fs";
 

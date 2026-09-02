@@ -178,8 +178,14 @@ socket never rejects: `sendGroupInvite` failing on any pictureless group, and
 Still **not** verified end-to-end: **view-once receipt** over the Android
 identity. The handshake is proven; actually receiving view-once media needs the
 spare instance paired (scanning its QR links it as an additional device on the
-same account) and then a view-once image sent to it from a phone. Worth doing
-before relying on that feature.
+same account) and then a view-once image sent to it from a phone.
+
+`tests/verify-viewonce.ts` does the whole thing in one pass — run
+`npx tsx tests/verify-viewonce.ts`, scan the QR it prints, then send the account
+a view-once image. It asserts `message.media.viewOnce` is set and that
+`downloadMedia()` returns real bytes, writing them to `/tmp` so you can open the
+file and confirm. It pairs a separate `android-viewonce` instance, so the
+primary session is untouched.
 
 Also worth fixing in `.env.test`: `TEST_CONTACT_PHONE_A` and
 `TEST_CONTACT_PHONE_B` are **the same number**, and it is the bot's own. That
