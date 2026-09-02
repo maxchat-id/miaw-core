@@ -97,9 +97,9 @@ Two assertions the plan called for were not written:
 
 ---
 
-## 7. No live-WhatsApp verification was possible for v1.11.0
+## 7. No live-WhatsApp verification was possible for v1.11.0 — RESOLVED
 
-**Severity:** informational.
+**Severity:** informational. **Closed 2026-09-02 (v1.12.0).**
 
 The session in `sessions-cli/default` returns `401 loggedOut` — the device was
 unlinked, so `AuthHandler.clearSession()` wipes it on connect. Every
@@ -142,6 +142,31 @@ The rc14 changes that specifically want a live run:
 Also worth noting while re-pairing: `TEST_GROUP_JID` in `.env.test` is empty, so
 every group-dependent test skips even on a healthy connection.
 
+**Closed (2026-09-02).** A device was re-paired as `miaw-test-bot` and
+`TEST_GROUP_JID` set to a single-member group the bot owns (so settings changes
+affect nobody). The full CLI suite then ran genuinely live for the first time:
+**221 passed, 15 failed, 2 skipped across 13 files.** Those 15 failures are all
+pre-existing and are catalogued in §9 below — proven so by re-running the same
+six suites against Baileys rc13, which produced a byte-identical failure set.
+
+Verified live for rc14 specifically:
+
+- **`profilePictureUrl`** — the upstream tctoken-nesting fix. Probed real group
+  participants; 2 of 5 resolved to live `pps.whatsapp.net` URLs, the rest
+  correctly returning `null` for no-picture/privacy. The fix works.
+- **Version negotiation** — handshake completed with no 428.
+- **`getPrivacySettings()`** — the category-key mapping is correct against real
+  data. WhatsApp returned **16** categories; we map the 8 Baileys has setters
+  for, and the other 8 (`channelview`, `cover_photo`, `stickers`,
+  `groupcreation`, `linked_profiles`, `channelcreation`,
+  `dependentaccountmessages`, `defense`) survive under `raw`. Had we dropped
+  unrecognized keys, half the response would have been lost silently.
+- **`getBlocklist()`**, **`getGroupJoinRequests()`** — both return correctly.
+
+Still **not** verified live: the Android browser identity and view-once receipt.
+That needs a second physical device to pair a spare `instanceId` against, since
+switching the primary session's identity means re-pairing it.
+
 ---
 
 ## 8. `--json` is not supported by most `instance`/`group`/`chat` commands
@@ -153,3 +178,68 @@ v1.11.0 added `--json` to `instance ls`, `set-proxy` and `unset-proxy` to match
 `instance create/delete/connect/disconnect/logout`, and the `chat`/`group`
 mutation commands still print prose only, so scripting them means parsing
 output. Worth a sweep for consistency rather than one-off additions.
+
+
+---
+
+## 9. Fifteen pre-existing CLI integration failures, surfaced by the first live run
+
+**Severity:** medium (they are real defects; none is new).
+
+Until 2026-09-02 no session on disk authenticated, so every connection-dependent
+CLI test short-circuited via `if (!isConnected()) return;` and reported as
+passing. The first genuine live run exposed 15 failures. **All predate v1.12.0**
+— re-running the same six suites against Baileys rc13 produced an identical
+failure set, so none is an rc14 regression.
+
+Four independent causes:
+
+### 9a. `--json` output is polluted by progress text (5 tests)
+
+`check`, `contact info`, `group info`, `group participants` and `label list` all
+print human progress lines (`🔍 Checking...`, `📤 Sending...`) **before** the
+JSON payload, so `JSON.parse(entireOutput)` throws:
+
+```
+SyntaxError: Unexpected token '🔍', "🔍 Checkin"... is not valid JSON
+```
+
+This makes `--json` unusable for scripting on those commands, which is the whole
+point of the flag. The fix is to suppress progress output when `jsonOutput` is
+set — the handlers already receive it. Worth a sweep across every command that
+takes `--json`, not just the five with tests.
+
+Affected: `03-check-command`, `04-contact-commands`, `05-group-commands` (×2),
+`10-business-commands`.
+
+### 9b. `catalog` tests burn 6 minutes timing out on a personal account (6 tests)
+
+`10-business-commands.test.ts` takes **375 seconds**, almost all of it six
+`catalog` tests hitting the 60s Jest timeout. The account under test is not a
+Business account, and the test names already say "may fail on non-biz" — but
+they hang rather than fail fast, because `getCatalog`/`getCollections` never
+respond for a personal account instead of returning an error.
+
+Two things worth fixing independently: the client methods should time out on
+their own rather than hanging forever, and the tests should detect account type
+(as `interactive-test.ts` already does via `detectAccountType`) and skip.
+
+### 9c. `load messages` times out waiting for history (3 tests)
+
+```
+❌ Failed to load messages: Timeout waiting for history (30000ms)
+```
+
+`fetchMessageHistory` gets no response for the configured contact, which is the
+bot's own number (a send-to-self chat with no older history to page back
+through). Plausibly correct WhatsApp behaviour rather than a bug — but the test
+asserts `true` unconditionally, so it cannot distinguish "no history" from
+"broken". Either point the test at a chat with real history, or accept the
+no-history case explicitly.
+
+### 9d. `profile status set` with an empty status is rejected (1 test)
+
+The router deliberately allows an empty status (`// Status can be empty to clear
+it`), but `updateProfileStatus("")` returns failure — WhatsApp appears not to
+accept an empty about-text this way. Either the comment and dispatch are wrong,
+or clearing needs a different call. The test asserts success.

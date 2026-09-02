@@ -6282,16 +6282,41 @@ export class MiawClient extends EventEmitter {
       }
 
       const jid = MessageHandler.formatPhoneToJid(to);
+      const socket = this.socket;
 
-      const result = await this.socket.sendMessage(jid, {
-        groupInvite: {
-          jid: invite.groupJid,
-          subject: invite.groupName,
-          inviteCode: invite.inviteCode,
-          inviteExpiration: invite.expiration,
-          text: invite.caption ?? "",
+      const result = await socket.sendMessage(
+        jid,
+        {
+          groupInvite: {
+            jid: invite.groupJid,
+            subject: invite.groupName,
+            inviteCode: invite.inviteCode,
+            inviteExpiration: invite.expiration,
+            text: invite.caption ?? "",
+          },
         },
-      });
+        {
+          // Baileys fetches the group's picture to embed a thumbnail on the
+          // card, and does not guard that call: for a group with no picture
+          // WhatsApp answers `item-not-found`, which throws and aborts the
+          // whole send. Most groups have no picture, so the unguarded path
+          // fails far more often than it succeeds. Override the hook with a
+          // guarded version — the caller's options are spread last in
+          // Baileys' Socket/messages-send.js, so this wins — and send the card
+          // without a thumbnail rather than not at all.
+          getProfilePicUrl: async (pictureJid: string, type: "image" | "preview") => {
+            try {
+              return await socket.profilePictureUrl(pictureJid, type);
+            } catch {
+              return undefined;
+            }
+          },
+          // `getProfilePicUrl` lives on MessageContentGenerationOptions, which
+          // is what Baileys actually spreads these into, but sendMessage's
+          // parameter is typed as the narrower MiscMessageGenerationOptions.
+          // Valid at runtime, invisible to the type.
+        } as Parameters<typeof socket.sendMessage>[2]
+      );
 
       return {
         success: true,

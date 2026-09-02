@@ -36,11 +36,15 @@ const GJID = "120363000000000001@g.us";
 const CHAT = "6281234567890@s.whatsapp.net";
 
 const sendMessageMock = jest.fn<(...a: unknown[]) => Promise<any>>();
+const profilePictureUrlMock = jest.fn<(...a: unknown[]) => Promise<any>>();
 
 function makeConnectedClient(): any {
   const client: any = new MiawClient({ instanceId: "test-invite-pin" });
   client.connectionState = "connected";
-  client.socket = { sendMessage: sendMessageMock };
+  client.socket = {
+    sendMessage: sendMessageMock,
+    profilePictureUrl: profilePictureUrlMock,
+  };
   return client;
 }
 
@@ -53,6 +57,7 @@ const pinnableMessage = {
 describe("v1.12.0 group invites & pinning", () => {
   beforeEach(() => {
     sendMessageMock.mockReset().mockResolvedValue({ key: { id: "SENT1" } });
+    profilePictureUrlMock.mockReset().mockResolvedValue(undefined);
   });
 
   describe("sendGroupInvite", () => {
@@ -80,7 +85,8 @@ describe("v1.12.0 group invites & pinning", () => {
             inviteExpiration: 1700000000,
             text: "Come join",
           },
-        }
+        },
+        expect.objectContaining({ getProfilePicUrl: expect.any(Function) })
       );
     });
 
@@ -92,6 +98,59 @@ describe("v1.12.0 group invites & pinning", () => {
 
       const payload = sendMessageMock.mock.calls[0][1] as any;
       expect(payload.groupInvite.text).toBe("");
+    });
+
+    describe("thumbnail hook", () => {
+      // Baileys embeds a thumbnail on the invite card by calling
+      // getProfilePicUrl(groupJid), and does NOT guard it. A group with no
+      // picture makes WhatsApp answer `item-not-found`, which throws and aborts
+      // the entire send -- confirmed live against two real groups. Most groups
+      // have no picture, so the unguarded path fails more often than it works.
+      // sendGroupInvite therefore passes its own guarded hook, which Baileys
+      // honours because caller options are spread last in messages-send.js.
+      function hookFrom(call: unknown[]): (jid: string, type: string) => Promise<unknown> {
+        return (call[2] as any).getProfilePicUrl;
+      }
+
+      it("passes a getProfilePicUrl override to sendMessage", async () => {
+        const client = makeConnectedClient();
+
+        await client.sendGroupInvite("6289999999999", invite);
+
+        expect(typeof hookFrom(sendMessageMock.mock.calls[0])).toBe("function");
+      });
+
+      it("the override swallows item-not-found and yields no thumbnail", async () => {
+        profilePictureUrlMock.mockRejectedValue(new Error("item-not-found"));
+        const client = makeConnectedClient();
+
+        await client.sendGroupInvite("6289999999999", invite);
+        const hook = hookFrom(sendMessageMock.mock.calls[0]);
+
+        await expect(hook(GJID, "preview")).resolves.toBeUndefined();
+      });
+
+      it("the override still returns a real picture when there is one", async () => {
+        profilePictureUrlMock.mockResolvedValue("https://example.invalid/g.jpg");
+        const client = makeConnectedClient();
+
+        await client.sendGroupInvite("6289999999999", invite);
+        const hook = hookFrom(sendMessageMock.mock.calls[0]);
+
+        await expect(hook(GJID, "preview")).resolves.toBe(
+          "https://example.invalid/g.jpg"
+        );
+        expect(profilePictureUrlMock).toHaveBeenCalledWith(GJID, "preview");
+      });
+
+      it("a thumbnail failure does not fail the send", async () => {
+        profilePictureUrlMock.mockRejectedValue(new Error("item-not-found"));
+        const client = makeConnectedClient();
+
+        await expect(
+          client.sendGroupInvite("6289999999999", invite)
+        ).resolves.toEqual({ success: true, messageId: "SENT1" });
+      });
     });
 
     it("rejects a group JID that is not a group JID", async () => {

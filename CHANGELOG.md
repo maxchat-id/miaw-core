@@ -80,6 +80,14 @@ no breaking changes.
 
 ### Fixed
 
+- **`sendGroupInvite()` failed for any group without a profile picture.** Baileys
+  embeds a thumbnail on the invite card by calling `getProfilePicUrl(groupJid)`
+  and does not guard it; WhatsApp answers `item-not-found` for a pictureless
+  group, which throws and aborts the whole send. Since most groups have no
+  picture, the unguarded path failed more often than it worked. `sendGroupInvite`
+  now passes its own guarded hook — Baileys spreads caller options last, so it
+  wins — and sends the card without a thumbnail rather than not at all. Found by
+  live testing; it is invisible to unit tests because the mock never throws.
 - **Omitting a disappearing-message duration silently disabled it.**
   `miaw-cli group ephemeral <jid>` with no duration turned disappearing messages
   **off** for the whole group instead of printing a usage line — `Number("")` is
