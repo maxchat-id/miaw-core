@@ -18,16 +18,18 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
+    "typecheck": "tsc --noEmit -p tsconfig.test.json",
     "lint": "eslint src tests examples bin",
     "lint:fix": "eslint src tests examples bin --fix",
     "prepublishOnly": "npm run build",
     "test": "NODE_OPTIONS='--experimental-vm-modules' jest",
+    "test:unit": "NODE_OPTIONS='--experimental-vm-modules' jest tests/unit",
     "test:watch": "NODE_OPTIONS='--experimental-vm-modules' jest --watch",
     "test:coverage": "NODE_OPTIONS='--experimental-vm-modules' jest --coverage",
     "test:cli": "NODE_OPTIONS='--experimental-vm-modules' jest --testPathPattern='tests/integration/cli' --runInBand --forceExit",
     "test:manual": "tsx tests/interactive-test.ts",
     "test:manual:auto": "tsx tests/interactive-test.ts all --auto",
-    "test:manual:build": "npm run build && node dist/tests/interactive-test.js",
+    "test:viewonce": "tsx tests/verify-viewonce.ts",
     "cli": "tsx bin/miaw-cli.ts"
   },
   "keywords": [

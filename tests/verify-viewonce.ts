@@ -7,14 +7,21 @@
  * The primary session is untouched — this links an additional device on the
  * same WhatsApp account, which is what the Android identity requires.
  *
- *   npx tsx tests/verify-viewonce.ts
+ *   npm run test:viewonce        (or: npx tsx tests/verify-viewonce.ts)
  */
 import { MiawClient, BrowserPresets } from "../src/index.js";
 import qrcode from "qrcode-terminal";
 import * as fs from "node:fs";
+import * as dotenv from "dotenv";
+
+dotenv.config();
+dotenv.config({ path: ".env.test" });
 
 const INSTANCE = "android-viewonce";
-const SESSION = "./test-sessions";
+// Honour TEST_SESSION_PATH like every other test entry point does; this used
+// to be hardcoded, so pointing the suite at a different session directory
+// silently left this script on the old one.
+const SESSION = process.env.TEST_SESSION_PATH || "./test-sessions";
 
 const client = new MiawClient({
   instanceId: INSTANCE,
