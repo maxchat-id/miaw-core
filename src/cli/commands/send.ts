@@ -355,3 +355,60 @@ export async function cmdSendSticker(
   console.log(formatMessage(false, "Failed to send sticker", sendResult.error));
   return false;
 }
+
+/**
+ * Send a group-invite message (the rich "join my group" card)
+ *
+ * The invite code and expiry are looked up from the group itself, so the caller
+ * only has to name the group — pasting a stale code by hand is the main way
+ * this goes wrong.
+ */
+export async function cmdSendGroupInvite(
+  client: MiawClient,
+  args: { phone: string; groupJid: string; caption?: string }
+): Promise<boolean> {
+  const result = await ensureConnected(client);
+  if (!result.success) {
+    console.log(`❌ Not connected: ${result.reason}`);
+    return false;
+  }
+
+  if (!args.groupJid.endsWith("@g.us")) {
+    console.log("❌ Invalid group JID. Must end with @g.us");
+    return false;
+  }
+
+  const link = await client.getGroupInviteLink(args.groupJid);
+  if (!link) {
+    console.log("❌ Could not get an invite link (admin rights required?)");
+    return false;
+  }
+
+  const info = await client.getGroupInfo(args.groupJid);
+  if (!info) {
+    console.log(`❌ Could not read group info for ${args.groupJid}`);
+    return false;
+  }
+
+  console.log(`📤 Sending invite for "${info.name}" to ${args.phone}...`);
+
+  const sendResult = await client.sendGroupInvite(args.phone, {
+    groupJid: args.groupJid,
+    groupName: info.name,
+    inviteCode: link.replace(/^.*chat\.whatsapp\.com\//, ""),
+    // WhatsApp expects an absolute expiry; invite links do not carry one, so
+    // use the 3-day window the app itself offers when sharing an invite.
+    expiration: Math.floor(Date.now() / 1000) + 3 * 24 * 60 * 60,
+    caption: args.caption,
+  });
+
+  if (sendResult.success) {
+    console.log(
+      formatMessage(true, "Group invite sent", `Message ID: ${sendResult.messageId}`)
+    );
+    return true;
+  }
+
+  console.log(formatMessage(false, "Failed to send group invite", sendResult.error));
+  return false;
+}

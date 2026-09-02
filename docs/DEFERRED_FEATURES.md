@@ -1,55 +1,38 @@
 # Deferred Features (Baileys-backed, not yet implemented)
 
 The phased feature roadmap (see [ROADMAP.md](./ROADMAP.md)) is complete through
-**v1.10.0**. The items below are the remaining Baileys capabilities we deliberately
-**deferred** — each is a thin wrapper over a verified `@whiskeysockets/baileys`
-7.0.0-rc13 method. This is the backlog to come back to. Ordered by suggested priority.
+**v1.12.0**, and so is this backlog.
 
-_Last updated: 2026-07-29 (miaw-core v1.10.0)._
+> **Nothing is currently deferred.** The four sections that used to live here —
+> group + community admin, privacy & blocklist, calls, and the leftover message
+> types (group-invite cards, pin-in-chat) — all shipped in **v1.12.0**, verified
+> against `@whiskeysockets/baileys` 7.0.0-rc14.
 
----
+If you are looking for work to pick up:
 
-## 1. Group + Community admin  ·  suggested: v1.11.0
+- **[FOLLOW_UPS.md](./FOLLOW_UPS.md)** — known defects and debt, each with the
+  reason it was not fixed at the time. That is the live list.
+- The section below — capabilities we have looked at and decided **not** to
+  wrap. Re-read the reasoning before reviving one; most are blocked upstream or
+  belong to the application rather than the library.
 
-Settings and join-requests for **both groups and communities** (they share the
-same shapes — do them together, one type set + a shared helper). Group settings
-(§4 of the old backlog) were never shipped; community admin was deferred in v1.9.0.
+When a new Baileys release adds something worth wrapping, add it here rather
+than straight to the roadmap, with the method name and the version that
+introduced it.
 
-- **Settings**
-  - Announce-only / restrict info → `groupSettingUpdate` / `communitySettingUpdate` (`'announcement' | 'not_announcement' | 'locked' | 'unlocked'`)
-  - Member-add mode → `groupMemberAddMode` / `communityMemberAddMode` (`'admin_add' | 'all_member_add'`)
-  - Join-approval mode → `groupJoinApprovalMode` / `communityJoinApprovalMode` (`'on' | 'off'`)
-  - Disappearing/ephemeral → `groupToggleEphemeral` / `communityToggleEphemeral(jid, seconds)`; 1:1 via `sendMessage(jid, { disappearingMessagesInChat })`
-- **Join requests**
-  - List → `groupRequestParticipantsList` / `communityRequestParticipantsList`
-  - Approve/reject → `groupRequestParticipantsUpdate` / `communityRequestParticipantsUpdate(jid, participants, 'approve' | 'reject')`
-
-Proposed miaw surface: `setGroupAnnounceOnly`/`setGroupRestrictInfo`/`setGroupMemberAddMode`/`setGroupJoinApproval`/`setGroupEphemeral`, `getGroupJoinRequests`/`approveGroupJoinRequest`/`rejectGroupJoinRequest`, and the `setCommunity*` / `getCommunityJoinRequests` equivalents.
-
-## 2. Privacy & blocklist  ·  suggested: v1.12.0
-
-- Blocklist: `blockContact` / `unblockContact` (`updateBlockStatus(jid, 'block'|'unblock')`), `getBlocklist` (`fetchBlocklist`)
-- Privacy: `getPrivacySettings` (`fetchPrivacySettings`) + setters: `updateLastSeenPrivacy`, `updateOnlinePrivacy`, `updateProfilePicturePrivacy`, `updateStatusPrivacy`, `updateReadReceiptsPrivacy`, `updateGroupsAddPrivacy`, `updateMessagesPrivacy`, `updateCallPrivacy`, `updateDefaultDisappearingMode`, `updateDisableLinkPreviewsPrivacy`
-
-## 3. Calls  ·  small
-
-- `rejectCall(callId, callFrom)` — auto-reject incoming calls
-- Surface a `call` event from Baileys' `call` event
-- `createCallLink(type, event?)` — audio/video call links
-
-## 4. Leftover message types  ·  small
-
-- `sendGroupInvite(to, ...)` → `sendMessage(jid, { groupInvite })`
-- `pinMessage()` / `unpinMessage()` → `sendMessage(jid, { pin: key, type, time })` (pin-in-chat, 24h/7d/30d)
+_Last updated: 2026-09-02 (miaw-core v1.12.0)._
 
 ---
 
-## Already shipped (not deferred)
+## Already shipped
 
 Native LID (v1.5.0), rich messages + pairing code (v1.6.0), chat management
 (v1.7.0), status + business extras (v1.8.0), communities (v1.9.0), the
-**message-receipt event** (v1.9.1), and **proxy files + rotation** (v1.10.0).
-~78% Baileys coverage.
+`message_receipt` event (v1.9.1), proxy files + rotation (v1.10.0), per-instance
+proxy pins + `setProxy()` (v1.11.0), and group/community admin, privacy &
+blocklist, calls, group-invite cards and pin-in-chat (v1.12.0).
+
+---
 
 ## Intentionally skipped
 

@@ -5,6 +5,156 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.0] - 2026-09-02
+
+**Baileys 7.0.0-rc14, and the deferred feature backlog cleared.** All additive;
+no breaking changes.
+
+### Changed
+
+- **Operator notes:** [docs/DEPLOYMENT_V1.12.0.md](docs/DEPLOYMENT_V1.12.0.md) —
+  no env, migration or state-format changes; rollback does not require re-pairing.
+- **Upgraded `@whiskeysockets/baileys` from `7.0.0-rc13` to `7.0.0-rc14`** (pinned
+  exactly, as before). Four substantive upstream commits:
+  - WhatsApp Web version `2.3000.1035194821` → `2.3000.1043857760`. Low impact —
+    `resolveWAVersion()` already prefers the live version from `web.whatsapp.com`,
+    so the bundled constant is only the third-tier fallback — but a fresher
+    fallback is still worth having.
+  - **`profilePictureUrl` fix.** The privacy `tctoken` now nests under the
+    `picture` query node and carries a `t` attribute, matching WA Web. This
+    affects `getContactInfo()`, `getProfilePicture()` and `getChatInfo()` when
+    the target has profile-picture privacy enabled.
+  - New `Browsers.android()` identity (see below).
+  - An internal `Long` type import fix.
+
+  No public API changed; miaw-core's whole Baileys surface — including the
+  `updateBussinesProfile` typo, `signalRepository.lidMapping`, the hand-built
+  `remove-companion-device` node, `messaging-history.set` `lidPnMappings`, the
+  `resyncAppState` collection names, and the dispatcher passed into
+  `downloadMediaMessage` — is byte-identical between the two releases.
+
+### Added
+
+- **`BrowserPresets`** — `macOS`, `windows`, `ubuntu` and `android` browser
+  identities for the `browser` option, which was previously undocumented outside
+  its JSDoc. The default is unchanged (`macOS("Chrome")`).
+- **Android connection identity.** `BrowserPresets.android()` negotiates as an
+  Android client rather than a web one. Baileys reports this is required to
+  **receive view-once media**, which a web session is never sent
+  ([#2201](https://github.com/WhiskeySockets/Baileys/pull/2201)); miaw-core
+  already normalizes view-once messages, so if that holds,
+  `message.media.viewOnce` and `downloadMedia()` work with no further change.
+  The handshake is verified here; the view-once receipt itself is upstream's
+  claim and is **not** confirmed end-to-end — see `tests/verify-viewonce.ts` to
+  check it on your own account. Baileys marks the identity experimental; prefer
+  a dedicated `instanceId` over switching an established session.
+- **Group & community administration.** `setGroupAnnounceOnly`,
+  `setGroupRestrictInfo`, `setGroupMemberAddMode`, `setGroupJoinApproval`,
+  `setGroupEphemeral`, `getGroupJoinRequests`, `approveGroupJoinRequests`,
+  `rejectGroupJoinRequests`, and the eight `setCommunity*` /
+  `*CommunityJoinRequests` equivalents.
+- **Privacy settings.** `getPrivacySettings()` plus `setLastSeenPrivacy`,
+  `setOnlinePrivacy`, `setProfilePicturePrivacy`, `setStatusPrivacy`,
+  `setReadReceiptsPrivacy`, `setGroupAddPrivacy`, `setMessagesPrivacy`,
+  `setCallPrivacy`, `setDefaultDisappearingMode` and `setLinkPreviewsDisabled`.
+- **Blocklist.** `blockContact()`, `unblockContact()`, `getBlocklist()`,
+  `isBlocked()`.
+- **Calls.** A new `call` event carrying a normalized `MiawCall`, plus
+  `rejectCall()` and `createCallLink()`. A single call fires the event several
+  times as it progresses; `status === "offer"` is the only stage at which
+  `rejectCall()` still works.
+- **Disappearing messages.** `setChatEphemeral()` for 1:1 chats alongside the
+  group and community variants, with an `EphemeralDuration` constant for the four
+  durations the WhatsApp UI offers.
+- **Group invite cards.** `sendGroupInvite()` sends the rich "join my group" card
+  rather than a pasted link. Its payload type is `GroupInviteMessage` — distinct
+  from the existing `GroupInviteInfo`, which is the *preview* returned by
+  `getGroupInviteInfo()` before joining.
+- **Pin-in-chat.** `pinMessage()` / `unpinMessage()`, with a `PinDuration`
+  constant. WhatsApp accepts only 24h, 7d and 30d here — a different set from the
+  disappearing-message durations.
+- **CLI:** `group|community announce|restrict|add-mode|approval|ephemeral`,
+  `group|community requests list|approve|reject`, `privacy
+  show|set|disappearing|link-previews`, `block list|add|remove`, `call link`,
+  `chat ephemeral|pin-message|unpin-message`, and `send group-invite`. All with
+  tab completion and `help` topics.
+- **`tests/unit/baileys-export-surface.test.ts`** — imports Baileys unmocked and
+  asserts every symbol the two import sites destructure still exists. Seventeen
+  unit suites replace the module wholesale with hand-written factories, so
+  without this a renamed or removed upstream export stays invisible until
+  runtime.
+
+### Fixed
+
+- **`community invite-link` was advertised but never worked.** The subcommand
+  list printed by `community` has named it since v1.9.0, but the dispatch
+  switch had no `case` for it, so it fell through to the unknown-command
+  branch and always errored. `group invite-link` has existed since v1.4.
+- **Five `help` topics tab-completed and then failed.** `help chat|story|
+  community|call|business` were offered by completion but had no case in
+  `showReplHelp()`, printing "Unknown help topic". The completion tree, the
+  dispatch and two "available topics" lines were four hand-maintained copies
+  of the same list; they are now all derived from one `HELP_TOPIC_HANDLERS`
+  map, and the five missing help screens were written.
+- **`test:manual:build` never worked and has been removed.** It ran
+  `node dist/tests/interactive-test.js`, but `tsconfig.json` sets
+  `rootDir: ./src` and excludes `tests/`, so `dist/tests/` is never emitted.
+- **`sendGroupInvite()` failed for any group without a profile picture.** Baileys
+  embeds a thumbnail on the invite card by calling `getProfilePicUrl(groupJid)`
+  and does not guard it; WhatsApp answers `item-not-found` for a pictureless
+  group, which throws and aborts the whole send. Since most groups have no
+  picture, the unguarded path failed more often than it worked. `sendGroupInvite`
+  now passes its own guarded hook — Baileys spreads caller options last, so it
+  wins — and sends the card without a thumbnail rather than not at all. Found by
+  live testing; it is invisible to unit tests because the mock never throws.
+- **Omitting a disappearing-message duration silently disabled it.**
+  `miaw-cli group ephemeral <jid>` with no duration turned disappearing messages
+  **off** for the whole group instead of printing a usage line — `Number("")` is
+  `0`, and `0` is a valid duration meaning "off", so the missing argument parsed
+  as a successful request to disable. Same for `community ephemeral`,
+  `chat ephemeral`, and `privacy disappearing` (which changed an account-wide
+  default). Found in review of this release, before any of it shipped.
+- **`--force` could swallow the following token.** It was missing from
+  `BOOLEAN_FLAGS` in `bin/miaw-cli.ts`, the same class of bug that `--json` hit
+  previously.
+- **CLI docs gap.** `chat` commands were entirely undocumented in
+  [CLI.md](docs/CLI.md) despite shipping in v1.7.0; they now have a section.
+
+### Verified live
+
+Against a real WhatsApp connection (Baileys rc14):
+
+- **`profilePictureUrl`** — the upstream tctoken-nesting fix. 2 of 5 real
+  contacts resolved to live URLs; the rest correctly returned `null`.
+- **`getPrivacySettings()`** — WhatsApp returned 16 categories; the 8 with
+  Baileys setters map onto typed fields and the other 8 survive under `raw`.
+- **All 19 v1.12.0 write paths** — every group setting toggled and restored with
+  a read-back confirming the change landed, plus 1:1 ephemeral, privacy
+  round-trips, `sendGroupInvite`, pin/unpin, and `createCallLink`. 19/19.
+- **`BrowserPresets.android()`** — WhatsApp issued a QR rather than a 428, so
+  the `Platform.ANDROID` handshake is accepted. End-to-end view-once *receipt*
+  is not yet confirmed; see [FOLLOW_UPS.md](docs/FOLLOW_UPS.md) section 7.
+- **No regressions from rc14.** The CLI integration suite has 15 pre-existing
+  failures, unrelated to this release — running the same six suites against
+  rc13 produced a byte-identical failure set. They are catalogued in
+  [FOLLOW_UPS.md](docs/FOLLOW_UPS.md) section 9.
+
+### Internal
+
+- `jest.config.js` sets `maxWorkers: 1`. The live-connection suites share a
+  single WhatsApp session, and forking one worker per core for a full run is
+  memory-hungry; `test:cli` already passed `--runInBand` for the first reason.
+- CLI integration teardown moved from `10-business-commands.test.ts` to the new
+  `13-privacy-call-commands.test.ts`. Files run in name order and 13 is now the
+  last one needing a connection (11 and 12 are deliberately offline), so
+  disconnecting at 10 would pull the socket out from under it.
+- 615 unit tests across 29 suites (up from 417), 105 CLI router tests (up from
+  26), 278 CLI integration tests across 13 files (up from 238).
+- New `tests/unit/cli-help-consistency.test.ts` and a dispatchability sweep in
+  `01-command-router.test.ts`, both verified to fail against the previous code.
+- The manual runner grew from 82 to 96 entries, and gained a `community` group:
+  all 19 community methods, v1.9.0's included, had been unreachable from it.
+
 ## [1.11.0] - 2026-09-02
 
 ### Added

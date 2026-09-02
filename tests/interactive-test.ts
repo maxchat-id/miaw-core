@@ -10,18 +10,15 @@
  * Arguments:
  *   (none)      - Show available test groups and help
  *   all         - Run all tests interactively
- *   core        - Run Core Client tests
- *   get         - Run Basic GET Operations tests
- *   messaging   - Run Messaging tests (send, react, forward, edit, delete)
- *   contacts    - Run Contact tests (check, info, add, remove)
- *   group       - Run Group Management tests
- *   profile     - Run Profile Management tests
- *   business    - Run Business tests (labels + catalog)
- *   newsletter  - Run Newsletter tests
- *   ux          - Run UX Features tests
+ *   <group>     - Run one group; see CATEGORY_MAP below for the current list,
+ *                 which `npm run test:manual` prints with a count per group.
+ *                 Deliberately not enumerated here: this comment fell three
+ *                 groups behind the code before anyone noticed.
  *
- * Environment variables (from .env file):
- *   DEBUG=true    - Enable verbose Baileys logging
+ * Environment variables (from .env / .env.test):
+ *   DEBUG=true            - Enable verbose Baileys logging
+ *   AUTO=1                - Unattended mode (same as --auto)
+ *   AUTO_DESTRUCTIVE=1    - Also run destructive entries (same as --destructive)
  */
 
 import * as readline from "readline";
@@ -29,23 +26,96 @@ import * as fs from "fs";
 import * as path from "path";
 import * as dotenv from "dotenv";
 import qrcode from "qrcode-terminal";
-import { MiawClient } from "../src";
+import { MiawClient, EphemeralDuration } from "../src";
+import type {
+  PrivacyValue,
+  PrivacyOnlineValue,
+  PrivacyGroupAddValue,
+  ReadReceiptsValue,
+  PrivacyCallValue,
+  PrivacyMessagesValue,
+} from "../src";
 
-// CLI argument mapping to category names
-const CATEGORY_MAP: { [key: string]: string[] } = {
-  core: ["Core Client"],
-  get: ["Basic GET Ops"],
-  messaging: ["Messaging"],
-  contacts: ["Contacts"],
-  group: ["Group Mgmt"],
-  profile: ["Profile Mgmt"],
-  business: ["Business"],
-  newsletter: ["Newsletter"],
-  ux: ["UX Features"],
+/**
+ * CLI argument -> the test categories it selects, plus the one-line description
+ * shown by `showHelp()`.
+ *
+ * This is the single source of truth for the group list. The help output is
+ * generated from it, so adding a group here is enough — the two used to be
+ * hand-synced, which is how `privacy` and `calls` shipped in v1.12.0 without
+ * ever appearing in the file's own header.
+ */
+const CATEGORY_MAP: {
+  [key: string]: { categories: string[]; description: string };
+} = {
+  core: {
+    categories: ["Core Client"],
+    description: "Core Client (connect, disconnect, state)",
+  },
+  get: {
+    categories: ["Basic GET Ops"],
+    description: "Basic GET Operations (profile, contacts, chats)",
+  },
+  messaging: {
+    categories: ["Messaging"],
+    description: "Messaging (send, react, forward, edit, delete, pin)",
+  },
+  contacts: {
+    categories: ["Contacts"],
+    description: "Contacts (check, info, add, remove)",
+  },
+  group: {
+    categories: ["Group Mgmt"],
+    description: "Group Management (create, update, participants, admin)",
+  },
+  community: {
+    categories: ["Community Mgmt"],
+    description: "Communities (info, linked groups, admin, join requests)",
+  },
+  profile: {
+    categories: ["Profile Mgmt"],
+    description: "Profile Management (update name, status, picture)",
+  },
+  business: {
+    categories: ["Business"],
+    description: "Business [BIZ] (labels + catalog)",
+  },
+  newsletter: {
+    categories: ["Newsletter"],
+    description: "Newsletter (create, metadata, follow)",
+  },
+  ux: {
+    categories: ["UX Features"],
+    description: "UX Features (typing, presence, read receipts)",
+  },
+  privacy: {
+    categories: ["Privacy & Blocklist"],
+    description: "Privacy & Blocklist (settings, block/unblock)",
+  },
+  calls: {
+    categories: ["Calls"],
+    description: "Calls (call event, reject, call links)",
+  },
 };
 
 // Get CLI argument
-const cliArg = process.argv[2]?.toLowerCase() || "";
+const rawArgs = process.argv.slice(2).map((a) => a.toLowerCase());
+const cliArg = rawArgs.find((a) => !a.startsWith("--")) || "";
+
+/**
+ * Unattended mode: never block on stdin, never prompt, exit non-zero on failure.
+ *
+ * Enabled with `--auto` or AUTO=1. Every prompt resolves to "" — which the
+ * existing helpers already treat as "use the cached .env.test value" — so the
+ * same entries run, just without a human at the keyboard.
+ *
+ * Skipped in this mode:
+ *   - `manual` entries, which need a human to send a message or place a call
+ *   - `destructive` entries, unless AUTO_DESTRUCTIVE=1 (or --destructive)
+ */
+const AUTO_MODE = rawArgs.includes("--auto") || process.env.AUTO === "1";
+const AUTO_DESTRUCTIVE =
+  rawArgs.includes("--destructive") || process.env.AUTO_DESTRUCTIVE === "1";
 
 // Load environment variables from .env and .env.test files
 dotenv.config(); // Load .env first
@@ -173,6 +243,16 @@ interface TestItem {
   test?: (client: MiawClient) => boolean | string | Promise<boolean | string>;
   action?: (client: MiawClient) => boolean | string | Promise<boolean | string>;
   businessOnly?: boolean; // Skip for personal accounts
+  /**
+   * Needs a human to DO something out-of-band — send a message to the bot,
+   * place a call. Env config cannot substitute for it, so AUTO mode skips these.
+   */
+  manual?: boolean;
+  /**
+   * Irreversibly changes real state (leaves a group, deletes a product). AUTO
+   * mode skips these unless AUTO_DESTRUCTIVE=1.
+   */
+  destructive?: boolean;
 }
 
 // All tests organized by category
@@ -195,7 +275,7 @@ const tests: TestItem[] = [
   },
 
   // ============================================================
-  // CORE CLIENT (6 methods)
+  // CORE CLIENT
   // ============================================================
   {
     category: "Core Client",
@@ -311,7 +391,7 @@ const tests: TestItem[] = [
   },
 
   // ============================================================
-  // BASIC GET OPERATIONS (v0.9.0) (6 methods)
+  // BASIC GET OPERATIONS (v0.9.0)
   // ============================================================
   {
     category: "Basic GET Ops",
@@ -416,7 +496,7 @@ const tests: TestItem[] = [
   },
 
   // ============================================================
-  // MESSAGING (6 methods)
+  // MESSAGING
   // ============================================================
   {
     category: "Messaging",
@@ -443,6 +523,7 @@ const tests: TestItem[] = [
   {
     category: "Messaging",
     name: "replyToMessage() - Reply/quote a message",
+    manual: true,
     action: async (client: MiawClient) => {
       console.log("\n💬 To test replying to a message:");
       console.log("1. Send a message to the bot from another phone");
@@ -538,6 +619,7 @@ const tests: TestItem[] = [
   {
     category: "Messaging",
     name: "downloadMedia() - Download media",
+    manual: true,
     action: async (client: MiawClient) => {
       console.log("\n📥 To test media download:");
       console.log("1. Send an image/video to the bot from another phone");
@@ -567,6 +649,7 @@ const tests: TestItem[] = [
   {
     category: "Messaging",
     name: "sendReaction() - Send reaction",
+    manual: true,
     action: async (client: MiawClient) => {
       console.log("\n📝 To test reactions:");
       console.log("1. Send a message to the bot from another phone");
@@ -595,6 +678,7 @@ const tests: TestItem[] = [
   {
     category: "Messaging",
     name: "removeReaction() - Remove reaction",
+    manual: true,
     action: async (client: MiawClient) => {
       if (!TEST_CONFIG.lastReactedMessage) {
         console.log("\n⚠️  No previous reaction to remove.");
@@ -620,6 +704,7 @@ const tests: TestItem[] = [
   {
     category: "Messaging",
     name: "forwardMessage() - Forward message",
+    manual: true,
     action: async (client: MiawClient) => {
       const phone2 = await getTestPhone2(
         "Enter phone number to forward message to:"
@@ -690,6 +775,7 @@ const tests: TestItem[] = [
   {
     category: "Messaging",
     name: "deleteMessage() - Delete for everyone",
+    manual: true,
     action: async (client: MiawClient) => {
       const phone = await getTestPhone(
         "Enter phone number to send and delete message:"
@@ -734,7 +820,7 @@ const tests: TestItem[] = [
   },
 
   // ============================================================
-  // CONTACTS (7 methods)
+  // CONTACTS
   // ============================================================
   {
     category: "Contacts",
@@ -838,7 +924,7 @@ const tests: TestItem[] = [
   },
 
   // ============================================================
-  // GROUP MANAGEMENT (13 methods)
+  // GROUP MANAGEMENT
   // Flow: Create → Info → Update → Participants → Invite → Destructive
   // ============================================================
 
@@ -1067,6 +1153,7 @@ const tests: TestItem[] = [
   {
     category: "Group Mgmt",
     name: "removeParticipants() - Remove members (DESTRUCTIVE)",
+    destructive: true,
     action: async (client: MiawClient) => {
       const groupJid = await getTestGroup("Enter group JID:");
       const phone = await getTestPhone("Enter phone number to remove:");
@@ -1085,6 +1172,7 @@ const tests: TestItem[] = [
   {
     category: "Group Mgmt",
     name: "leaveGroup() - Leave group (DESTRUCTIVE)",
+    destructive: true,
     action: async (client: MiawClient) => {
       console.log("\n⚠️  This will make the bot leave a group.");
       console.log("Press ENTER to continue, or s to skip");
@@ -1147,6 +1235,7 @@ const tests: TestItem[] = [
   {
     category: "Profile Mgmt",
     name: "removeProfilePicture() - Remove profile picture (DESTRUCTIVE)",
+    destructive: true,
     action: async (client: MiawClient) => {
       console.log("\n🗑️  This will remove your profile picture.");
       console.log("Press ENTER to continue, or s to skip");
@@ -1465,6 +1554,7 @@ const tests: TestItem[] = [
   {
     category: "Business",
     name: "deleteProducts() - Remove products (CLEANUP)",
+    destructive: true,
     businessOnly: true,
     action: async (client: MiawClient) => {
       if (!TEST_CONFIG.lastCreatedProductId) {
@@ -1504,7 +1594,7 @@ const tests: TestItem[] = [
   },
 
   // ============================================================
-  // NEWSLETTER/CHANNEL OPERATIONS (subset of 17 methods)
+  // NEWSLETTER/CHANNEL OPERATIONS (subset)
   // ============================================================
   {
     category: "Newsletter",
@@ -1670,6 +1760,7 @@ const tests: TestItem[] = [
   {
     category: "Newsletter",
     name: "deleteNewsletter() - Delete newsletter",
+    destructive: true,
     action: async (client: MiawClient) => {
       // Use stored newsletter ID or prompt
       let newsletterId = TEST_CONFIG.lastCreatedNewsletterId;
@@ -1723,6 +1814,7 @@ const tests: TestItem[] = [
   {
     category: "Contacts",
     name: "removeContact() - Remove contact",
+    destructive: true,
     action: async (client: MiawClient) => {
       const phone = await getTestPhone(
         "Enter phone number to remove from contacts:"
@@ -1742,6 +1834,7 @@ const tests: TestItem[] = [
   {
     category: "UX Features",
     name: "markAsRead() - Mark message as read",
+    manual: true,
     action: async (client: MiawClient) => {
       console.log("\n📝 To test mark as read:");
       console.log("1. Send a message to the bot from another phone");
@@ -1839,6 +1932,718 @@ const tests: TestItem[] = [
   },
 
   // ============================================================
+  // PRIVACY & BLOCKLIST (v1.12.0)
+  // ============================================================
+  {
+    category: "Privacy & Blocklist",
+    name: "getPrivacySettings() - Read current privacy settings",
+    test: async (client: MiawClient) => {
+      const settings = await client.getPrivacySettings();
+      if (!settings) {
+        console.log("❌ Failed to fetch privacy settings");
+        return false;
+      }
+      console.log("Last seen:      ", settings.lastSeen ?? "(not set)");
+      console.log("Online:         ", settings.online ?? "(not set)");
+      console.log("Profile picture:", settings.profilePicture ?? "(not set)");
+      console.log("Status:         ", settings.status ?? "(not set)");
+      console.log("Read receipts:  ", settings.readReceipts ?? "(not set)");
+      console.log("Group add:      ", settings.groupAdd ?? "(not set)");
+      console.log("Messages:       ", settings.messages ?? "(not set)");
+      console.log("Calls:          ", settings.calls ?? "(not set)");
+      console.log("\nRaw:", JSON.stringify(settings.raw));
+      return true;
+    },
+  },
+  {
+    category: "Privacy & Blocklist",
+    name: "All 8 privacy setters - Round-trip each current value",
+    action: async (client: MiawClient) => {
+      // Read first and write the SAME value back for every setting, so a manual
+      // run exercises all eight setters without changing the tester's own
+      // privacy. Driven from one table rather than eight near-identical entries.
+      const settings = await client.getPrivacySettings();
+      if (!settings) {
+        console.log("❌ Failed to fetch privacy settings");
+        return false;
+      }
+
+      const roundTrips: Array<{
+        label: string;
+        current: string | undefined;
+        apply: (value: string) => Promise<{ success: boolean; error?: string }>;
+      }> = [
+        {
+          label: "last-seen",
+          current: settings.lastSeen,
+          apply: (v) => client.setLastSeenPrivacy(v as PrivacyValue),
+        },
+        {
+          label: "online",
+          current: settings.online,
+          apply: (v) => client.setOnlinePrivacy(v as PrivacyOnlineValue),
+        },
+        {
+          label: "picture",
+          current: settings.profilePicture,
+          apply: (v) => client.setProfilePicturePrivacy(v as PrivacyValue),
+        },
+        {
+          label: "status",
+          current: settings.status,
+          apply: (v) => client.setStatusPrivacy(v as PrivacyValue),
+        },
+        {
+          label: "read-receipts",
+          current: settings.readReceipts,
+          apply: (v) => client.setReadReceiptsPrivacy(v as ReadReceiptsValue),
+        },
+        {
+          label: "group-add",
+          current: settings.groupAdd,
+          apply: (v) => client.setGroupAddPrivacy(v as PrivacyGroupAddValue),
+        },
+        {
+          label: "messages",
+          current: settings.messages,
+          apply: (v) => client.setMessagesPrivacy(v as PrivacyMessagesValue),
+        },
+        {
+          label: "calls",
+          current: settings.calls,
+          apply: (v) => client.setCallPrivacy(v as PrivacyCallValue),
+        },
+      ];
+
+      let attempted = 0;
+      const failures: string[] = [];
+      for (const { label, current, apply } of roundTrips) {
+        if (!current) {
+          console.log(`  ⏭️  ${label.padEnd(14)} WhatsApp reported no value`);
+          continue;
+        }
+        attempted++;
+        const result = await apply(current);
+        console.log(
+          `  ${result.success ? "✅" : "❌"} ${label.padEnd(14)} "${current}" ${result.error || ""}`
+        );
+        if (!result.success) failures.push(label);
+      }
+
+      if (attempted === 0) {
+        console.log("\n⏭️  WhatsApp reported no privacy values at all; skipping");
+        return "skipped";
+      }
+      console.log(`\nRound-tripped ${attempted}/${roundTrips.length} settings.`);
+      return failures.length === 0;
+    },
+  },
+  {
+    category: "Privacy & Blocklist",
+    name: "setDefaultDisappearingMode() / setLinkPreviewsDisabled()",
+    // Unlike the eight above, WhatsApp does not report these two back through
+    // getPrivacySettings(), so there is no current value to restore. This entry
+    // therefore leaves them at WhatsApp's DEFAULTS (disappearing off, link
+    // previews on) rather than at whatever you had -- hence destructive.
+    destructive: true,
+    action: async (client: MiawClient) => {
+      console.log(
+        "\n⚠️  These two cannot be read back, so they will be left at WhatsApp's"
+      );
+      console.log("   defaults: disappearing OFF, link previews ON.\n");
+
+      console.log("⏳ Default disappearing mode -> 24h...");
+      const on = await client.setDefaultDisappearingMode(
+        EphemeralDuration.TwentyFourHours
+      );
+      console.log("Success:", on.success, on.error || "");
+
+      console.log("↩️  Default disappearing mode -> off...");
+      const off = await client.setDefaultDisappearingMode(EphemeralDuration.Off);
+      console.log("Success:", off.success, off.error || "");
+
+      console.log("\n🔗 Link previews -> disabled...");
+      const disabled = await client.setLinkPreviewsDisabled(true);
+      console.log("Success:", disabled.success, disabled.error || "");
+
+      console.log("↩️  Link previews -> enabled (default)...");
+      const enabled = await client.setLinkPreviewsDisabled(false);
+      console.log("Success:", enabled.success, enabled.error || "");
+
+      return on.success && off.success && disabled.success && enabled.success;
+    },
+  },
+  {
+    category: "Privacy & Blocklist",
+    name: "getBlocklist() - List blocked contacts",
+    test: async (client: MiawClient) => {
+      const blocked = await client.getBlocklist();
+      console.log("Blocked contacts:", blocked.length);
+      for (const jid of blocked.slice(0, 10)) {
+        console.log("  -", jid);
+      }
+      return true;
+    },
+  },
+  {
+    category: "Privacy & Blocklist",
+    name: "blockContact() / unblockContact() - Block then restore",
+    action: async (client: MiawClient) => {
+      const phone = await getTestPhone(
+        "Enter a phone number to block and then immediately unblock:"
+      );
+
+      const before = await client.isBlocked(phone);
+      if (before) {
+        console.log("⏭️  Already blocked; skipping so we don't unblock it");
+        return "skipped";
+      }
+
+      console.log(`\n🚫 Blocking ${phone}...`);
+      const blockResult = await client.blockContact(phone);
+      console.log("Block success:", blockResult.success, blockResult.error || "");
+      if (!blockResult.success) return false;
+
+      console.log("Now blocked?", await client.isBlocked(phone));
+
+      console.log(`\n✅ Unblocking ${phone} to restore the original state...`);
+      const unblockResult = await client.unblockContact(phone);
+      console.log("Unblock success:", unblockResult.success, unblockResult.error || "");
+      return unblockResult.success;
+    },
+  },
+
+  // ============================================================
+  // CALLS (v1.12.0)
+  // ============================================================
+  {
+    category: "Calls",
+    name: "call event - Receive an incoming call",
+    manual: true,
+    action: async (client: MiawClient) => {
+      console.log("\n📞 Call the bot from another phone within 45 seconds.");
+      console.log("   (Do not answer — we only need the 'offer' event.)");
+
+      const call: any = await new Promise((resolve) => {
+        const timer = setTimeout(() => resolve(null), 45000);
+        client.once("call", (c) => {
+          clearTimeout(timer);
+          resolve(c);
+        });
+      });
+
+      if (!call) {
+        console.log("⏭️  No call received within the timeout");
+        return "skipped";
+      }
+
+      console.log("\n✅ Call event received:");
+      console.log("  id:      ", call.id);
+      console.log("  from:    ", call.from);
+      console.log("  status:  ", call.status);
+      console.log("  isVideo: ", call.isVideo);
+      console.log("  isGroup: ", call.isGroup);
+      console.log("  date:    ", call.date?.toISOString?.());
+      return true;
+    },
+  },
+  {
+    category: "Calls",
+    name: "rejectCall() - Reject an incoming call",
+    manual: true,
+    action: async (client: MiawClient) => {
+      console.log("\n📞 Call the bot from another phone within 45 seconds.");
+      console.log("   It should be rejected automatically.");
+
+      const call: any = await new Promise((resolve) => {
+        const timer = setTimeout(() => resolve(null), 45000);
+        const onCall = (c: any) => {
+          if (c.status !== "offer") return;
+          clearTimeout(timer);
+          client.off("call", onCall);
+          resolve(c);
+        };
+        client.on("call", onCall);
+      });
+
+      if (!call) {
+        console.log("⏭️  No call offer received within the timeout");
+        return "skipped";
+      }
+
+      console.log(`\n🚫 Rejecting call ${call.id} from ${call.from}...`);
+      const result = await client.rejectCall(call.id, call.from);
+      console.log("Success:", result.success, result.error || "");
+      return result.success;
+    },
+  },
+  {
+    category: "Calls",
+    name: "createCallLink() - Create a shareable video call link",
+    destructive: true,
+    action: async (client: MiawClient) => {
+      console.log("\n⚠️  This mints a REAL shareable call link.");
+      console.log("   [y] Create it   [n] Skip (default)");
+      const answer = await waitForInput("> [y/n]: ");
+      if (answer.toLowerCase() !== "y") {
+        console.log("⏭️  Skipped");
+        return "skipped";
+      }
+
+      const link = await client.createCallLink("video");
+      if (!link) {
+        console.log("❌ Failed to create call link");
+        return false;
+      }
+      console.log("\n✅ Call link:", link);
+      return true;
+    },
+  },
+
+  // ============================================================
+  // GROUP ADMIN (v1.12.0)
+  // ============================================================
+  {
+    category: "Group Mgmt",
+    name: "getGroupJoinRequests() - List pending join requests",
+    test: async (client: MiawClient) => {
+      const groupJid = await getTestGroup("Enter group JID:");
+      const requests = await client.getGroupJoinRequests(groupJid);
+      console.log("Pending join requests:", requests.length);
+      for (const r of requests) {
+        console.log(
+          "  -",
+          r.jid,
+          r.requestedAt ? new Date(r.requestedAt * 1000).toISOString() : "(no timestamp)"
+        );
+      }
+      console.log(
+        "\n⚠️  Requests only accumulate while join approval is ON for the group."
+      );
+      return true;
+    },
+  },
+  {
+    category: "Group Mgmt",
+    name: "setGroupJoinApproval() - Toggle join approval and restore",
+    action: async (client: MiawClient) => {
+      const groupJid = await getTestGroup("Enter group JID (you must be admin):");
+
+      console.log("\n🔒 Turning join approval ON...");
+      const on = await client.setGroupJoinApproval(groupJid, true);
+      console.log("Success:", on.success, on.error || "");
+      if (!on.success) return false;
+
+      console.log("\n🔓 Turning it back OFF to restore the original state...");
+      const off = await client.setGroupJoinApproval(groupJid, false);
+      console.log("Success:", off.success, off.error || "");
+      return off.success;
+    },
+  },
+  {
+    category: "Group Mgmt",
+    name: "setGroupAnnounceOnly() - Toggle announce mode and restore",
+    action: async (client: MiawClient) => {
+      const groupJid = await getTestGroup("Enter group JID (you must be admin):");
+
+      const info = await client.getGroupInfo(groupJid);
+      const wasAnnounce = Boolean(info?.announce);
+      console.log(`\nCurrent announce mode: ${wasAnnounce ? "ON" : "OFF"}`);
+
+      console.log(`\n🔒 Setting announce mode to ${!wasAnnounce ? "ON" : "OFF"}...`);
+      const toggled = await client.setGroupAnnounceOnly(groupJid, !wasAnnounce);
+      console.log("Success:", toggled.success, toggled.error || "");
+      if (!toggled.success) return false;
+
+      console.log("\n↩️  Restoring the original setting...");
+      const restored = await client.setGroupAnnounceOnly(groupJid, wasAnnounce);
+      console.log("Success:", restored.success, restored.error || "");
+      return restored.success;
+    },
+  },
+  {
+    category: "Group Mgmt",
+    name: "setGroupEphemeral() - Set disappearing messages, then disable",
+    action: async (client: MiawClient) => {
+      const groupJid = await getTestGroup("Enter group JID (you must be admin):");
+
+      console.log("\n⏳ Setting disappearing messages to 24 hours...");
+      const on = await client.setGroupEphemeral(groupJid, 86400);
+      console.log("Success:", on.success, on.error || "");
+      if (!on.success) return false;
+
+      console.log("\n↩️  Disabling it again...");
+      const off = await client.setGroupEphemeral(groupJid, 0);
+      console.log("Success:", off.success, off.error || "");
+      return off.success;
+    },
+  },
+  {
+    category: "Group Mgmt",
+    name: "setGroupRestrictInfo() - Toggle info-edit lock and restore",
+    action: async (client: MiawClient) => {
+      const groupJid = await getTestGroup("Enter group JID (you must be admin):");
+
+      const info = await client.getGroupInfo(groupJid);
+      const wasRestricted = Boolean(info?.restrict);
+      console.log(`\nCurrent info-edit lock: ${wasRestricted ? "ON" : "OFF"}`);
+
+      console.log(`\n🔒 Setting it to ${!wasRestricted ? "ON" : "OFF"}...`);
+      const toggled = await client.setGroupRestrictInfo(groupJid, !wasRestricted);
+      console.log("Success:", toggled.success, toggled.error || "");
+      if (!toggled.success) return false;
+
+      console.log("\n↩️  Restoring the original setting...");
+      const restored = await client.setGroupRestrictInfo(groupJid, wasRestricted);
+      console.log("Success:", restored.success, restored.error || "");
+      return restored.success;
+    },
+  },
+  {
+    category: "Group Mgmt",
+    name: "setGroupMemberAddMode() - Switch who may add members",
+    // getGroupInfo() does not report the current add-mode, so this cannot
+    // restore what you had -- it ends on WhatsApp's default, all_member_add.
+    destructive: true,
+    action: async (client: MiawClient) => {
+      const groupJid = await getTestGroup("Enter group JID (you must be admin):");
+      console.log(
+        "\n⚠️  The current mode is not readable; this ends on 'all_member_add'.\n"
+      );
+
+      console.log("🔒 Restricting member-add to admins...");
+      const admins = await client.setGroupMemberAddMode(groupJid, "admin_add");
+      console.log("Success:", admins.success, admins.error || "");
+      if (!admins.success) return false;
+
+      console.log("\n↩️  Restoring the default (all members may add)...");
+      const all = await client.setGroupMemberAddMode(groupJid, "all_member_add");
+      console.log("Success:", all.success, all.error || "");
+      return all.success;
+    },
+  },
+  {
+    category: "Group Mgmt",
+    name: "approveGroupJoinRequests() / rejectGroupJoinRequests()",
+    // Needs a real person to request to join while approval is ON.
+    manual: true,
+    action: async (client: MiawClient) => {
+      const groupJid = await getTestGroup("Enter group JID (you must be admin):");
+
+      const pending = await client.getGroupJoinRequests(groupJid);
+      if (pending.length === 0) {
+        console.log(
+          "\n⏭️  No pending join requests. Turn join approval ON, have someone"
+        );
+        console.log("   request to join via the invite link, then re-run.");
+        return "skipped";
+      }
+
+      console.log(`\nPending requests (${pending.length}):`);
+      pending.forEach((r, i) => console.log(`  ${i + 1}. ${r.jid}`));
+
+      const answer = await waitForInput(
+        "\nApprove or reject the FIRST request? [a]pprove / [r]eject / [s]kip: "
+      );
+      const choice = answer.trim().toLowerCase();
+      const target = pending[0].jid;
+
+      if (choice === "a") {
+        const result = await client.approveGroupJoinRequests(groupJid, [target]);
+        console.log("Approve:", JSON.stringify(result));
+        return result.every((r) => r.success);
+      }
+      if (choice === "r") {
+        const result = await client.rejectGroupJoinRequests(groupJid, [target]);
+        console.log("Reject:", JSON.stringify(result));
+        return result.every((r) => r.success);
+      }
+      console.log("⏭️  Left the request pending.");
+      return "skipped";
+    },
+  },
+
+  // ============================================================
+  // COMMUNITY MANAGEMENT (v1.9.0 + v1.12.0 admin)
+  // ============================================================
+  {
+    category: "Community Mgmt",
+    name: "getAllCommunities() - List communities you belong to",
+    test: async (client: MiawClient) => {
+      const communities = await client.getAllCommunities();
+      console.log("Communities:", communities.length);
+      for (const c of communities.slice(0, 10)) {
+        console.log(`  - ${c.name} (${c.jid})`);
+      }
+      if (communities.length === 0) {
+        console.log(
+          "\n⚠️  No communities found. The rest of this group needs one to exist."
+        );
+      }
+      return true;
+    },
+  },
+  {
+    category: "Community Mgmt",
+    name: "getCommunityInfo() / getLinkedGroups()",
+    test: async (client: MiawClient) => {
+      const jid = await getTestGroup("Enter community JID:");
+      const info = await client.getCommunityInfo(jid);
+      if (!info) {
+        console.log("❌ Failed to fetch community info");
+        return false;
+      }
+      console.log("Name:", info.name);
+      console.log("Participants:", info.participantCount);
+
+      const linked = await client.getLinkedGroups(jid);
+      console.log("Linked groups:", linked.length);
+      for (const g of linked.slice(0, 10)) {
+        console.log(`  - ${g.subject} (${g.id ?? "no id"})`);
+      }
+      return true;
+    },
+  },
+  {
+    category: "Community Mgmt",
+    name: "getCommunityJoinRequests() - List pending join requests",
+    test: async (client: MiawClient) => {
+      const jid = await getTestGroup("Enter community JID:");
+      const requests = await client.getCommunityJoinRequests(jid);
+      console.log("Pending join requests:", requests.length);
+      for (const r of requests) {
+        console.log(
+          "  -",
+          r.jid,
+          r.requestedAt ? new Date(r.requestedAt * 1000).toISOString() : "(no timestamp)"
+        );
+      }
+      console.log(
+        "\n⚠️  Requests only accumulate while join approval is ON."
+      );
+      return true;
+    },
+  },
+  {
+    category: "Community Mgmt",
+    name: "setCommunityAnnounceOnly() - Toggle announce mode and restore",
+    action: async (client: MiawClient) => {
+      const jid = await getTestGroup("Enter community JID (you must be admin):");
+
+      const info = await client.getCommunityInfo(jid);
+      const wasAnnounce = Boolean(info?.announce);
+      console.log(`\nCurrent announce mode: ${wasAnnounce ? "ON" : "OFF"}`);
+
+      const toggled = await client.setCommunityAnnounceOnly(jid, !wasAnnounce);
+      console.log("Toggle success:", toggled.success, toggled.error || "");
+      if (!toggled.success) return false;
+
+      const restored = await client.setCommunityAnnounceOnly(jid, wasAnnounce);
+      console.log("Restore success:", restored.success, restored.error || "");
+      return restored.success;
+    },
+  },
+  {
+    category: "Community Mgmt",
+    name: "setCommunityRestrictInfo() - Toggle info-edit lock and restore",
+    action: async (client: MiawClient) => {
+      const jid = await getTestGroup("Enter community JID (you must be admin):");
+
+      const info = await client.getCommunityInfo(jid);
+      const wasRestricted = Boolean(info?.restrict);
+      console.log(`\nCurrent info-edit lock: ${wasRestricted ? "ON" : "OFF"}`);
+
+      const toggled = await client.setCommunityRestrictInfo(jid, !wasRestricted);
+      console.log("Toggle success:", toggled.success, toggled.error || "");
+      if (!toggled.success) return false;
+
+      const restored = await client.setCommunityRestrictInfo(jid, wasRestricted);
+      console.log("Restore success:", restored.success, restored.error || "");
+      return restored.success;
+    },
+  },
+  {
+    category: "Community Mgmt",
+    name: "setCommunityJoinApproval() - Toggle join approval and restore",
+    action: async (client: MiawClient) => {
+      const jid = await getTestGroup("Enter community JID (you must be admin):");
+
+      console.log("\n🔒 Turning join approval ON...");
+      const on = await client.setCommunityJoinApproval(jid, true);
+      console.log("Success:", on.success, on.error || "");
+      if (!on.success) return false;
+
+      console.log("\n🔓 Turning it back OFF...");
+      const off = await client.setCommunityJoinApproval(jid, false);
+      console.log("Success:", off.success, off.error || "");
+      return off.success;
+    },
+  },
+  {
+    category: "Community Mgmt",
+    name: "setCommunityEphemeral() - Set disappearing messages, then disable",
+    action: async (client: MiawClient) => {
+      const jid = await getTestGroup("Enter community JID (you must be admin):");
+
+      const on = await client.setCommunityEphemeral(
+        jid,
+        EphemeralDuration.TwentyFourHours
+      );
+      console.log("Set to 24h:", on.success, on.error || "");
+      if (!on.success) return false;
+
+      const off = await client.setCommunityEphemeral(jid, EphemeralDuration.Off);
+      console.log("Disabled:", off.success, off.error || "");
+      return off.success;
+    },
+  },
+  {
+    category: "Community Mgmt",
+    name: "setCommunityMemberAddMode() - Switch who may add members",
+    // Same as the group equivalent: the current mode is not readable, so this
+    // ends on WhatsApp's default rather than what you had.
+    destructive: true,
+    action: async (client: MiawClient) => {
+      const jid = await getTestGroup("Enter community JID (you must be admin):");
+      console.log(
+        "\n⚠️  The current mode is not readable; this ends on 'all_member_add'.\n"
+      );
+
+      const admins = await client.setCommunityMemberAddMode(jid, "admin_add");
+      console.log("Admin-only:", admins.success, admins.error || "");
+      if (!admins.success) return false;
+
+      const all = await client.setCommunityMemberAddMode(jid, "all_member_add");
+      console.log("Restored default:", all.success, all.error || "");
+      return all.success;
+    },
+  },
+  {
+    category: "Community Mgmt",
+    name: "approveCommunityJoinRequests() / rejectCommunityJoinRequests()",
+    manual: true,
+    action: async (client: MiawClient) => {
+      const jid = await getTestGroup("Enter community JID (you must be admin):");
+
+      const pending = await client.getCommunityJoinRequests(jid);
+      if (pending.length === 0) {
+        console.log(
+          "\n⏭️  No pending join requests. Turn join approval ON, have someone"
+        );
+        console.log("   request to join, then re-run.");
+        return "skipped";
+      }
+
+      console.log(`\nPending requests (${pending.length}):`);
+      pending.forEach((r, i) => console.log(`  ${i + 1}. ${r.jid}`));
+
+      const answer = await waitForInput(
+        "\nApprove or reject the FIRST request? [a]pprove / [r]eject / [s]kip: "
+      );
+      const choice = answer.trim().toLowerCase();
+      const target = pending[0].jid;
+
+      if (choice === "a") {
+        const result = await client.approveCommunityJoinRequests(jid, [target]);
+        console.log("Approve:", JSON.stringify(result));
+        return result.every((r) => r.success);
+      }
+      if (choice === "r") {
+        const result = await client.rejectCommunityJoinRequests(jid, [target]);
+        console.log("Reject:", JSON.stringify(result));
+        return result.every((r) => r.success);
+      }
+      console.log("⏭️  Left the request pending.");
+      return "skipped";
+    },
+  },
+  {
+    category: "Messaging",
+    name: "pinMessage() / unpinMessage() - Pin a message then unpin it",
+    manual: true,
+    action: async (client: MiawClient) => {
+      console.log("\n📝 Send a text message to the bot from another phone.");
+
+      const message = await waitForMessage(
+        client,
+        (msg) => msg.type === "text",
+        30000
+      );
+
+      console.log(`\n📌 Pinning message ${message.id} for 24 hours...`);
+      const pinned = await client.pinMessage(message);
+      console.log("Success:", pinned.success, pinned.error || "");
+      if (!pinned.success) return false;
+
+      console.log("\n📌 Unpinning it again...");
+      const unpinned = await client.unpinMessage(message);
+      console.log("Success:", unpinned.success, unpinned.error || "");
+      return unpinned.success;
+    },
+  },
+  {
+    category: "Messaging",
+    name: "setChatEphemeral() - Disappearing messages in a 1:1 chat",
+    action: async (client: MiawClient) => {
+      const phone = await getTestPhone("Enter phone number:");
+
+      console.log("\n⏳ Setting disappearing messages to 24 hours...");
+      const on = await client.setChatEphemeral(phone, 86400);
+      console.log("Success:", on.success, on.error || "");
+      if (!on.success) return false;
+
+      console.log("\n↩️  Disabling it again...");
+      const off = await client.setChatEphemeral(phone, 0);
+      console.log("Success:", off.success, off.error || "");
+      return off.success;
+    },
+  },
+  {
+    category: "Messaging",
+    name: "sendGroupInvite() - Send a group invite card",
+    action: async (client: MiawClient) => {
+      const groupJid = await getTestGroup("Enter the group to invite TO:");
+      const phone = await getTestPhone("Enter the phone number to invite:");
+
+      // Returns the full https://chat.whatsapp.com/<code> URL, or null.
+      const link = await client.getGroupInviteLink(groupJid);
+      if (!link) {
+        console.log("❌ Could not get an invite link (are you an admin?)");
+        return false;
+      }
+      const inviteCode = link.split("/").pop() ?? "";
+      if (!inviteCode) {
+        console.log("❌ Could not parse an invite code out of:", link);
+        return false;
+      }
+
+      const info = await client.getGroupInfo(groupJid);
+
+      // Regression watch: Baileys fetches the group's picture to build the
+      // card's thumbnail and does not guard that call, so a group with NO
+      // picture makes WhatsApp answer item-not-found and the whole send
+      // aborts. MiawClient overrides the hook to swallow that. Unit tests
+      // cannot catch it -- a mocked socket never rejects -- so this entry is
+      // the only guard. Prefer a pictureless group here.
+      const result = await client.sendGroupInvite(phone, {
+        groupJid,
+        groupName: info?.name ?? "Test group",
+        inviteCode,
+        expiration: Math.floor(Date.now() / 1000) + 86400,
+        caption: "Join us (miaw-core test)",
+      });
+
+      console.log("Success:", result.success, result.error || "");
+      if (result.success) {
+        console.log(
+          "\n👀 Check the recipient: it should render as an invite CARD, not text."
+        );
+      }
+      return result.success;
+    },
+  },
+
+  // ============================================================
   // FINAL CLEANUP
   // ============================================================
   {
@@ -1867,6 +2672,51 @@ const tests: TestItem[] = [
 // ============================================================
 // HELPER FUNCTIONS
 // ============================================================
+
+/**
+ * Warn about test config that silently invalidates results.
+ *
+ * Several entries compare two contacts, add a participant, or block someone.
+ * If both configured numbers are the same, or are the connected account's own
+ * number, those entries fail for reasons that have nothing to do with the code:
+ * WhatsApp deduplicates a batch check, refuses a self-block, and will not add
+ * you to a group you are already in. That looks exactly like a real defect in
+ * the output, so say so up front.
+ */
+function warnOnDegenerateConfig(ownJid: string | undefined): void {
+  const own = (ownJid || "").split(":")[0].split("@")[0];
+  const a = TEST_CONFIG.testPhone;
+  const b = TEST_CONFIG.testPhone2;
+  const warnings: string[] = [];
+
+  if (a && b && a === b) {
+    warnings.push(
+      "TEST_CONTACT_PHONE_A and TEST_CONTACT_PHONE_B are the same number."
+    );
+  }
+  if (own && a && a === own) {
+    warnings.push(
+      "TEST_CONTACT_PHONE_A is this account's OWN number — every 'send to " +
+        "someone else' test is really a send-to-self."
+    );
+  }
+  if (own && b && b === own) {
+    warnings.push("TEST_CONTACT_PHONE_B is this account's OWN number.");
+  }
+  if (!TEST_CONFIG.testGroupJid) {
+    warnings.push("TEST_GROUP_JID is unset — group entries will prompt or skip.");
+  }
+
+  if (warnings.length === 0) return;
+
+  console.log("\n⚠️  TEST CONFIG WARNINGS (.env.test)");
+  for (const w of warnings) console.log(`   - ${w}`);
+  console.log(
+    "   Expect failures in checkNumbers, addParticipants, promoteToAdmin,\n" +
+      "   demoteFromAdmin and blockContact that are caused by the config,\n" +
+      "   not by miaw-core. Set B to a real second number for honest coverage."
+  );
+}
 
 async function detectAccountType(client: MiawClient): Promise<void> {
   console.log("\n🔍 Detecting account type...");
@@ -1898,6 +2748,12 @@ function createReadlineInterface() {
 }
 
 function waitForInput(prompt: string = ""): Promise<string> {
+  if (AUTO_MODE) {
+    // "" is what every caller already treats as "accept the default / cached
+    // value", so auto mode needs no separate code path through the tests.
+    if (prompt) console.log(`${prompt}(auto: default)`);
+    return Promise.resolve("");
+  }
   const rl = createReadlineInterface();
   return new Promise((resolve) => {
     rl.question(prompt, (answer: string) => {
@@ -1908,6 +2764,10 @@ function waitForInput(prompt: string = ""): Promise<string> {
 }
 
 function waitForEnter(prompt: string = ""): Promise<void> {
+  if (AUTO_MODE) {
+    if (prompt) console.log(`${prompt}(auto)`);
+    return Promise.resolve();
+  }
   const rl = createReadlineInterface();
   return new Promise((resolve) => {
     rl.question(prompt, () => {
@@ -2045,22 +2905,28 @@ function showHelp() {
 
   console.log("\n📖 Usage: npm run test:manual [group]\n");
   console.log("Available test groups:\n");
-  console.log("  all         - Run all tests interactively");
-  console.log("  core        - Core Client (connect, disconnect, state)");
-  console.log(
-    "  get         - Basic GET Operations (profile, contacts, chats)"
+
+  // Generated from CATEGORY_MAP so a new group cannot be added without
+  // appearing here.
+  const pad = Math.max(
+    ...Object.keys(CATEGORY_MAP).map((k) => k.length),
+    "all".length
   );
-  console.log("  messaging   - Messaging (send, react, forward, edit, delete)");
-  console.log("  contacts    - Contacts (check, info, add, remove)");
-  console.log(
-    "  group       - Group Management (create, update, participants)"
-  );
-  console.log(
-    "  profile     - Profile Management (update name, status, picture)"
-  );
-  console.log("  business    - Business [BIZ] (labels + catalog)");
-  console.log("  newsletter  - Newsletter (create, metadata, follow)");
-  console.log("  ux          - UX Features (typing, presence, read receipts)");
+  console.log(`  ${"all".padEnd(pad)}  - Run all tests interactively`);
+  for (const [group, { categories, description }] of Object.entries(CATEGORY_MAP)) {
+    const count = tests.filter((t) => categories.includes(t.category)).length;
+    console.log(`  ${group.padEnd(pad)}  - ${description} [${count}]`);
+  }
+
+  console.log("\n🤖 Unattended mode:");
+  console.log("  npm run test:manual:auto              # all groups, no prompts");
+  console.log("  npm run test:manual all -- --auto     # same thing");
+  console.log("  npm run test:manual group -- --auto   # one group, no prompts");
+  console.log("  AUTO=1 npm run test:manual all        # via env instead of a flag");
+  console.log("");
+  console.log("  Prompts resolve to their defaults (the .env.test values), entries");
+  console.log("  needing a human are skipped, and the process exits non-zero if any");
+  console.log("  test failed. Add --destructive to include the destructive entries.");
 
   console.log("\n💡 Examples:");
   console.log("  npm run test:manual all       # Run all tests");
@@ -2088,7 +2954,7 @@ function getTestsToRun(): TestItem[] {
     return tests;
   }
 
-  const targetCategories = CATEGORY_MAP[cliArg];
+  const targetCategories = CATEGORY_MAP[cliArg]?.categories;
   if (!targetCategories) {
     return []; // Will trigger help display
   }
@@ -2139,6 +3005,12 @@ async function main() {
   console.log("║     Miaw Core - Interactive Manual Testing Script        ║");
   console.log("╚════════════════════════════════════════════════════════════╝");
   console.log(`\n🎯 Running: ${targetDesc}`);
+  if (AUTO_MODE) {
+    console.log("🤖 AUTO mode — no prompts, exits non-zero on failure");
+    console.log(
+      `   manual entries: skipped · destructive entries: ${AUTO_DESTRUCTIVE ? "INCLUDED" : "skipped"}`
+    );
+  }
   console.log("\nActions: [Enter] run | [n] skip | [s] skip all | [q] quit");
   console.log("Icons: ⚡ auto | 👤 interactive | [BIZ] business only");
   console.log(
@@ -2227,6 +3099,10 @@ async function main() {
 
     console.log("✅ Connected!");
     await detectAccountType(client);
+    warnOnDegenerateConfig(
+      (client as unknown as { socket?: { user?: { id?: string } } }).socket?.user
+        ?.id
+    );
     console.log("\n🚀 Starting tests...\n");
   } else {
     await waitForEnter("\n> Press ENTER to start...");
@@ -2250,17 +3126,35 @@ async function main() {
     }
     console.log(`Next ${progress}:${interactiveTag} ${test.name}${bizTag}`);
 
-    // Prompt for action
-    const preAnswer = await waitForInput(
-      "> [Enter] run | [n] skip | [q] quit: "
-    );
-    if (preAnswer.toLowerCase() === "q") break;
-    if (preAnswer.toLowerCase() === "s") break;
-    if (preAnswer.toLowerCase() === "n") {
-      testResults[test.name] = "skip";
-      lastResult = "skip";
-      console.log(`⏭️  Skipped`);
-      continue;
+    if (AUTO_MODE) {
+      // These need a human to send a message or place a call; env config
+      // cannot stand in for that, so they are reported as skipped rather than
+      // left to time out.
+      if (test.manual) {
+        testResults[test.name] = "skip";
+        lastResult = "skip";
+        console.log("⏭️  Skipped (needs a human — run without --auto)");
+        continue;
+      }
+      if (test.destructive && !AUTO_DESTRUCTIVE) {
+        testResults[test.name] = "skip";
+        lastResult = "skip";
+        console.log("⏭️  Skipped (destructive — pass --destructive to include)");
+        continue;
+      }
+    } else {
+      // Prompt for action
+      const preAnswer = await waitForInput(
+        "> [Enter] run | [n] skip | [q] quit: "
+      );
+      if (preAnswer.toLowerCase() === "q") break;
+      if (preAnswer.toLowerCase() === "s") break;
+      if (preAnswer.toLowerCase() === "n") {
+        testResults[test.name] = "skip";
+        lastResult = "skip";
+        console.log(`⏭️  Skipped`);
+        continue;
+      }
     }
 
     const result = await runTest(test, client);
@@ -2277,6 +3171,14 @@ async function main() {
 
   // Show summary
   showSummary();
+
+  if (AUTO_MODE) {
+    // Machine-readable gate: unattended runs must fail the shell on a failure,
+    // otherwise a red suite looks identical to a green one in CI or a script.
+    const failed = Object.values(testResults).filter((r) => r === "fail").length;
+    await client.dispose();
+    process.exit(failed > 0 ? 1 : 0);
+  }
 
   // Exit process (connection may still be active if user chose to keep it)
   process.exit(0);

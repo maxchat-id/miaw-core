@@ -1,5 +1,15 @@
 # API Stability Review - v1.0.0
 
+> ⚠️ **Superseded — historical record.**
+> Written while preparing the v1.0.0 release, against v0.9.1 (2025-12-24). Its numbers, coverage figures and open action items describe
+> that snapshot and have **not** been updated since; several are now wrong by a
+> wide margin. Kept because the reasoning still has value, not as a description
+> of the code today.
+>
+> For current information see [../CHANGELOG.md](../CHANGELOG.md) and [MIGRATION.md](./MIGRATION.md).
+>
+> _Marked superseded 2026-09-02 (miaw-core v1.12.0, Baileys 7.0.0-rc14)._
+
 This document reviews the Miaw Core API surface for stability and readiness for v1.0.0 release.
 
 **Review Date:** 2025-12-24

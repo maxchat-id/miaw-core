@@ -34,10 +34,46 @@ interface CommandNode {
   flags?: string[];
 }
 
+/**
+ * Every `help <topic>` the REPL answers, mapped to its renderer.
+ *
+ * This map is the single source of truth: tab-completion, the "Available
+ * topics" line and the dispatch in `showReplHelp()` are all derived from it.
+ * They used to be three hand-maintained lists, which is how five topics
+ * (`chat`, `story`, `community`, `call`, `business`) ended up completing but
+ * then printing "Unknown help topic". Add a topic here and nowhere else.
+ *
+ * `privacy` and `block` deliberately share one renderer.
+ */
+const HELP_TOPIC_HANDLERS: Record<string, () => void> = {
+  instance: showHelpInstance,
+  get: showHelpGet,
+  load: showHelpLoad,
+  send: showHelpSend,
+  media: showHelpMedia,
+  chat: showHelpChat,
+  story: showHelpStory,
+  group: showHelpGroup,
+  community: showHelpCommunity,
+  check: showHelpCheck,
+  contact: showHelpContact,
+  profile: showHelpProfile,
+  privacy: showHelpPrivacy,
+  block: showHelpPrivacy,
+  call: showHelpCall,
+  label: showHelpLabel,
+  business: showHelpBusiness,
+  catalog: showHelpCatalog,
+  proxy: showHelpProxy,
+};
+
+/** Topic names in declaration order, for completion and help text. */
+export const HELP_TOPICS: string[] = Object.keys(HELP_TOPIC_HANDLERS);
+
 const commandTree: Record<string, CommandNode> = {
   // REPL-specific commands
   help: {
-    subcommands: ["instance", "get", "load", "send", "media", "chat", "story", "group", "community", "check", "contact", "profile", "label", "business", "catalog", "proxy"],
+    subcommands: HELP_TOPICS,
   },
   status: {},
   exit: { aliases: ["quit"] },
@@ -69,7 +105,7 @@ const commandTree: Record<string, CommandNode> = {
     flags: ["--limit", "--json", "--filter"],
   },
   send: {
-    subcommands: ["text", "image", "document", "video", "audio", "location", "contact", "poll", "sticker"],
+    subcommands: ["text", "image", "document", "video", "audio", "location", "contact", "poll", "sticker", "group-invite"],
     flags: ["--caption", "--gif", "--ptv", "--ptt", "--name", "--address", "--org", "--select"],
   },
   media: {
@@ -78,7 +114,8 @@ const commandTree: Record<string, CommandNode> = {
   chat: {
     subcommands: [
       "archive", "unarchive", "pin", "unpin", "mute", "unmute",
-      "read", "unread", "clear", "delete",
+      "read", "unread", "clear", "delete", "ephemeral",
+      "pin-message", "unpin-message",
     ],
     flags: ["--duration"],
   },
@@ -95,19 +132,22 @@ const commandTree: Record<string, CommandNode> = {
   },
   community: {
     subcommands: [
-      "list", "info", "create", "leave", "name", "description",
-      "linked", "link", "unlink", "group", "members", "invite",
+      "list", "ls", "info", "create", "leave", "name", "description",
+      "linked", "link", "unlink", "group", "members", "invite", "invite-link",
+      "announce", "restrict", "add-mode", "approval", "ephemeral", "requests",
     ],
     nestedSubcommands: {
       members: ["add", "remove", "promote", "demote"],
       invite: ["link", "accept", "revoke", "info"],
+      requests: ["list", "ls", "approve", "reject"],
     },
     flags: ["--json"],
   },
   group: {
     subcommands: [
       "list", "ls", "info", "participants", "invite-link", "invite", "create", "leave",
-      "name", "description", "picture"
+      "name", "description", "picture",
+      "announce", "restrict", "add-mode", "approval", "ephemeral", "requests",
     ],
     nestedSubcommands: {
       participants: ["add", "remove", "promote", "demote"],
@@ -115,8 +155,28 @@ const commandTree: Record<string, CommandNode> = {
       name: ["set"],
       description: ["set"],
       picture: ["set"],
+      requests: ["list", "ls", "approve", "reject"],
     },
     flags: ["--limit", "--filter", "--json"],
+  },
+  privacy: {
+    subcommands: ["show", "set", "disappearing", "link-previews"],
+    nestedSubcommands: {
+      set: [
+        "last-seen", "online", "picture", "status",
+        "read-receipts", "group-add", "messages", "calls",
+      ],
+    },
+    flags: ["--json", "--force"],
+  },
+  block: {
+    subcommands: ["list", "ls", "add", "remove", "rm"],
+    flags: ["--json"],
+  },
+  call: {
+    subcommands: ["link"],
+    nestedSubcommands: { link: ["audio", "video"] },
+    flags: ["--start"],
   },
   load: {
     subcommands: ["messages"],
@@ -720,55 +780,21 @@ Type 'help' for available commands, 'exit' to quit.
 /**
  * Show REPL help - full or topic-specific
  */
-function showReplHelp(topic: string = ""): void {
+export function showReplHelp(topic: string = ""): void {
   const topicLower = topic.toLowerCase();
 
-  // Topic-specific help
-  switch (topicLower) {
-    case "instance":
-      showHelpInstance();
-      return;
-    case "get":
-      showHelpGet();
-      return;
-    case "load":
-      showHelpLoad();
-      return;
-    case "send":
-      showHelpSend();
-      return;
-    case "media":
-      showHelpMedia();
-      return;
-    case "group":
-      showHelpGroup();
-      return;
-    case "check":
-      showHelpCheck();
-      return;
-    case "contact":
-      showHelpContact();
-      return;
-    case "profile":
-      showHelpProfile();
-      return;
-    case "label":
-      showHelpLabel();
-      return;
-    case "catalog":
-      showHelpCatalog();
-      return;
-    case "proxy":
-      showHelpProxy();
-      return;
-    case "":
-      // Show full help
-      break;
-    default:
+  // Topic-specific help, dispatched through HELP_TOPIC_HANDLERS so the
+  // completion tree and this dispatch cannot drift apart.
+  if (topicLower !== "") {
+    const render = HELP_TOPIC_HANDLERS[topicLower];
+    if (!render) {
       console.log(`❌ Unknown help topic: ${topic}`);
-      console.log(`Available topics: instance, get, load, send, media, group, check, contact, profile, label, catalog, proxy`);
+      console.log(`Available topics: ${HELP_TOPICS.join(", ")}`);
       console.log(`Usage: help [topic]`);
       return;
+    }
+    render();
+    return;
   }
 
   // Full help
@@ -778,7 +804,8 @@ function showReplHelp(topic: string = ""): void {
 ╚════════════════════════════════════════════════════════════════════════╝
 
 REPL-SPECIFIC:
-  help [topic]                                Show help (topics: instance, get, send, group, contact, profile, label, catalog, proxy)
+  help [topic]                                Show help for one topic
+                                              Topics: ${HELP_TOPICS.join(", ")}
   status                                      Show connection status
   use <instance-id>                           Switch active instance
   connect [id]                                Connect to WhatsApp
@@ -792,15 +819,18 @@ COMMANDS (use "help <command>" for details):
   instance    Manage WhatsApp instances (create, connect, disconnect, etc.)
   get         Fetch data (profile, contacts, groups, chats, messages, labels)
   load        Load older messages from chat history
-  send        Send messages (text, image, document, video, audio, location, contact, poll, sticker)
+  send        Send messages (text, image, document, video, audio, location, contact, poll, sticker, group-invite)
   media       Media operations (download)
-  chat        Chat management (archive, pin, mute, read, clear, delete)
+  chat        Chat management (archive, pin, mute, read, clear, delete, ephemeral)
   story       Post status/story (text, image, video)
   group       Group management (info, participants, invites, settings)
   community   Community management (create, link groups, members, invites)
   check       Check if phone numbers are on WhatsApp
   contact     Contact management (list, info, add, remove)
   profile     Profile management (picture, name, status)
+  privacy     Privacy settings (last-seen, online, read receipts, calls, ...)
+  block       Blocklist management (list, add, remove)
+  call        Create shareable call links
   label       Label management (WhatsApp Business)
   business    Business profile & cover photo (WhatsApp Business)
   catalog     Catalog management (WhatsApp Business)
@@ -925,6 +955,7 @@ COMMANDS:
   send document <phone> <path> [caption]      Send document
   send video <phone> <path> [options]         Send video
   send audio <phone> <path> [options]         Send audio
+  send group-invite <phone> <groupJid> [text] Send a group-invite card
 
 VIDEO OPTIONS:
   --caption <text>                            Add caption to video
@@ -939,9 +970,12 @@ EXAMPLES:
   send video 6281234567890 ./video.mp4 --caption "Check this"
   send video 6281234567890 ./short.mp4 --gif
   send audio 6281234567890 ./voice.ogg --ptt
+  send group-invite 6281234567890 120363xxx@g.us "Join us"
 
 NOTES:
   - Phone format: international without + (e.g., 6281234567890)
+  - send group-invite looks the invite code up from the group itself, so you
+    need admin rights on it; the card expires after 3 days
   - Supported images: JPEG, PNG, GIF, WebP
   - Supported video: MP4, MOV, AVI, WebM
   - Supported audio: MP3, OGG, AAC, M4A, WAV
@@ -1010,6 +1044,16 @@ GROUP SETTINGS:
   group name set <jid> <name>                 Update group name
   group description set <jid> [desc]          Update group description
   group picture set <jid> <path>              Update group picture
+  group announce <jid> <on|off>               Restrict messaging to admins
+  group restrict <jid> <on|off>               Restrict info editing to admins
+  group add-mode <jid> <admin|all>            Who may add new members
+  group approval <jid> <on|off>               Require approval to join
+  group ephemeral <jid> <off|24h|7d|90d>      Disappearing message timer
+
+JOIN REQUESTS:
+  group requests list <jid>                   List pending join requests
+  group requests approve <jid> <phones>       Approve join requests
+  group requests reject <jid> <phones>        Reject join requests
 
 OPTIONS:
   --limit N                                   Limit number of results
@@ -1017,10 +1061,13 @@ OPTIONS:
 
 EXAMPLE:
   group participants add 120363xxx@g.us 628xxx 628yyy
+  group ephemeral 120363xxx@g.us 7d
 
 NOTES:
   - Group JID format: groupid@g.us
   - Admin rights required for participant/settings management
+  - Join requests only accumulate while 'group approval' is on
+  - ephemeral also accepts a raw number of seconds
 `);
 }
 
@@ -1100,6 +1147,50 @@ COMMANDS:
 
 NOTES:
   - Supported image formats: JPEG, PNG
+`);
+}
+
+/**
+ * Show help for privacy and blocklist commands
+ */
+function showHelpPrivacy(): void {
+  console.log(`
+╔════════════════════════════════════════════════════════════════════════╗
+║                   Privacy & Blocklist Commands                         ║
+╚════════════════════════════════════════════════════════════════════════╝
+
+PRIVACY:
+  privacy show [--force]                      Show current privacy settings
+  privacy set <setting> <value>               Change one setting
+  privacy disappearing <off|24h|7d|90d>       Default timer for NEW chats
+  privacy link-previews <on|off>              Link previews on messages you send
+
+SETTINGS AND THEIR VALUES:
+  last-seen       all | contacts | contact_blacklist | none
+  online          all | match_last_seen
+  picture         all | contacts | contact_blacklist | none
+  status          all | contacts | contact_blacklist | none
+  read-receipts   all | none
+  group-add       all | contacts | contact_blacklist
+  messages        all | contacts
+  calls           all | known
+
+BLOCKLIST:
+  block list                                  List blocked contacts
+  block add <phone>                           Block a contact
+  block remove <phone>                        Unblock a contact
+
+EXAMPLE:
+  privacy set last-seen contacts
+  privacy set read-receipts none
+  block add 6281234567890
+
+NOTES:
+  - 'contact_blacklist' means "my contacts, except..."; the exclusion list
+    itself is managed in the WhatsApp app and is not exposed over this protocol
+  - 'privacy disappearing' only affects NEW chats; use 'chat ephemeral',
+    'group ephemeral' or 'community ephemeral' for existing ones
+  - --force bypasses the cache and re-queries WhatsApp
 `);
 }
 
@@ -1195,6 +1286,199 @@ NOTES:
   - Passwords are masked in all output.
   - SOCKS proxies tunnel the WebSocket but NOT media transfers, which fall
     back to a direct connection. See docs/PROXY.md.
+`);
+}
+
+/**
+ * Show help for chat commands
+ */
+function showHelpChat(): void {
+  console.log(`
+╔════════════════════════════════════════════════════════════════════════╗
+║                            Chat Commands                               ║
+╚════════════════════════════════════════════════════════════════════════╝
+
+VISIBILITY:
+  chat archive <jid|phone>                    Archive a chat
+  chat unarchive <jid|phone>                  Unarchive a chat
+  chat pin <jid|phone>                        Pin chat to the top
+  chat unpin <jid|phone>                      Unpin chat
+
+NOTIFICATIONS:
+  chat mute <jid|phone> [--duration <ms>]     Mute a chat
+  chat unmute <jid|phone>                     Unmute a chat
+  chat read <jid|phone>                       Mark chat as read
+  chat unread <jid|phone>                     Mark chat as unread
+
+DESTRUCTIVE:
+  chat clear <jid|phone>                      Delete all messages, keep the chat
+  chat delete <jid|phone>                     Delete the chat itself
+
+MESSAGES:
+  chat ephemeral <jid|phone> <off|24h|7d|90d> Disappearing message timer
+  chat pin-message <jid|phone> <id> [24h|7d|30d]  Pin a message in the chat
+  chat unpin-message <jid|phone> <id>         Unpin a message
+
+EXAMPLE:
+  chat mute 6281234567890 --duration 28800000
+  chat ephemeral 6281234567890 7d
+  chat pin-message 6281234567890 3EB0ABC123 7d
+
+NOTES:
+  - Accepts a phone number or a full JID everywhere.
+  - 'chat ephemeral' also accepts a raw number of seconds; 'off' is 0.
+  - Pin duration defaults to 24h and must be one of 24h, 7d or 30d.
+`);
+}
+
+/**
+ * Show help for story/status commands
+ */
+function showHelpStory(): void {
+  console.log(`
+╔════════════════════════════════════════════════════════════════════════╗
+║                     Story / Status Commands                            ║
+╚════════════════════════════════════════════════════════════════════════╝
+
+COMMANDS:
+  story text <text>                           Post a text status
+  story image <path>                          Post an image status
+  story video <path>                          Post a video status
+
+OPTIONS:
+  --recipients a,b                            Who may see it (default: contacts)
+  --caption <text>                            Caption for image/video
+  --bg <color>                                Background colour (text only)
+  --font <n>                                  Font index (text only)
+
+EXAMPLES:
+  story text "Back online" --bg "#25D366"
+  story image ./promo.jpg --caption "New arrivals"
+  story video ./clip.mp4 --recipients 628xxx,628yyy
+
+NOTES:
+  - Statuses expire after 24 hours, as in the app.
+  - Without --recipients WhatsApp falls back to your privacy setting for
+    status; see 'help privacy'.
+`);
+}
+
+/**
+ * Show help for community commands
+ */
+function showHelpCommunity(): void {
+  console.log(`
+╔════════════════════════════════════════════════════════════════════════╗
+║                         Community Commands                             ║
+╚════════════════════════════════════════════════════════════════════════╝
+
+COMMANDS:
+  community list, community ls                List all communities
+  community info <jid>                        Get community details
+  community create <name> [description]       Create a new community
+  community leave <jid>                       Leave a community
+
+LINKED GROUPS:
+  community linked <jid>                      List groups in the community
+  community link <groupJid> <communityJid>    Link an existing group
+  community unlink <groupJid> <communityJid>  Unlink a group
+  community group <communityJid> <name> [phones...]  Create a linked group
+
+MEMBERS:
+  community members <jid>                     List community members
+  community members add <jid> <phones>        Add members
+  community members remove <jid> <phones>     Remove members
+  community members promote <jid> <phones>    Promote to admin
+  community members demote <jid> <phones>     Demote from admin
+
+INVITE MANAGEMENT:
+  community invite-link <jid>                 Get invite link
+  community invite link <jid>                 Same, nested form
+  community invite revoke <jid>               Revoke and get new link
+  community invite accept <code>              Join via invite code
+  community invite info <code>                Get info from invite code
+
+SETTINGS:
+  community announce <jid> <on|off>           Restrict messaging to admins
+  community restrict <jid> <on|off>           Restrict info editing to admins
+  community add-mode <jid> <admin|all>        Who may add new members
+  community approval <jid> <on|off>           Require approval to join
+  community ephemeral <jid> <off|24h|7d|90d>  Disappearing message timer
+  community name <jid> <name>                 Update community name
+  community description <jid> <description>   Update description
+
+JOIN REQUESTS:
+  community requests list <jid>               List pending join requests
+  community requests approve <jid> <phones>   Approve join requests
+  community requests reject <jid> <phones>    Reject join requests
+
+EXAMPLE:
+  community group 120363xxx@g.us "Announcements" 628xxx
+  community ephemeral 120363xxx@g.us 7d
+
+NOTES:
+  - Community JIDs also end in @g.us; a community is a group with linked groups.
+  - Admin rights are required for every write operation above.
+  - Join requests only accumulate while 'community approval' is on.
+`);
+}
+
+/**
+ * Show help for call commands
+ */
+function showHelpCall(): void {
+  console.log(`
+╔════════════════════════════════════════════════════════════════════════╗
+║                            Call Commands                               ║
+╚════════════════════════════════════════════════════════════════════════╝
+
+COMMANDS:
+  call link [audio|video]                     Create a shareable call link
+
+OPTIONS:
+  --start <unix-seconds>                      Schedule the call for a time
+
+EXAMPLES:
+  call link
+  call link audio
+  call link video --start 1767225600
+
+NOTES:
+  - Defaults to 'video' when no type is given.
+  - The link is a real, shareable WhatsApp artifact — creating one has an
+    effect outside this machine.
+  - Answering and rejecting calls is an event-driven API, not a CLI command:
+    see the 'call' event in docs/USAGE.md.
+`);
+}
+
+/**
+ * Show help for business commands
+ */
+function showHelpBusiness(): void {
+  console.log(`
+╔════════════════════════════════════════════════════════════════════════╗
+║                 Business Commands (WhatsApp Business)                  ║
+╚════════════════════════════════════════════════════════════════════════╝
+
+COMMANDS:
+  business profile [options]                  Update your business profile
+  business cover set <path>                   Set the cover photo
+  business cover remove <coverPhotoId>        Remove the cover photo
+
+PROFILE OPTIONS:
+  --address <text>                            Street address
+  --email <text>                              Contact email
+  --description <text>                        Business description
+  --websites a,b                              Comma-separated website list
+
+EXAMPLES:
+  business profile --email hi@example.com --websites example.com
+  business cover set ./cover.jpg
+
+NOTES:
+  - Requires a WhatsApp Business account; a personal account will be rejected.
+  - See also 'help catalog' and 'help label' for the other Business surfaces.
 `);
 }
 

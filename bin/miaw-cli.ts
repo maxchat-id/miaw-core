@@ -47,7 +47,7 @@ const DEFAULT_PROXY_STRATEGY_ENV = process.env.MIAW_PROXY_STRATEGY || undefined;
  * Global flags that never take a value. Listed explicitly because the parser is
  * positional: without this an `--ip`-style flag consumes the command name.
  */
-const BOOLEAN_FLAGS = new Set(["json", "debug", "help", "version", "ip", "from-file"]);
+const BOOLEAN_FLAGS = new Set(["json", "debug", "help", "version", "ip", "from-file", "force"]);
 
 /**
  * Parse CLI arguments

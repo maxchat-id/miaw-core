@@ -597,3 +597,246 @@ export async function cmdGroupPictureSet(
   console.log(formatMessage(false, "Failed to update group picture", updateResult.error));
   return false;
 }
+
+// ============================================
+// Group Settings & Join Requests (v1.12.0)
+// ============================================
+
+/**
+ * Restrict who may send messages in a group (announce-only mode)
+ */
+export async function cmdGroupAnnounce(
+  client: MiawClient,
+  args: { jid: string; on: boolean }
+): Promise<boolean> {
+  const result = await ensureConnected(client);
+  if (!result.success) {
+    console.log(`❌ Not connected: ${result.reason}`);
+    return false;
+  }
+
+  console.log(
+    `🔒 ${args.on ? "Restricting" : "Allowing"} messages ${args.on ? "to admins only" : "from everyone"}...`
+  );
+
+  const updateResult = await client.setGroupAnnounceOnly(args.jid, args.on);
+
+  if (updateResult.success) {
+    console.log(
+      formatMessage(
+        true,
+        args.on ? "Group set to admins-only messaging" : "Group open to all members"
+      )
+    );
+    return true;
+  }
+
+  console.log(formatMessage(false, "Failed to update announce mode", updateResult.error));
+  return false;
+}
+
+/**
+ * Restrict who may edit group info (subject, description, picture)
+ */
+export async function cmdGroupRestrict(
+  client: MiawClient,
+  args: { jid: string; on: boolean }
+): Promise<boolean> {
+  const result = await ensureConnected(client);
+  if (!result.success) {
+    console.log(`❌ Not connected: ${result.reason}`);
+    return false;
+  }
+
+  console.log(`🔒 ${args.on ? "Locking" : "Unlocking"} group info editing...`);
+
+  const updateResult = await client.setGroupRestrictInfo(args.jid, args.on);
+
+  if (updateResult.success) {
+    console.log(
+      formatMessage(
+        true,
+        args.on ? "Only admins can edit group info" : "All members can edit group info"
+      )
+    );
+    return true;
+  }
+
+  console.log(formatMessage(false, "Failed to update info restriction", updateResult.error));
+  return false;
+}
+
+/**
+ * Set who may add new members to a group
+ */
+export async function cmdGroupAddMode(
+  client: MiawClient,
+  args: { jid: string; mode: "admin_add" | "all_member_add" }
+): Promise<boolean> {
+  const result = await ensureConnected(client);
+  if (!result.success) {
+    console.log(`❌ Not connected: ${result.reason}`);
+    return false;
+  }
+
+  console.log(`👤 Setting member-add mode to ${args.mode}...`);
+
+  const updateResult = await client.setGroupMemberAddMode(args.jid, args.mode);
+
+  if (updateResult.success) {
+    console.log(formatMessage(true, `Member-add mode set to ${args.mode}`));
+    return true;
+  }
+
+  console.log(formatMessage(false, "Failed to update member-add mode", updateResult.error));
+  return false;
+}
+
+/**
+ * Require admin approval for people joining via invite link
+ */
+export async function cmdGroupApprovalMode(
+  client: MiawClient,
+  args: { jid: string; on: boolean }
+): Promise<boolean> {
+  const result = await ensureConnected(client);
+  if (!result.success) {
+    console.log(`❌ Not connected: ${result.reason}`);
+    return false;
+  }
+
+  console.log(`✅ Turning join approval ${args.on ? "on" : "off"}...`);
+
+  const updateResult = await client.setGroupJoinApproval(args.jid, args.on);
+
+  if (updateResult.success) {
+    console.log(
+      formatMessage(true, `Join approval ${args.on ? "required" : "not required"}`)
+    );
+    return true;
+  }
+
+  console.log(formatMessage(false, "Failed to update join approval", updateResult.error));
+  return false;
+}
+
+/**
+ * Set the disappearing-message timer for a group
+ */
+export async function cmdGroupEphemeral(
+  client: MiawClient,
+  args: { jid: string; seconds: number }
+): Promise<boolean> {
+  const result = await ensureConnected(client);
+  if (!result.success) {
+    console.log(`❌ Not connected: ${result.reason}`);
+    return false;
+  }
+
+  console.log(
+    args.seconds === 0
+      ? "⏳ Disabling disappearing messages..."
+      : `⏳ Setting disappearing messages to ${args.seconds}s...`
+  );
+
+  const updateResult = await client.setGroupEphemeral(args.jid, args.seconds);
+
+  if (updateResult.success) {
+    console.log(
+      formatMessage(
+        true,
+        args.seconds === 0
+          ? "Disappearing messages disabled"
+          : `Disappearing messages set to ${args.seconds}s`
+      )
+    );
+    return true;
+  }
+
+  console.log(
+    formatMessage(false, "Failed to update disappearing messages", updateResult.error)
+  );
+  return false;
+}
+
+/**
+ * List pending requests to join a group
+ */
+export async function cmdGroupRequestsList(
+  client: MiawClient,
+  args: { jid: string },
+  jsonOutput: boolean
+): Promise<boolean> {
+  const result = await ensureConnected(client);
+  if (!result.success) {
+    console.log(`❌ Not connected: ${result.reason}`);
+    return false;
+  }
+
+  const requests = await client.getGroupJoinRequests(args.jid);
+
+  if (jsonOutput) {
+    console.log(formatJson(requests));
+    return true;
+  }
+
+  if (requests.length === 0) {
+    console.log("\n📭 No pending join requests\n");
+    return true;
+  }
+
+  console.log(`\n📥 Join requests (${requests.length}):\n`);
+  console.log(
+    formatTable(
+      requests.map((r) => ({
+        jid: r.jid,
+        requested: r.requestedAt
+          ? new Date(r.requestedAt * 1000).toISOString()
+          : "-",
+      })),
+      [
+        { key: "jid", label: "JID", width: 40 },
+        { key: "requested", label: "Requested", width: 26 },
+      ]
+    )
+  );
+  return true;
+}
+
+/**
+ * Approve or reject pending join requests
+ */
+export async function cmdGroupRequestsDecide(
+  client: MiawClient,
+  args: { jid: string; phones: string[]; action: "approve" | "reject" }
+): Promise<boolean> {
+  const result = await ensureConnected(client);
+  if (!result.success) {
+    console.log(`❌ Not connected: ${result.reason}`);
+    return false;
+  }
+
+  console.log(`⏳ ${args.action === "approve" ? "Approving" : "Rejecting"} ${args.phones.length} request(s)...`);
+
+  const results =
+    args.action === "approve"
+      ? await client.approveGroupJoinRequests(args.jid, args.phones)
+      : await client.rejectGroupJoinRequests(args.jid, args.phones);
+
+  console.log(
+    formatTable(
+      results.map((r) => ({
+        jid: r.jid,
+        status: r.status,
+        result: r.success ? "✅" : "❌",
+      })),
+      [
+        { key: "jid", label: "JID", width: 40 },
+        { key: "status", label: "Status", width: 10 },
+        { key: "result", label: "", width: 8 },
+      ]
+    )
+  );
+
+  return results.every((r) => r.success);
+}

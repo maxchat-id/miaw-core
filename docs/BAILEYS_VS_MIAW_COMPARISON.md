@@ -1,8 +1,8 @@
 # Baileys vs Miaw Core - Comprehensive Feature Comparison
 
-**Last Updated:** June 26, 2026  
-**Baileys Version:** 7.0.0-rc13  
-**Miaw Core Version:** 1.9.1
+**Last Updated:** September 2, 2026  
+**Baileys Version:** 7.0.0-rc14  
+**Miaw Core Version:** 1.12.0
 
 ## Overview
 
@@ -102,7 +102,7 @@ This document provides a comprehensive comparison between [Baileys](https://gith
 | **Send Poll**              | ✅      | ✅        | `sendPoll()` (v1.6.0)                  |
 | **Send Product**           | ✅      | ❌        | Product message                        |
 | **Send Event**             | ✅      | ❌        | Event/calendar messages                |
-| **Send Group Invite**      | ✅      | ❌        | Group invite message                   |
+| **Send Group Invite**      | ✅      | ✅        | `sendGroupInvite()` (v1.12.0)          |
 | **Send Buttons**           | ✅      | ❌        | Interactive buttons (deprecated by WA) |
 | **Send List**              | ✅      | ❌        | List messages (deprecated by WA)       |
 | **Send Template**          | ✅      | ❌        | Template messages (deprecated by WA)   |
@@ -117,7 +117,7 @@ This document provides a comprehensive comparison between [Baileys](https://gith
 | **Delete for Me**       | ✅      | ✅        | `deleteMessageForMe()`                |
 | **Send Reaction**       | ✅      | ✅        | `sendReaction()`                      |
 | **Remove Reaction**     | ✅      | ✅        | `removeReaction()`                    |
-| **Pin Message**         | ✅      | ❌        | Pin to chat/group                     |
+| **Pin Message**         | ✅      | ✅        | `pinMessage()` / `unpinMessage()` (v1.12.0) |
 | **Star Message**        | ✅      | ✅        | `starMessage()` (v1.7.0)               |
 
 ---
@@ -135,7 +135,7 @@ This document provides a comprehensive comparison between [Baileys](https://gith
 | **History Sync**             | ✅      | 🔶        | Chats/contacts synced to stores    |
 | **Poll Updates**             | ✅      | ✅        | `poll_vote` event (v1.6.0)         |
 | **Receipt Events**           | ✅      | ✅        | `message_receipt` event (v1.9.1)   |
-| **Call Events**              | ✅      | ❌        | Incoming/outgoing calls            |
+| **Call Events**              | ✅      | ✅        | `call` event (v1.12.0)             |
 | **Label Association Events** | ✅      | ❌        | Label add/remove events            |
 
 ### 3.2 Connection Events
@@ -185,7 +185,7 @@ This document provides a comprehensive comparison between [Baileys](https://gith
 | **Pin Chat**              | ✅      | ✅        | `pinChat()` (v1.7.0)      |
 | **Delete Chat**           | ✅      | ✅        | `deleteChat()` (v1.7.0)   |
 | **Clear Chat**            | ✅      | ✅        | `clearChat()` (v1.7.0)    |
-| **Disappearing Messages** | ✅      | ❌        | Set ephemeral timer       |
+| **Disappearing Messages** | ✅      | ✅        | `setChatEphemeral()`, `setGroupEphemeral()`, `setCommunityEphemeral()` (v1.12.0) |
 | **Fetch Message History** | ✅      | ✅        | `loadMoreMessages()`      |
 | **Chat Modify**           | ✅      | ✅        | Exposed via chat ops (v1.7.0) |
 | **Mark Chat Read/Unread** | ✅      | ✅        | `markChatRead()` (v1.7.0) |
@@ -203,8 +203,8 @@ This document provides a comprehensive comparison between [Baileys](https://gith
 | **Get Business Profile**     | ✅      | ✅        | `getBusinessProfile()`            |
 | **Add/Edit Contact**         | ✅      | ✅        | `addOrEditContact()`              |
 | **Remove Contact**           | ✅      | ✅        | `removeContact()`                 |
-| **Block User**               | ✅      | ❌        | Block/unblock contacts            |
-| **Get Blocklist**            | ✅      | ❌        | List blocked contacts             |
+| **Block User**               | ✅      | ✅        | `blockContact()` / `unblockContact()` (v1.12.0) |
+| **Get Blocklist**            | ✅      | ✅        | `getBlocklist()`, `isBlocked()` (v1.12.0) |
 | **Fetch All Contacts**       | ✅      | ✅        | `fetchAllContacts()`              |
 
 ---
@@ -241,8 +241,8 @@ This document provides a comprehensive comparison between [Baileys](https://gith
 | **Remove Participants** | ✅      | ✅        | `removeParticipants()` |
 | **Promote to Admin**    | ✅      | ✅        | `promoteToAdmin()`     |
 | **Demote from Admin**   | ✅      | ✅        | `demoteFromAdmin()`    |
-| **Get Join Requests**   | ✅      | ❌        | Pending join requests  |
-| **Approve/Reject Join** | ✅      | ❌        | Handle join requests   |
+| **Get Join Requests**   | ✅      | ✅        | `getGroupJoinRequests()` / community (v1.12.0) |
+| **Approve/Reject Join** | ✅      | ✅        | `approve*` / `reject*JoinRequests()` (v1.12.0) |
 
 ### 8.3 Group Settings
 
@@ -251,10 +251,10 @@ This document provides a comprehensive comparison between [Baileys](https://gith
 | **Update Group Name**        | ✅      | ✅        | `updateGroupName()`        |
 | **Update Group Description** | ✅      | ✅        | `updateGroupDescription()` |
 | **Update Group Picture**     | ✅      | ✅        | `updateGroupPicture()`     |
-| **Announcement Mode**        | ✅      | ❌        | Only admins can send       |
-| **Restrict Mode**            | ✅      | ❌        | Only admins can edit info  |
-| **Member Add Mode**          | ✅      | ❌        | Who can add members        |
-| **Ephemeral Mode**           | ✅      | ❌        | Disappearing messages      |
+| **Announcement Mode**        | ✅      | ✅        | `setGroupAnnounceOnly()` (v1.12.0) |
+| **Restrict Mode**            | ✅      | ✅        | `setGroupRestrictInfo()` (v1.12.0) |
+| **Member Add Mode**          | ✅      | ✅        | `setGroupMemberAddMode()` (v1.12.0) |
+| **Ephemeral Mode**           | ✅      | ✅        | `setGroupEphemeral()` (v1.12.0) |
 
 ### 8.4 Group Invites
 
@@ -342,16 +342,17 @@ This document provides a comprehensive comparison between [Baileys](https://gith
 
 | Feature                              | Baileys | Miaw Core | Notes                |
 | ------------------------------------ | ------- | --------- | -------------------- |
-| **Get Privacy Settings**             | ✅      | ❌        | All privacy settings |
-| **Update Last Seen Privacy**         | ✅      | ❌        | all/contacts/none    |
-| **Update Online Privacy**            | ✅      | ❌        | all/match_last_seen  |
-| **Update Profile Picture Privacy**   | ✅      | ❌        | all/contacts/none    |
-| **Update Status Privacy**            | ✅      | ❌        | all/contacts/none    |
-| **Update Read Receipts Privacy**     | ✅      | ❌        | all/none             |
-| **Update Groups Add Privacy**        | ✅      | ❌        | all/contacts/none    |
-| **Update Messages Privacy**          | ✅      | ❌        | all/contacts         |
-| **Update Call Privacy**              | ✅      | ❌        | all/known            |
-| **Update Default Disappearing Mode** | ✅      | ❌        | Default ephemeral    |
+| **Get Privacy Settings**             | ✅      | ✅        | `getPrivacySettings()` (v1.12.0) |
+| **Update Last Seen Privacy**         | ✅      | ✅        | `setLastSeenPrivacy()` (v1.12.0) |
+| **Update Online Privacy**            | ✅      | ✅        | `setOnlinePrivacy()` (v1.12.0) |
+| **Update Profile Picture Privacy**   | ✅      | ✅        | `setProfilePicturePrivacy()` (v1.12.0) |
+| **Update Status Privacy**            | ✅      | ✅        | `setStatusPrivacy()` (v1.12.0) |
+| **Update Read Receipts Privacy**     | ✅      | ✅        | `setReadReceiptsPrivacy()` (v1.12.0) |
+| **Update Groups Add Privacy**        | ✅      | ✅        | `setGroupAddPrivacy()` (v1.12.0) |
+| **Update Messages Privacy**          | ✅      | ✅        | `setMessagesPrivacy()` (v1.12.0) |
+| **Update Call Privacy**              | ✅      | ✅        | `setCallPrivacy()` (v1.12.0) |
+| **Update Default Disappearing Mode** | ✅      | ✅        | `setDefaultDisappearingMode()` (v1.12.0) |
+| **Disable Link Previews**            | ✅      | ✅        | `setLinkPreviewsDisabled()` (v1.12.0) |
 
 ---
 
@@ -383,11 +384,12 @@ This document provides a comprehensive comparison between [Baileys](https://gith
 
 | Feature              | Baileys | Miaw Core | Notes                      |
 | -------------------- | ------- | --------- | -------------------------- |
-| **Call Events**      | ✅      | ❌        | Receive call notifications |
-| **Reject Call**      | ✅      | ❌        | Reject incoming call       |
+| **Call Events**      | ✅      | ✅        | `call` event (v1.12.0)     |
+| **Reject Call**      | ✅      | ✅        | `rejectCall()` (v1.12.0)   |
 | **Offer Call**       | ✅      | ❌        | Start audio/video call     |
 | **Terminate Call**   | ✅      | ❌        | End active call            |
 | **Group Video Call** | ✅      | ❌        | Group video calls          |
+| **Create Call Link** | ✅      | ✅        | `createCallLink()` (v1.12.0) |
 
 ---
 
@@ -426,24 +428,24 @@ This document provides a comprehensive comparison between [Baileys](https://gith
 | Category                  | Baileys Features | Miaw Core Implemented | Coverage |
 | ------------------------- | ---------------- | --------------------- | -------- |
 | **Connection & Auth**     | 14               | 12                    | 86%      |
-| **Sending Messages**      | 33               | 26                    | 79%      |
-| **Receiving & Events**    | 17               | 14                    | 82%      |
+| **Sending Messages**      | 33               | 28                    | 85%      |
+| **Receiving & Events**    | 17               | 15                    | 88%      |
 | **Media**                 | 4                | 2                     | 50%      |
-| **Chat Management**       | 11               | 10                    | 91%      |
-| **User & Contacts**       | 10               | 8                     | 80%      |
+| **Chat Management**       | 11               | 11                    | 100%     |
+| **User & Contacts**       | 10               | 10                    | 100%     |
 | **Profile Management**    | 5                | 5                     | 100%     |
-| **Group Management**      | 18               | 14                    | 78%      |
+| **Group Management**      | 18               | 18                    | 100%     |
 | **Business (Labels)**     | 6                | 6                     | 100%     |
 | **Business (Catalog)**    | 6                | 6                     | 100%     |
 | **Business (Profile/QR)** | 4                | 4                     | 100%     |
 | **Newsletter/Channels**   | 19               | 19                    | 100%     |
-| **Privacy**               | 10               | 0                     | 0%       |
+| **Privacy**               | 11               | 11                    | 100%     |
 | **Status/Broadcasts**     | 4                | 1                     | 25%      |
 | **Communities**           | 5                | 5                     | 100%     |
-| **Calls**                 | 5                | 0                     | 0%       |
+| **Calls**                 | 6                | 3                     | 50%      |
 | **Utilities**             | 7                | 4                     | 57%      |
 | **Low-Level**             | 6                | 0                     | 0%       |
-| **TOTAL**                 | ~175             | ~136                  | ~78%     |
+| **TOTAL**                 | ~177             | ~163                  | ~92%     |
 
 ### What Miaw Core Focuses On
 
@@ -459,17 +461,33 @@ Miaw Core prioritizes the features that **90% of WhatsApp bots actually need**:
 
 ### What Miaw Core Doesn't Implement (Yet)
 
-These are all backed by methods that exist in Baileys 7.0.0-rc13 and can be wrapped. Ordered by the prioritized backlog (see **[ROADMAP.md → Not-Yet-Implemented Baileys Features](./ROADMAP.md)**):
+**The prioritized backlog that used to live here is empty as of v1.12.0.** Every
+numbered item 1-8 has shipped; see **[DEFERRED_FEATURES.md](./DEFERRED_FEATURES.md)**,
+which now records only what is deliberately skipped.
 
-1. ✅ **Chat Management** _(v1.7.0)_ - archive, pin, mute, mark read/unread, clear, delete chat, star/unstar messages (`chatModify`)
-2. ❌ **Rich Messages** _(priority)_ - location, contact/vCard, poll (+ vote decoding), sticker, group-invite, pin-in-chat, `@mentions`
-3. ❌ **Privacy & Blocklist** - block/unblock, get blocklist, 10 privacy setters (`fetchBlocklist`, `updateBlockStatus`, `update*Privacy`)
-4. ❌ **Group Admin & Disappearing** - announce/restrict, join-approval, member-add mode, ephemeral (`groupSettingUpdate`, `groupRequest*`, `groupToggleEphemeral`)
-5. ❌ **Calls** - reject call, call events, call links (`rejectCall`, `createCallLink`)
-6. ❌ **Business Extras** - update business profile, cover photo, order details, quick replies
-7. ❌ **Status/Stories** - post to `status@broadcast`
-8. ❌ **Communities** - full `community*` layer (largest surface)
-9. 🔶 **Interactive Messages** - buttons/lists/templates deprecated by WhatsApp (low value)
+| Feature | Shipped in |
+| --- | --- |
+| Chat Management — archive, pin, mute, read/unread, clear, delete, star | v1.7.0 |
+| Business Extras — business profile, cover photo, order details, quick replies | v1.8.0 |
+| Status / Stories — post to `status@broadcast` | v1.8.0 |
+| Communities — the full `community*` layer | v1.9.0 |
+| Rich Messages — location, contact/vCard, poll + vote decoding, sticker | v1.6.0 |
+| Rich Messages — group-invite cards, pin-in-chat | v1.12.0 |
+| Privacy & Blocklist — block/unblock, blocklist, 10 privacy setters | v1.12.0 |
+| Group & Community Admin — announce/restrict, join approval, member-add mode, ephemeral | v1.12.0 |
+| Calls — call events, reject call, call links | v1.12.0 |
+
+Still deliberately not implemented:
+
+- 🔶 **Interactive Messages** — buttons / lists / templates, deprecated by WhatsApp (low value)
+- ❌ **Outbound calling** — `offerCall`, `terminateCall`, group video calls. Receiving,
+  rejecting and link creation are covered; placing a call is not.
+- ❌ **Low-level escape hatches** — raw IQ queries, custom binary nodes, direct signal
+  repository access. Deliberate: wrapping them would mean re-exposing the protocol that
+  miaw-core exists to hide.
+- ❌ **Extended text formatting, live location, product and event messages**, media from
+  a stream, custom thumbnails.
+- ❌ **Broadcast lists** and status deletion.
 
 ---
 
@@ -524,4 +542,4 @@ These are all backed by methods that exist in Baileys 7.0.0-rc13 and can be wrap
 
 ---
 
-_This analysis was last updated on July 7, 2026, based on Baileys v7.0.0-rc13 and Miaw Core v1.9.1._
+_This analysis was last updated on September 2, 2026, based on Baileys v7.0.0-rc14 and Miaw Core v1.12.0._

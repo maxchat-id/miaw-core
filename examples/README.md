@@ -11,7 +11,7 @@ The simplest example - a basic echo bot that demonstrates:
 - Sending and receiving text messages
 - Basic event handling (ready, disconnected, reconnecting, error)
 
-**Run:** `ts-node examples/01-basic-bot.ts`
+**Run:** `npx tsx examples/01-basic-bot.ts`
 
 ---
 
@@ -23,7 +23,7 @@ Demonstrates media handling:
 - Sending documents
 - Downloading media from received messages
 
-**Run:** `ts-node examples/02-media-bot.ts`
+**Run:** `npx tsx examples/02-media-bot.ts`
 
 ---
 
@@ -34,7 +34,7 @@ Advanced message context features:
 - Handling message deletions
 - Handling reactions (send and receive)
 
-**Run:** `ts-node examples/03-message-context.ts`
+**Run:** `npx tsx examples/03-message-context.ts`
 
 ---
 
@@ -47,7 +47,7 @@ Contact validation and information:
 - Getting profile pictures
 - Getting group information and participants
 
-**Run:** `ts-node examples/04-validation-social.ts`
+**Run:** `npx tsx examples/04-validation-social.ts`
 
 ---
 
@@ -59,7 +59,7 @@ User experience enhancements:
 - Presence management (online/offline status)
 - Subscribing to presence updates
 
-**Run:** `ts-node examples/05-ux-polish.ts`
+**Run:** `npx tsx examples/05-ux-polish.ts`
 
 ---
 
@@ -72,7 +72,7 @@ Advanced messaging features:
 - Deleting messages (for everyone)
 - Deleting messages locally (for yourself only)
 
-**Run:** `ts-node examples/06-advanced-messaging.ts`
+**Run:** `npx tsx examples/06-advanced-messaging.ts`
 
 ---
 
@@ -88,7 +88,7 @@ Complete group administration:
 - Getting group invite info (preview before joining)
 - Leaving groups
 
-**Run:** `ts-node examples/07-group-management.ts`
+**Run:** `npx tsx examples/07-group-management.ts`
 
 ---
 
@@ -99,7 +99,7 @@ Profile management features:
 - Updating display name (push name)
 - Updating profile status (About text)
 
-**Run:** `ts-node examples/08-profile-management.ts`
+**Run:** `npx tsx examples/08-profile-management.ts`
 
 ---
 
@@ -132,7 +132,7 @@ Business and social features:
 - Adding or editing contacts
 - Removing contacts
 
-**Run:** `ts-node examples/09-business-social.ts`
+**Run:** `npx tsx examples/09-business-social.ts`
 
 ### 10-proxy-rotation.ts (v1.10.0, failover updated in v1.11.0)
 Connecting through proxies, and giving each instance its own egress IP:
@@ -163,7 +163,53 @@ Connecting through proxies, and giving each instance its own egress IP:
 > ⚠️ SOCKS proxies do not carry media transfers — those fall back to a direct
 > connection and reveal your real IP. See [PROXY.md](../docs/PROXY.md).
 
-**Run:** `ts-node examples/10-proxy-rotation.ts [multi|single|failover]`
+**Run:** `npx tsx examples/10-proxy-rotation.ts [multi|single|failover]`
+
+### 11-privacy-blocklist.ts (v1.12.0)
+Reading and writing account-wide privacy, and the blocklist:
+
+- Reading all eight typed privacy fields
+- **Reading the categories miaw-core has no typed field for.** WhatsApp returns
+  ~16 categories; Baileys has setters for 8. `getPrivacySettings()` keeps the
+  whole response under `raw` rather than dropping half of it
+- Round-tripping every setter by writing the current value back, so running the
+  example changes nothing
+- Why `setDefaultDisappearingMode()` and `setLinkPreviewsDisabled()` are left
+  commented out: WhatsApp does not report them back, so there is no value to
+  restore
+- `getBlocklist()`, `isBlocked()`, and why `blockContact()` is commented out
+
+**Run:** `npx tsx examples/11-privacy-blocklist.ts`
+
+### 12-calls-and-admin.ts (v1.12.0)
+Calls, group administration, and choosing your connection identity:
+
+- The `call` event across its whole lifecycle, and why `rejectCall()` only
+  works while `status === "offer"`
+- `createCallLink()` (commented out — it mints a real, shareable link)
+- Announce-only and disappearing-message timers, read-then-restore
+- The join-request queue, and the catch that requests only accumulate while
+  join approval is ON — an empty list usually means approval is off
+- Reading `status` off each participant result instead of a bare boolean
+- **`BrowserPresets`** — all four identities, and the tradeoff behind the
+  Android one (Baileys reports it is needed to receive view-once media, flags
+  it experimental, and it changes your Linked Devices label)
+
+**Run:** `EXAMPLE_GROUP_JID=...@g.us npx tsx examples/12-calls-and-admin.ts`
+
+---
+
+## Other Examples
+
+Not numbered, but worth knowing about:
+
+| File | What it is |
+|------|------------|
+| `simple-bot.ts` | The smallest possible working bot |
+| `realworld/broadcast-bot.ts` | Sending to many recipients with pacing |
+| `realworld/customer-service-bot.ts` | Routing, canned replies, business hours |
+| `realworld/group-admin-bot.ts` | A moderation bot for a real group |
+| `proxies.example.txt` | Template proxy list for `10-proxy-rotation.ts` |
 
 ---
 
@@ -172,12 +218,15 @@ Connecting through proxies, and giving each instance its own egress IP:
 1. Install dependencies:
 ```bash
 npm install
-npm install -g ts-node typescript
 ```
+
+`tsx` comes in as a devDependency — there is nothing to install globally, and
+`ts-node` will **not** run these files (they are ESM, and it is not a
+dependency of this repo).
 
 2. Run any example:
 ```bash
-ts-node examples/01-basic-bot.ts
+npx tsx examples/01-basic-bot.ts
 ```
 
 3. Scan the QR code with your WhatsApp mobile app

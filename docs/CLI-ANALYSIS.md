@@ -1,5 +1,15 @@
 # miaw-cli - Feature Analysis & Comparison
 
+> ⚠️ **Superseded — historical record.**
+> Written against miaw-core v1.1.1 (2026-01-18), when the CLI had 63 commands and its "missing commands" roadmap was still ahead. Most of that roadmap has since shipped; the CLI now has 111 command handlers. Its numbers, coverage figures and open action items describe
+> that snapshot and have **not** been updated since; several are now wrong by a
+> wide margin. Kept because the reasoning still has value, not as a description
+> of the code today.
+>
+> For current information see [CLI.md](./CLI.md) for the current command surface and [ROADMAP.md](./ROADMAP.md) for what remains.
+>
+> _Marked superseded 2026-09-02 (miaw-core v1.12.0, Baileys 7.0.0-rc14)._
+
 **Document Version:** 4.0.0
 **Analysis Date:** 2026-01-18
 **miaw-core Version:** v1.1.1

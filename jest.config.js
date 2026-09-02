@@ -12,6 +12,9 @@ export default {
   moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json', 'node'],
   testTimeout: 60000, // 60 seconds for integration tests
   verbose: true,
+  // Serial by default: the live-connection suites share one WhatsApp session, and
+  // a worker-per-core fork of the full suite is memory-hungry on a dev machine.
+  maxWorkers: 1,
   // ESM support
   extensionsToTreatAsEsm: ['.ts'],
   moduleNameMapper: {

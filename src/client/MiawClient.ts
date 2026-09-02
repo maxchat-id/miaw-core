@@ -60,6 +60,27 @@ import {
   LinkedGroup,
   CreateCommunityResult,
   CommunityOperationResult,
+  // v1.12.0 Group & Community Admin
+  MemberAddMode,
+  JoinRequest,
+  EphemeralDurationValue,
+  // v1.12.0 Group invites & pinning
+  GroupInviteMessage,
+  PinDuration,
+  PinDurationValue,
+  // v1.12.0 Calls
+  MiawCall,
+  CallStatus,
+  CallOperationResult,
+  // v1.12.0 Privacy & Blocklist
+  PrivacyValue,
+  PrivacyOnlineValue,
+  PrivacyGroupAddValue,
+  ReadReceiptsValue,
+  PrivacyCallValue,
+  PrivacyMessagesValue,
+  PrivacySettings,
+  PrivacyOperationResult,
   // v0.8.0 Profile Management
   ProfileOperationResult,
   // v0.9.0 Labels
@@ -1015,6 +1036,14 @@ export class MiawClient extends EventEmitter {
       }
     });
 
+    // Calls (v1.12.0). Baileys batches these, and the same call produces several
+    // events as it progresses (offer -> ringing -> accept/reject/terminate).
+    this.socket.ev.on("call", (calls) => {
+      for (const call of calls) {
+        this.handleCallEvent(call);
+      }
+    });
+
     // Poll votes (messages.update carries pollUpdates when someone votes)
     this.socket.ev.on("messages.update", (updates) => {
       for (const { key, update } of updates) {
@@ -1127,6 +1156,7 @@ export class MiawClient extends EventEmitter {
     this.socket.ev.removeAllListeners("message-receipt.update");
     this.socket.ev.removeAllListeners("messages.update");
     this.socket.ev.removeAllListeners("presence.update");
+    this.socket.ev.removeAllListeners("call");
     this.socket.ev.removeAllListeners("labels.edit");
     this.socket.ev.removeAllListeners("labels.association");
   }
@@ -2480,6 +2510,116 @@ export class MiawClient extends EventEmitter {
     }
 
     this.emit("message_receipt", update);
+  }
+
+  /**
+   * Normalize a Baileys call event and emit it as `call` (v1.12.0).
+   *
+   * The same call produces several of these as it progresses, so consumers
+   * should switch on `status` — `offer` is the first, and the only stage at
+   * which {@link rejectCall} still does anything.
+   */
+  private handleCallEvent(call: any): void {
+    if (!call) {
+      return;
+    }
+
+    const normalized: MiawCall = {
+      id: call.id || "",
+      // A caller reached over @lid gets its phone JID in `callerPn`; fall back
+      // to the LID resolver so `from` is a phone JID whenever we can manage it.
+      from: this.resolveLidToJid(call.callerPn || call.from || ""),
+      callerPhone: call.callerPn || undefined,
+      chatId: call.chatId || "",
+      isGroup: Boolean(call.isGroup),
+      groupJid: call.groupJid || undefined,
+      isVideo: Boolean(call.isVideo),
+      status: call.status as CallStatus,
+      // Baileys hands us a Date; guard anyway since this crosses a protocol
+      // boundary and a malformed event should not take the listener down.
+      date: call.date instanceof Date ? call.date : new Date(),
+      offline: Boolean(call.offline),
+      raw: call,
+    };
+
+    if (this.options.debug) {
+      this.logger.debug("\n========== CALL ==========");
+      this.logger.debug(JSON.stringify(normalized, null, 2));
+      this.logger.debug("==========================\n");
+    }
+
+    this.emit("call", normalized);
+  }
+
+  // ============================================
+  // Call Methods (v1.12.0)
+  // ============================================
+
+  /**
+   * Reject an incoming call.
+   *
+   * Only meaningful while the call is still ringing — listen for the `call`
+   * event with `status === "offer"` and reject from there.
+   *
+   * @param callId - `id` from the call event
+   * @param callFrom - `from` from the call event
+   */
+  async rejectCall(
+    callId: string,
+    callFrom: string
+  ): Promise<CallOperationResult> {
+    try {
+      if (!this.socket) {
+        throw new Error("Not connected. Call connect() first.");
+      }
+
+      if (this.connectionState !== "connected") {
+        throw new Error(
+          `Cannot reject call. Connection state: ${this.connectionState}`
+        );
+      }
+
+      await this.socket.rejectCall(callId, callFrom);
+
+      return { success: true };
+    } catch (error) {
+      this.logger.error("Failed to reject call:", error);
+      return { success: false, error: (error as Error).message };
+    }
+  }
+
+  /**
+   * Create a shareable call link.
+   *
+   * @param type - 'audio' or 'video'
+   * @param startTime - Optional scheduled start (Unix seconds)
+   * @returns the call link URL, or null on failure
+   */
+  async createCallLink(
+    type: "audio" | "video" = "video",
+    startTime?: number
+  ): Promise<string | null> {
+    try {
+      if (!this.socket) {
+        throw new Error("Not connected. Call connect() first.");
+      }
+
+      if (this.connectionState !== "connected") {
+        throw new Error(
+          `Cannot create call link. Connection state: ${this.connectionState}`
+        );
+      }
+
+      const link = await this.socket.createCallLink(
+        type,
+        startTime !== undefined ? { startTime } : undefined
+      );
+
+      return link || null;
+    } catch (error) {
+      this.logger.error("Failed to create call link:", error);
+      return null;
+    }
   }
 
   // ============================================
@@ -4519,6 +4659,47 @@ export class MiawClient extends EventEmitter {
     }
   }
 
+  /**
+   * Set the disappearing-message timer for a 1:1 chat (v1.12.0).
+   *
+   * Unlike groups and communities, WhatsApp has no socket method for this — the
+   * timer is set by sending a protocol message into the chat, so this goes
+   * through `sendMessage` rather than {@link setGroupEphemeral}'s
+   * `groupToggleEphemeral`.
+   *
+   * @param jidOrPhone - Phone number or JID of the contact
+   * @param seconds - Duration in seconds; 0 (EphemeralDuration.Off) disables it
+   */
+  async setChatEphemeral(
+    jidOrPhone: string,
+    seconds: EphemeralDurationValue | number
+  ): Promise<ChatOperationResult> {
+    try {
+      if (!this.socket) {
+        throw new Error("Not connected. Call connect() first.");
+      }
+
+      if (this.connectionState !== "connected") {
+        throw new Error(
+          `Cannot update disappearing messages. Connection state: ${this.connectionState}`
+        );
+      }
+
+      const jid = MessageHandler.formatPhoneToJid(jidOrPhone);
+
+      // Baileys accepts `false` to disable and a second count to enable; it does
+      // not treat 0 as "off" on this path, so map it explicitly.
+      await this.socket.sendMessage(jid, {
+        disappearingMessagesInChat: seconds === 0 ? false : seconds,
+      });
+
+      return { success: true };
+    } catch (error) {
+      this.logger.error("Failed to update disappearing messages:", error);
+      return { success: false, error: (error as Error).message };
+    }
+  }
+
   // ============================================
   // UX Methods (v0.5.0)
   // ============================================
@@ -5624,6 +5805,840 @@ export class MiawClient extends EventEmitter {
       this.logger.error("Failed to get community invite info:", error);
       return null;
     }
+  }
+
+
+  // ============================================
+  // Group & Community Admin Methods (v1.12.0)
+  // ============================================
+
+  /**
+   * Run a group-or-community admin call behind the standard guards.
+   *
+   * Groups and communities expose byte-identical signatures for every setting
+   * and join-request method (`groupSettingUpdate`/`communitySettingUpdate`,
+   * `groupMemberAddMode`/`communityMemberAddMode`, and so on), so both surfaces
+   * bind to this one helper rather than duplicating sixteen near-identical
+   * bodies. Community JIDs are group JIDs, so the `@g.us` check applies to both.
+   *
+   * @param label - noun used in error messages ('group' or 'community')
+   * @param what - verb phrase used in error messages
+   * @param jid - group or community JID
+   * @param run - the socket call to perform
+   */
+  private async runGroupAdmin(
+    label: "group" | "community",
+    what: string,
+    jid: string,
+    run: (socket: WASocket) => Promise<void>
+  ): Promise<GroupOperationResult> {
+    try {
+      const socket = this.requireGroupLike(label, `Cannot ${what}`, jid);
+      await run(socket);
+      return { success: true };
+    } catch (error) {
+      this.logger.error(`Failed to ${what}:`, error);
+      return { success: false, error: (error as Error).message };
+    }
+  }
+
+  /**
+   * Assert we have a live socket and a well-formed group/community JID.
+   * @returns the connected socket
+   * @throws if disconnected or the JID is not a group JID
+   */
+  private requireGroupLike(
+    label: "group" | "community",
+    cannot: string,
+    jid: string
+  ): WASocket {
+    if (!this.socket) {
+      throw new Error("Not connected. Call connect() first.");
+    }
+
+    if (this.connectionState !== "connected") {
+      throw new Error(`${cannot}. Connection state: ${this.connectionState}`);
+    }
+
+    if (!jid.endsWith("@g.us")) {
+      throw new Error(`Invalid ${label} JID. Must end with @g.us`);
+    }
+
+    return this.socket;
+  }
+
+  /**
+   * List pending join requests for a group or community.
+   * Shared by both surfaces; see {@link runGroupAdmin}.
+   */
+  private async fetchJoinRequests(
+    label: "group" | "community",
+    jid: string,
+    fetch: (socket: WASocket) => Promise<{ [key: string]: string }[]>
+  ): Promise<JoinRequest[]> {
+    try {
+      const socket = this.requireGroupLike(
+        label,
+        `Cannot get ${label} join requests`,
+        jid
+      );
+
+      const requests = (await fetch(socket)) || [];
+
+      return requests.map((entry) => {
+        // WhatsApp has spelled the requester's JID both `jid` and
+        // `phone_number` across versions, and supplies the request time as `t`.
+        const requestedAt = entry.t ? Number(entry.t) : undefined;
+
+        return {
+          jid: entry.jid || entry.phone_number || "",
+          requestedAt:
+            requestedAt !== undefined && Number.isFinite(requestedAt)
+              ? requestedAt
+              : undefined,
+          raw: entry,
+        };
+      });
+    } catch (error) {
+      this.logger.error(`Failed to get ${label} join requests:`, error);
+      return [];
+    }
+  }
+
+  /**
+   * Approve or reject pending join requests for a group or community.
+   * Returns one {@link ParticipantOperationResult} per requested participant,
+   * matching the shape used by add/remove/promote/demote.
+   */
+  private async updateJoinRequests(
+    label: "group" | "community",
+    jid: string,
+    participants: string[],
+    action: "approve" | "reject",
+    update: (
+      socket: WASocket,
+      formatted: string[]
+    ) => Promise<{ status: string; jid: string | undefined }[]>
+  ): Promise<ParticipantOperationResult[]> {
+    const formatted = participants.map((p) =>
+      MessageHandler.formatPhoneToJid(p)
+    );
+
+    try {
+      const socket = this.requireGroupLike(
+        label,
+        `Cannot ${action} ${label} join requests`,
+        jid
+      );
+
+      const results = await update(socket, formatted);
+
+      return results.map((result) => ({
+        jid: result.jid || "",
+        status: result.status,
+        success: result.status === "200",
+      }));
+    } catch (error) {
+      this.logger.error(`Failed to ${action} ${label} join requests:`, error);
+      return formatted.map((participantJid) => ({
+        jid: participantJid,
+        status: "error",
+        success: false,
+      }));
+    }
+  }
+
+  // ---------- Group settings ----------
+
+  /**
+   * Restrict who may send messages in a group.
+   * @param groupJid - Group JID (e.g., '123456789@g.us')
+   * @param announceOnly - true = admins only, false = everyone
+   */
+  async setGroupAnnounceOnly(
+    groupJid: string,
+    announceOnly: boolean
+  ): Promise<GroupOperationResult> {
+    return this.runGroupAdmin(
+      "group",
+      "update group announce mode",
+      groupJid,
+      (socket) =>
+        socket.groupSettingUpdate(
+          groupJid,
+          announceOnly ? "announcement" : "not_announcement"
+        )
+    );
+  }
+
+  /**
+   * Restrict who may edit a group's subject, description and picture.
+   * @param groupJid - Group JID (e.g., '123456789@g.us')
+   * @param restricted - true = admins only, false = everyone
+   */
+  async setGroupRestrictInfo(
+    groupJid: string,
+    restricted: boolean
+  ): Promise<GroupOperationResult> {
+    return this.runGroupAdmin(
+      "group",
+      "update group info restriction",
+      groupJid,
+      (socket) =>
+        socket.groupSettingUpdate(groupJid, restricted ? "locked" : "unlocked")
+    );
+  }
+
+  /**
+   * Set who may add new members to a group.
+   * @param groupJid - Group JID (e.g., '123456789@g.us')
+   * @param mode - 'admin_add' or 'all_member_add'
+   */
+  async setGroupMemberAddMode(
+    groupJid: string,
+    mode: MemberAddMode
+  ): Promise<GroupOperationResult> {
+    return this.runGroupAdmin(
+      "group",
+      "update group member-add mode",
+      groupJid,
+      (socket) => socket.groupMemberAddMode(groupJid, mode)
+    );
+  }
+
+  /**
+   * Require admin approval for people joining via invite link.
+   * @param groupJid - Group JID (e.g., '123456789@g.us')
+   * @param required - true = approval required, false = join freely
+   */
+  async setGroupJoinApproval(
+    groupJid: string,
+    required: boolean
+  ): Promise<GroupOperationResult> {
+    return this.runGroupAdmin(
+      "group",
+      "update group join-approval mode",
+      groupJid,
+      (socket) => socket.groupJoinApprovalMode(groupJid, required ? "on" : "off")
+    );
+  }
+
+  /**
+   * Set the disappearing-message timer for a group.
+   * @param groupJid - Group JID (e.g., '123456789@g.us')
+   * @param seconds - Duration in seconds; 0 (EphemeralDuration.Off) disables it
+   */
+  async setGroupEphemeral(
+    groupJid: string,
+    seconds: EphemeralDurationValue | number
+  ): Promise<GroupOperationResult> {
+    return this.runGroupAdmin(
+      "group",
+      "update group disappearing messages",
+      groupJid,
+      (socket) => socket.groupToggleEphemeral(groupJid, seconds)
+    );
+  }
+
+  // ---------- Group join requests ----------
+
+  /**
+   * List pending requests to join a group.
+   * Only meaningful when join approval is on (see {@link setGroupJoinApproval}).
+   * @param groupJid - Group JID (e.g., '123456789@g.us')
+   */
+  async getGroupJoinRequests(groupJid: string): Promise<JoinRequest[]> {
+    return this.fetchJoinRequests("group", groupJid, (socket) =>
+      socket.groupRequestParticipantsList(groupJid)
+    );
+  }
+
+  /**
+   * Approve pending requests to join a group.
+   * @param groupJid - Group JID (e.g., '123456789@g.us')
+   * @param participants - Phone numbers or JIDs to approve
+   */
+  async approveGroupJoinRequests(
+    groupJid: string,
+    participants: string[]
+  ): Promise<ParticipantOperationResult[]> {
+    return this.updateJoinRequests(
+      "group",
+      groupJid,
+      participants,
+      "approve",
+      (socket, formatted) =>
+        socket.groupRequestParticipantsUpdate(groupJid, formatted, "approve")
+    );
+  }
+
+  /**
+   * Reject pending requests to join a group.
+   * @param groupJid - Group JID (e.g., '123456789@g.us')
+   * @param participants - Phone numbers or JIDs to reject
+   */
+  async rejectGroupJoinRequests(
+    groupJid: string,
+    participants: string[]
+  ): Promise<ParticipantOperationResult[]> {
+    return this.updateJoinRequests(
+      "group",
+      groupJid,
+      participants,
+      "reject",
+      (socket, formatted) =>
+        socket.groupRequestParticipantsUpdate(groupJid, formatted, "reject")
+    );
+  }
+
+  // ---------- Community settings ----------
+
+  /**
+   * Restrict who may send messages in a community announcement group.
+   * @param communityJid - Community JID
+   * @param announceOnly - true = admins only, false = everyone
+   */
+  async setCommunityAnnounceOnly(
+    communityJid: string,
+    announceOnly: boolean
+  ): Promise<CommunityOperationResult> {
+    return this.runGroupAdmin(
+      "community",
+      "update community announce mode",
+      communityJid,
+      (socket) =>
+        socket.communitySettingUpdate(
+          communityJid,
+          announceOnly ? "announcement" : "not_announcement"
+        )
+    );
+  }
+
+  /**
+   * Restrict who may edit a community's subject, description and picture.
+   * @param communityJid - Community JID
+   * @param restricted - true = admins only, false = everyone
+   */
+  async setCommunityRestrictInfo(
+    communityJid: string,
+    restricted: boolean
+  ): Promise<CommunityOperationResult> {
+    return this.runGroupAdmin(
+      "community",
+      "update community info restriction",
+      communityJid,
+      (socket) =>
+        socket.communitySettingUpdate(
+          communityJid,
+          restricted ? "locked" : "unlocked"
+        )
+    );
+  }
+
+  /**
+   * Set who may add new members to a community.
+   * @param communityJid - Community JID
+   * @param mode - 'admin_add' or 'all_member_add'
+   */
+  async setCommunityMemberAddMode(
+    communityJid: string,
+    mode: MemberAddMode
+  ): Promise<CommunityOperationResult> {
+    return this.runGroupAdmin(
+      "community",
+      "update community member-add mode",
+      communityJid,
+      (socket) => socket.communityMemberAddMode(communityJid, mode)
+    );
+  }
+
+  /**
+   * Require admin approval for people joining a community via invite link.
+   * @param communityJid - Community JID
+   * @param required - true = approval required, false = join freely
+   */
+  async setCommunityJoinApproval(
+    communityJid: string,
+    required: boolean
+  ): Promise<CommunityOperationResult> {
+    return this.runGroupAdmin(
+      "community",
+      "update community join-approval mode",
+      communityJid,
+      (socket) =>
+        socket.communityJoinApprovalMode(communityJid, required ? "on" : "off")
+    );
+  }
+
+  /**
+   * Set the disappearing-message timer for a community.
+   * @param communityJid - Community JID
+   * @param seconds - Duration in seconds; 0 (EphemeralDuration.Off) disables it
+   */
+  async setCommunityEphemeral(
+    communityJid: string,
+    seconds: EphemeralDurationValue | number
+  ): Promise<CommunityOperationResult> {
+    return this.runGroupAdmin(
+      "community",
+      "update community disappearing messages",
+      communityJid,
+      (socket) => socket.communityToggleEphemeral(communityJid, seconds)
+    );
+  }
+
+  // ---------- Community join requests ----------
+
+  /**
+   * List pending requests to join a community.
+   * @param communityJid - Community JID
+   */
+  async getCommunityJoinRequests(
+    communityJid: string
+  ): Promise<JoinRequest[]> {
+    return this.fetchJoinRequests("community", communityJid, (socket) =>
+      socket.communityRequestParticipantsList(communityJid)
+    );
+  }
+
+  /**
+   * Approve pending requests to join a community.
+   * @param communityJid - Community JID
+   * @param participants - Phone numbers or JIDs to approve
+   */
+  async approveCommunityJoinRequests(
+    communityJid: string,
+    participants: string[]
+  ): Promise<ParticipantOperationResult[]> {
+    return this.updateJoinRequests(
+      "community",
+      communityJid,
+      participants,
+      "approve",
+      (socket, formatted) =>
+        socket.communityRequestParticipantsUpdate(
+          communityJid,
+          formatted,
+          "approve"
+        )
+    );
+  }
+
+  /**
+   * Reject pending requests to join a community.
+   * @param communityJid - Community JID
+   * @param participants - Phone numbers or JIDs to reject
+   */
+  async rejectCommunityJoinRequests(
+    communityJid: string,
+    participants: string[]
+  ): Promise<ParticipantOperationResult[]> {
+    return this.updateJoinRequests(
+      "community",
+      communityJid,
+      participants,
+      "reject",
+      (socket, formatted) =>
+        socket.communityRequestParticipantsUpdate(
+          communityJid,
+          formatted,
+          "reject"
+        )
+    );
+  }
+
+
+  // ============================================
+  // Group Invites & Message Pinning (v1.12.0)
+  // ============================================
+
+  /**
+   * Send a group-invite message — the rich "join my group" card, rather than a
+   * plain invite link pasted as text.
+   *
+   * Get the invite code from {@link getGroupInviteLink} (it is the part after
+   * `chat.whatsapp.com/`).
+   *
+   * @param to - Recipient phone number or JID
+   * @param invite - Invite payload
+   */
+  async sendGroupInvite(
+    to: string,
+    invite: GroupInviteMessage
+  ): Promise<SendMessageResult> {
+    try {
+      if (!this.socket) {
+        throw new Error("Not connected. Call connect() first.");
+      }
+
+      if (this.connectionState !== "connected") {
+        throw new Error(
+          `Cannot send group invite. Connection state: ${this.connectionState}`
+        );
+      }
+
+      if (!invite.groupJid?.endsWith("@g.us")) {
+        throw new Error("Invalid group JID. Must end with @g.us");
+      }
+
+      const jid = MessageHandler.formatPhoneToJid(to);
+      const socket = this.socket;
+
+      const result = await socket.sendMessage(
+        jid,
+        {
+          groupInvite: {
+            jid: invite.groupJid,
+            subject: invite.groupName,
+            inviteCode: invite.inviteCode,
+            inviteExpiration: invite.expiration,
+            text: invite.caption ?? "",
+          },
+        },
+        {
+          // Baileys fetches the group's picture to embed a thumbnail on the
+          // card, and does not guard that call: for a group with no picture
+          // WhatsApp answers `item-not-found`, which throws and aborts the
+          // whole send. Most groups have no picture, so the unguarded path
+          // fails far more often than it succeeds. Override the hook with a
+          // guarded version — the caller's options are spread last in
+          // Baileys' Socket/messages-send.js, so this wins — and send the card
+          // without a thumbnail rather than not at all.
+          getProfilePicUrl: async (pictureJid: string, type: "image" | "preview") => {
+            try {
+              return await socket.profilePictureUrl(pictureJid, type);
+            } catch {
+              return undefined;
+            }
+          },
+          // `getProfilePicUrl` lives on MessageContentGenerationOptions, which
+          // is what Baileys actually spreads these into, but sendMessage's
+          // parameter is typed as the narrower MiscMessageGenerationOptions.
+          // Valid at runtime, invisible to the type.
+        } as Parameters<typeof socket.sendMessage>[2]
+      );
+
+      return {
+        success: true,
+        messageId: result?.key?.id || undefined,
+      };
+    } catch (error) {
+      this.logger.error("Failed to send group invite:", error);
+      return { success: false, error: (error as Error).message };
+    }
+  }
+
+  /**
+   * Pin a message in its chat (pin-in-chat).
+   *
+   * @param message - The MiawMessage to pin (must carry `raw`)
+   * @param duration - How long it stays pinned (default: 24 hours)
+   */
+  async pinMessage(
+    message: MiawMessage,
+    duration: PinDurationValue = PinDuration.TwentyFourHours
+  ): Promise<SendMessageResult> {
+    return this.setMessagePin(message, "pin", duration);
+  }
+
+  /**
+   * Unpin a previously pinned message.
+   * @param message - The MiawMessage to unpin (must carry `raw`)
+   */
+  async unpinMessage(message: MiawMessage): Promise<SendMessageResult> {
+    return this.setMessagePin(message, "unpin");
+  }
+
+  /**
+   * Pin or unpin a message via a PinInChat protocol message.
+   *
+   * `proto.PinInChat.Type` is the canonical source of these two values, but
+   * importing `proto` would be miaw-core's first protobuf coupling and would
+   * force every Baileys mock factory to grow a `proto` entry. The values are
+   * stable wire constants, so they are named here instead of imported.
+   * @see WAProto/index.d.ts — PinInChat.Type
+   */
+  private async setMessagePin(
+    message: MiawMessage,
+    action: "pin" | "unpin",
+    duration?: PinDurationValue
+  ): Promise<SendMessageResult> {
+    const PIN_IN_CHAT = { PIN_FOR_ALL: 1, UNPIN_FOR_ALL: 2 } as const;
+
+    try {
+      if (!this.socket) {
+        throw new Error("Not connected. Call connect() first.");
+      }
+
+      if (this.connectionState !== "connected") {
+        throw new Error(
+          `Cannot ${action} message. Connection state: ${this.connectionState}`
+        );
+      }
+
+      if (!message.raw?.key) {
+        throw new Error(
+          `Message does not contain raw Baileys key data. Cannot ${action}.`
+        );
+      }
+
+      const jid = message.raw.key.remoteJid;
+      if (!jid) {
+        throw new Error("Message does not have a valid chat JID.");
+      }
+
+      const result = await this.socket.sendMessage(jid, {
+        pin: message.raw.key,
+        type:
+          action === "pin"
+            ? PIN_IN_CHAT.PIN_FOR_ALL
+            : PIN_IN_CHAT.UNPIN_FOR_ALL,
+        // WhatsApp ignores `time` when unpinning.
+        ...(duration !== undefined ? { time: duration } : {}),
+      });
+
+      return {
+        success: true,
+        messageId: result?.key?.id || undefined,
+      };
+    } catch (error) {
+      this.logger.error(`Failed to ${action} message:`, error);
+      return { success: false, error: (error as Error).message };
+    }
+  }
+
+  // ============================================
+  // Privacy & Blocklist Methods (v1.12.0)
+  // ============================================
+
+  /**
+   * Run a privacy/blocklist call behind the standard connection guard.
+   * @param what - verb phrase used in error messages
+   */
+  private async runPrivacyOp(
+    what: string,
+    run: (socket: WASocket) => Promise<void>
+  ): Promise<PrivacyOperationResult> {
+    try {
+      if (!this.socket) {
+        throw new Error("Not connected. Call connect() first.");
+      }
+
+      if (this.connectionState !== "connected") {
+        throw new Error(
+          `Cannot ${what}. Connection state: ${this.connectionState}`
+        );
+      }
+
+      await run(this.socket);
+
+      return { success: true };
+    } catch (error) {
+      this.logger.error(`Failed to ${what}:`, error);
+      return { success: false, error: (error as Error).message };
+    }
+  }
+
+  // ---------- Blocklist ----------
+
+  /**
+   * Block a contact.
+   * @param jidOrPhone - Phone number or JID to block
+   */
+  async blockContact(jidOrPhone: string): Promise<PrivacyOperationResult> {
+    const jid = MessageHandler.formatPhoneToJid(jidOrPhone);
+    return this.runPrivacyOp("block contact", (socket) =>
+      socket.updateBlockStatus(jid, "block")
+    );
+  }
+
+  /**
+   * Unblock a contact.
+   * @param jidOrPhone - Phone number or JID to unblock
+   */
+  async unblockContact(jidOrPhone: string): Promise<PrivacyOperationResult> {
+    const jid = MessageHandler.formatPhoneToJid(jidOrPhone);
+    return this.runPrivacyOp("unblock contact", (socket) =>
+      socket.updateBlockStatus(jid, "unblock")
+    );
+  }
+
+  /**
+   * List the JIDs you have blocked.
+   * @returns Blocked JIDs, or [] when disconnected or on failure
+   */
+  async getBlocklist(): Promise<string[]> {
+    try {
+      if (!this.socket) {
+        throw new Error("Not connected. Call connect() first.");
+      }
+
+      if (this.connectionState !== "connected") {
+        throw new Error(
+          `Cannot fetch blocklist. Connection state: ${this.connectionState}`
+        );
+      }
+
+      const blocked = await this.socket.fetchBlocklist();
+
+      // Baileys types this as (string | undefined)[]; drop the holes rather
+      // than handing callers an array they have to null-check.
+      return (blocked || []).filter((jid): jid is string => Boolean(jid));
+    } catch (error) {
+      this.logger.error("Failed to fetch blocklist:", error);
+      return [];
+    }
+  }
+
+  /**
+   * Check whether a contact is on your blocklist.
+   * Convenience over {@link getBlocklist}; each call refetches the list.
+   * @param jidOrPhone - Phone number or JID to check
+   */
+  async isBlocked(jidOrPhone: string): Promise<boolean> {
+    const jid = MessageHandler.formatPhoneToJid(jidOrPhone);
+    const blocklist = await this.getBlocklist();
+    return blocklist.includes(jid);
+  }
+
+  // ---------- Privacy settings ----------
+
+  /**
+   * Fetch your current privacy settings.
+   *
+   * WhatsApp returns a flat string map whose keys have grown over time, so the
+   * known keys are normalized onto typed fields and the whole map is preserved
+   * under `raw`.
+   *
+   * @param force - bypass Baileys' cache and re-query WhatsApp
+   * @returns the settings, or null when disconnected or on failure
+   */
+  async getPrivacySettings(force = false): Promise<PrivacySettings | null> {
+    try {
+      if (!this.socket) {
+        throw new Error("Not connected. Call connect() first.");
+      }
+
+      if (this.connectionState !== "connected") {
+        throw new Error(
+          `Cannot fetch privacy settings. Connection state: ${this.connectionState}`
+        );
+      }
+
+      const raw = (await this.socket.fetchPrivacySettings(force)) || {};
+
+      return {
+        lastSeen: raw.last as PrivacyValue | undefined,
+        online: raw.online as PrivacyOnlineValue | undefined,
+        profilePicture: raw.profile as PrivacyValue | undefined,
+        status: raw.status as PrivacyValue | undefined,
+        readReceipts: raw.readreceipts as ReadReceiptsValue | undefined,
+        groupAdd: raw.groupadd as PrivacyGroupAddValue | undefined,
+        messages: raw.messages as PrivacyMessagesValue | undefined,
+        calls: raw.calladd as PrivacyCallValue | undefined,
+        raw,
+      };
+    } catch (error) {
+      this.logger.error("Failed to fetch privacy settings:", error);
+      return null;
+    }
+  }
+
+  /** Set who can see your last-seen timestamp. */
+  async setLastSeenPrivacy(
+    value: PrivacyValue
+  ): Promise<PrivacyOperationResult> {
+    return this.runPrivacyOp("update last-seen privacy", (socket) =>
+      socket.updateLastSeenPrivacy(value)
+    );
+  }
+
+  /** Set who can see when you are online. */
+  async setOnlinePrivacy(
+    value: PrivacyOnlineValue
+  ): Promise<PrivacyOperationResult> {
+    return this.runPrivacyOp("update online privacy", (socket) =>
+      socket.updateOnlinePrivacy(value)
+    );
+  }
+
+  /** Set who can see your profile picture. */
+  async setProfilePicturePrivacy(
+    value: PrivacyValue
+  ): Promise<PrivacyOperationResult> {
+    return this.runPrivacyOp("update profile-picture privacy", (socket) =>
+      socket.updateProfilePicturePrivacy(value)
+    );
+  }
+
+  /** Set who can see your status updates. */
+  async setStatusPrivacy(
+    value: PrivacyValue
+  ): Promise<PrivacyOperationResult> {
+    return this.runPrivacyOp("update status privacy", (socket) =>
+      socket.updateStatusPrivacy(value)
+    );
+  }
+
+  /** Turn read receipts (blue ticks) on or off. */
+  async setReadReceiptsPrivacy(
+    value: ReadReceiptsValue
+  ): Promise<PrivacyOperationResult> {
+    return this.runPrivacyOp("update read-receipt privacy", (socket) =>
+      socket.updateReadReceiptsPrivacy(value)
+    );
+  }
+
+  /** Set who can add you to groups. */
+  async setGroupAddPrivacy(
+    value: PrivacyGroupAddValue
+  ): Promise<PrivacyOperationResult> {
+    return this.runPrivacyOp("update group-add privacy", (socket) =>
+      socket.updateGroupsAddPrivacy(value)
+    );
+  }
+
+  /** Set who can message you. */
+  async setMessagesPrivacy(
+    value: PrivacyMessagesValue
+  ): Promise<PrivacyOperationResult> {
+    return this.runPrivacyOp("update message privacy", (socket) =>
+      socket.updateMessagesPrivacy(value)
+    );
+  }
+
+  /** Set who can call you. */
+  async setCallPrivacy(
+    value: PrivacyCallValue
+  ): Promise<PrivacyOperationResult> {
+    return this.runPrivacyOp("update call privacy", (socket) =>
+      socket.updateCallPrivacy(value)
+    );
+  }
+
+  /**
+   * Set the default disappearing-message timer applied to NEW chats.
+   *
+   * This does not touch existing chats — use {@link setChatEphemeral},
+   * {@link setGroupEphemeral} or {@link setCommunityEphemeral} for those.
+   *
+   * @param seconds - Duration in seconds; 0 (EphemeralDuration.Off) disables it
+   */
+  async setDefaultDisappearingMode(
+    seconds: EphemeralDurationValue | number
+  ): Promise<PrivacyOperationResult> {
+    return this.runPrivacyOp("update default disappearing mode", (socket) =>
+      socket.updateDefaultDisappearingMode(seconds)
+    );
+  }
+
+  /** Turn link previews on or off for messages you send. */
+  async setLinkPreviewsDisabled(
+    disabled: boolean
+  ): Promise<PrivacyOperationResult> {
+    return this.runPrivacyOp("update link-preview privacy", (socket) =>
+      socket.updateDisableLinkPreviewsPrivacy(disabled)
+    );
   }
 
   // ============================================

@@ -10,7 +10,7 @@ Miaw Core abstracts away the complexity of Baileys, providing a clean, simple AP
 
 | Aspect                 | Baileys (Direct)              | Miaw Core                          |
 | ---------------------- | ----------------------------- | ---------------------------------- |
-| **Learning Curve**     | Steep - 150+ methods to learn | Gentle - 92 focused methods        |
+| **Learning Curve**     | Steep - 150+ methods to learn | Gentle - ~200 focused methods      |
 | **Setup Code**         | 50-100 lines boilerplate      | 10 lines to start                  |
 | **Session Management** | Manual auth state handling    | Automatic file-based persistence   |
 | **Reconnection**       | DIY implementation            | Built-in with configurable retries |
@@ -133,7 +133,7 @@ For more examples and detailed usage, see the [Usage Guide](./docs/USAGE.md).
 
 ### Manual Interactive Testing
 
-Test all 92 API methods interactively:
+Drive the API interactively against a live connection:
 
 ```bash
 # Show available test groups
@@ -148,17 +148,34 @@ npm run test:manual business    # Business features only
 
 **Available test groups:**
 
-| Group        | Description                     | Methods |
-| ------------ | ------------------------------- | ------- |
-| `core`       | Connection, lifecycle           | 6       |
-| `get`        | Fetch contacts, groups, chats   | 6       |
-| `messaging`  | Send/receive, reactions, edit   | 12      |
-| `contacts`   | Check numbers, contact info     | 7       |
-| `group`      | Create, manage participants     | 13      |
-| `profile`    | Update picture, name, status    | 4       |
-| `business`   | Labels, catalog (Business only) | 10      |
-| `newsletter` | Channels, subscriptions         | 6       |
-| `ux`         | Typing, presence, read receipts | 5       |
+| Group        | Description                                     |
+| ------------ | ----------------------------------------------- |
+| `core`       | Connection, lifecycle                           |
+| `get`        | Fetch contacts, groups, chats                   |
+| `messaging`  | Send/receive, reactions, edit, pin, invites     |
+| `contacts`   | Check numbers, contact info                     |
+| `group`      | Create, manage participants, admin settings     |
+| `community`  | Communities, linked groups, admin, join requests|
+| `profile`    | Update picture, name, status                    |
+| `business`   | Labels, catalog (Business only)                 |
+| `newsletter` | Channels, subscriptions                         |
+| `ux`         | Typing, presence, read receipts                 |
+| `privacy`    | Privacy settings, block / unblock               |
+| `calls`      | Call event, reject, call links                  |
+
+Run `npm run test:manual` with no argument for this list with a live entry count
+per group — it is generated from the runner's own category map, so it cannot go
+stale.
+
+**Unattended mode:**
+
+```bash
+npm run test:manual:auto              # every group, no prompts, non-zero exit on failure
+npm run test:manual group -- --auto   # one group
+```
+
+Prompts resolve to their `.env.test` defaults. Entries needing a human are
+skipped; add `--destructive` to include the ones that change real state.
 
 **Features:**
 
@@ -166,25 +183,36 @@ npm run test:manual business    # Business features only
 - Tracks test results with pass/fail/skip status
 - Generates summary report with timestamps
 - Pre-loads test configuration from `.env.test`
-
-See [Test Coverage Analysis](./docs/TEST_COVERAGE_ANALYSIS.md) for detailed coverage report.
+- Warns when `.env.test` is configured in a way that silently invalidates
+  results (e.g. both contact numbers set to the bot's own number)
 
 ### Unit & Integration Tests
 
 ```bash
-# Run all tests
+# Unit suites only - the fast gate (615 tests, no connection needed)
+npm run test:unit
+
+# Everything, including the live-connection suites
 npm test
 
-# Run in watch mode
-npm run test:watch
+# CLI command tests against a real connection (13 files)
+npm run test:cli
 
-# Generate coverage report
+# Type-check src/ and tests/ together
+npm run typecheck
+
+# Watch mode / coverage
+npm run test:watch
 npm run test:coverage
 ```
 
-## Current Capabilities (v1.11.0)
+> Jest runs serially (`maxWorkers: 1`): the live suites share one WhatsApp
+> session, so a parallel run would have them fighting over it. For the same
+> reason, never run two test commands at once.
 
-Built on **Baileys v7.0.0-rc13** - the latest WhatsApp Web protocol implementation.
+## Current Capabilities (v1.12.0)
+
+Built on **Baileys v7.0.0-rc14** - the latest WhatsApp Web protocol implementation.
 
 ### Core Features
 
@@ -208,6 +236,12 @@ Built on **Baileys v7.0.0-rc13** - the latest WhatsApp Web protocol implementati
 - ✅ `miaw-cli proxy test` connectivity diagnostics — no WhatsApp connection needed
 - ⚠️ SOCKS proxies: media *downloads* use a direct connection ([details](./docs/PROXY.md#️-socks-media-downloads-use-a-direct-connection))
 
+### Connection Identity
+
+- ✅ Configurable browser identity via `BrowserPresets` (macOS / Windows / Ubuntu / Android)
+- ✅ Android identity — Baileys reports this is required to **receive view-once media** ([details](./docs/USAGE.md#receiving-view-once-messages-android-identity))
+- ✅ Live WhatsApp Web version negotiation (avoids stale-version 428 rejections)
+
 ### Advanced Messaging
 
 - ✅ Reply/quote messages
@@ -215,6 +249,10 @@ Built on **Baileys v7.0.0-rc13** - the latest WhatsApp Web protocol implementati
 - ✅ Delete messages
 - ✅ Message reactions
 - ✅ Forward messages
+- ✅ Location, contact cards, polls and stickers
+- ✅ Group invite cards — `sendGroupInvite()`
+- ✅ Pin / unpin a message in a chat — `pinMessage()` / `unpinMessage()`
+- ✅ Disappearing messages per chat — `setChatEphemeral()`
 
 ### Group Management
 
@@ -223,6 +261,39 @@ Built on **Baileys v7.0.0-rc13** - the latest WhatsApp Web protocol implementati
 - ✅ Promote/demote admins
 - ✅ Group invite links
 - ✅ Update group settings
+- ✅ Announce-only and info-edit locks
+- ✅ Member-add mode (admins only / all members)
+- ✅ Join approval, plus listing / approving / rejecting join requests
+- ✅ Group-wide disappearing messages
+
+### Communities
+
+- ✅ Create communities, link and unlink groups
+- ✅ Community members: add, remove, promote, demote
+- ✅ Community invite links
+- ✅ The same admin surface as groups — announce, restrict, add-mode,
+     join approval, join requests, disappearing messages
+
+### Privacy & Blocklist
+
+- ✅ Read all privacy settings, including categories Baileys has no setter for
+     (preserved under `raw`)
+- ✅ Eight setters — last seen, online, profile picture, status, read receipts,
+     group add, messages, calls
+- ✅ Default disappearing mode for new chats, and link-preview control
+- ✅ Block / unblock, list the blocklist, check whether a contact is blocked
+
+### Calls
+
+- ✅ `call` event for incoming calls (offer / accept / reject / timeout)
+- ✅ Reject an incoming call — `rejectCall()`
+- ✅ Create shareable call links — `createCallLink()`
+
+### Chat Management
+
+- ✅ Archive, pin, mute, mark read/unread
+- ✅ Clear or delete a chat
+- ✅ Star / unstar messages
 
 ### Profile Management
 
@@ -259,16 +330,20 @@ Miaw Core handles these Baileys complexities for you:
 
 ```text
 miaw-core/
+├── bin/
+│   └── miaw-cli.ts      # CLI entry point (one-shot + REPL)
 ├── src/
 │   ├── client/          # Main MiawClient class
 │   ├── handlers/        # Auth and message handlers
 │   ├── types/           # TypeScript definitions
-│   ├── utils/           # Storage utilities
+│   ├── constants/       # Shared constant tables
+│   ├── utils/           # Proxy agents, rotation, browser presets
+│   ├── cli/             # CLI subsystem (commands + utils)
 │   └── index.ts         # Public API exports
 ├── docs/                # Documentation
 ├── examples/            # Usage examples
-├── tests/               # Unit and integration tests
-└── README.md           # This file
+├── tests/               # Unit, integration and CLI integration tests
+└── README.md            # This file
 ```
 
 ## Contributing
@@ -293,8 +368,8 @@ MIT
 
 ## Credits
 
-Built on top of [@whiskeysockets/baileys](https://github.com/WhiskeySockets/Baileys) v7.0.0-rc13
+Built on top of [@whiskeysockets/baileys](https://github.com/WhiskeySockets/Baileys) v7.0.0-rc14
 
 ---
 
-**Version:** 1.11.0 | **Baileys:** 7.0.0-rc13 | **Status:** Stable | **Updated:** 2026-09-02
+**Version:** 1.12.0 | **Baileys:** 7.0.0-rc14 | **Status:** Stable | **Updated:** 2026-09-02

@@ -41,6 +41,26 @@ export type {
   LinkedGroup,
   CreateCommunityResult,
   CommunityOperationResult,
+  // v1.12.0 Group & Community Admin
+  MemberAddMode,
+  JoinRequest,
+  EphemeralDurationValue,
+  // v1.12.0 Group invites & pinning
+  GroupInviteMessage,
+  PinDurationValue,
+  // v1.12.0 Calls
+  MiawCall,
+  CallStatus,
+  CallOperationResult,
+  // v1.12.0 Privacy & Blocklist
+  PrivacyValue,
+  PrivacyOnlineValue,
+  PrivacyGroupAddValue,
+  ReadReceiptsValue,
+  PrivacyCallValue,
+  PrivacyMessagesValue,
+  PrivacySettings,
+  PrivacyOperationResult,
   // v0.8.0 Profile Management
   ProfileOperationResult,
   // v0.9.0 Labels
@@ -124,6 +144,13 @@ export {
   isBaileysMessage,
   isBaileysMessageUpsert,
 } from "./utils/type-guards.js";
+
+// v1.12.0 value exports (const objects, so they cannot ride the `export type` block)
+export { EphemeralDuration, PinDuration } from "./types/index.js";
+
+// Browser identity presets
+export { BrowserPresets } from "./utils/browser-presets.js";
+export type { BrowserTuple } from "./utils/browser-presets.js";
 
 // Proxy utilities
 export {

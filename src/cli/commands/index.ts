@@ -6,6 +6,32 @@
 
 import { getOrCreateClient } from "../utils/client-cache.js";
 import { defaultCLIContext } from "../context.js";
+import { PinDuration } from "../../types/index.js";
+import type { PinDurationValue } from "../../types/index.js";
+import {
+  parseToggle,
+  parseEphemeral,
+  parseMemberAddMode,
+} from "../utils/parse-args.js";
+
+/** The three pin-in-chat durations WhatsApp accepts, by CLI alias. */
+const PIN_DURATIONS: Record<string, PinDurationValue> = {
+  "24h": PinDuration.TwentyFourHours,
+  "7d": PinDuration.SevenDays,
+  "30d": PinDuration.ThirtyDays,
+};
+
+/** Subcommand list printed by `group` with no/unknown subcommand. */
+export const GROUP_COMMANDS =
+  "Commands: list, info, create, leave, participants, invite, invite-link, " +
+  "name, description, picture, announce, restrict, add-mode, approval, " +
+  "ephemeral, requests";
+
+/** Subcommand list printed by `community` with no/unknown subcommand. */
+export const COMMUNITY_COMMANDS =
+  "Commands: list, info, create, leave, name, description, linked, link, " +
+  "unlink, group, members, invite, invite-link, announce, restrict, " +
+  "add-mode, approval, ephemeral, requests";
 import {
   // Instance commands
   cmdInstanceList,
@@ -33,11 +59,24 @@ import {
   cmdSendContact,
   cmdSendPoll,
   cmdSendSticker,
+  cmdSendGroupInvite,
   // Chat management commands
   cmdChatArchive,
   cmdChatUnarchive,
   cmdChatPin,
   cmdChatUnpin,
+  cmdChatEphemeral,
+  cmdChatPinMessage,
+  // Privacy & blocklist (v1.12.0)
+  cmdPrivacyShow,
+  cmdPrivacySet,
+  cmdPrivacyDisappearing,
+  cmdPrivacyLinkPreviews,
+  cmdBlockList,
+  cmdBlockSet,
+  PRIVACY_SETTINGS,
+  // Calls (v1.12.0)
+  cmdCallLink,
   cmdChatMute,
   cmdChatUnmute,
   cmdChatRead,
@@ -72,6 +111,14 @@ import {
   cmdCommunityInviteRevoke,
   cmdCommunityInviteAccept,
   cmdCommunityInviteInfo,
+  // Community admin (v1.12.0)
+  cmdCommunityAnnounce,
+  cmdCommunityRestrict,
+  cmdCommunityAddMode,
+  cmdCommunityApprovalMode,
+  cmdCommunityEphemeral,
+  cmdCommunityRequestsList,
+  cmdCommunityRequestsDecide,
   // Media commands
   cmdMediaDownload,
   // Group commands
@@ -91,6 +138,14 @@ import {
   cmdGroupNameSet,
   cmdGroupDescriptionSet,
   cmdGroupPictureSet,
+  // Group admin (v1.12.0)
+  cmdGroupAnnounce,
+  cmdGroupRestrict,
+  cmdGroupAddMode,
+  cmdGroupApprovalMode,
+  cmdGroupEphemeral,
+  cmdGroupRequestsList,
+  cmdGroupRequestsDecide,
   // Misc commands
   cmdCheck,
   // Contact commands
@@ -488,6 +543,17 @@ export async function runCommand(
           options: parsedArgs._.slice(3),
           selectableCount: parsedArgs.select ? parseInt(parsedArgs.select, 10) : undefined,
         });
+      case "group-invite":
+        if (parsedArgs._.length < 3) {
+          console.log("❌ Usage: miaw-cli send group-invite <phone> <groupJid> [caption]");
+          return false;
+        }
+        return await cmdSendGroupInvite(client, {
+          phone: parsedArgs._[1],
+          groupJid: parsedArgs._[2],
+          caption: parsedArgs._.slice(3).join(" ") || undefined,
+        });
+
       case "sticker":
         if (parsedArgs._.length < 3) {
           console.log("❌ Usage: miaw-cli send sticker <phone> <path-or-url>");
@@ -510,6 +576,116 @@ export async function runCommand(
   }
 
   // Chat management commands
+  // Calls (v1.12.0)
+  if (command === "call") {
+    const subCommand = parsedArgs._[0] || "";
+
+    switch (subCommand) {
+      case "link": {
+        const type = (parsedArgs._[1] || "video").toLowerCase();
+        if (type !== "audio" && type !== "video") {
+          console.log("❌ Usage: miaw-cli call link [audio|video] [--start <unix-seconds>]");
+          return false;
+        }
+        const start = parsedArgs.start ?? context.flags?.start;
+        if (start !== undefined && typeof start !== "number") {
+          console.log("❌ --start must be a Unix timestamp in seconds");
+          return false;
+        }
+        return await cmdCallLink(client, { type, startTime: start });
+      }
+
+      default:
+        console.log(`❌ Unknown call command: ${subCommand}`);
+        console.log("Commands: link");
+        return false;
+    }
+  }
+
+  // Privacy settings (v1.12.0)
+  if (command === "privacy") {
+    const subCommand = parsedArgs._[0] || "";
+
+    switch (subCommand) {
+      case "show":
+      case "": {
+        const force = Boolean(parsedArgs.force ?? context.flags?.force);
+        return await cmdPrivacyShow(client, { force }, jsonOutput);
+      }
+
+      case "set":
+        if (parsedArgs._.length < 3) {
+          console.log("❌ Usage: miaw-cli privacy set <setting> <value>");
+          console.log(`   Settings: ${Object.keys(PRIVACY_SETTINGS).join(", ")}`);
+          return false;
+        }
+        return await cmdPrivacySet(client, {
+          setting: parsedArgs._[1],
+          value: parsedArgs._[2],
+        });
+
+      case "disappearing": {
+        const seconds = parseEphemeral(parsedArgs._[1]);
+        if (seconds === null) {
+          console.log("❌ Usage: miaw-cli privacy disappearing <off|24h|7d|90d|seconds>");
+          return false;
+        }
+        return await cmdPrivacyDisappearing(client, { seconds });
+      }
+
+      case "link-previews": {
+        const on = parseToggle(parsedArgs._[1]);
+        if (on === null) {
+          console.log("❌ Usage: miaw-cli privacy link-previews <on|off>");
+          return false;
+        }
+        return await cmdPrivacyLinkPreviews(client, { on });
+      }
+
+      default:
+        console.log(`❌ Unknown privacy command: ${subCommand}`);
+        console.log("Commands: show, set, disappearing, link-previews");
+        return false;
+    }
+  }
+
+  // Blocklist (v1.12.0)
+  if (command === "block") {
+    const subCommand = parsedArgs._[0] || "";
+
+    switch (subCommand) {
+      case "list":
+      case "ls":
+        return await cmdBlockList(client, jsonOutput);
+
+      case "add":
+        if (!parsedArgs._[1]) {
+          console.log("❌ Usage: miaw-cli block add <phone>");
+          return false;
+        }
+        return await cmdBlockSet(client, {
+          phone: parsedArgs._[1],
+          block: true,
+        });
+
+      case "remove":
+      case "rm":
+        if (!parsedArgs._[1]) {
+          console.log("❌ Usage: miaw-cli block remove <phone>");
+          return false;
+        }
+        return await cmdBlockSet(client, {
+          phone: parsedArgs._[1],
+          block: false,
+        });
+
+      default:
+        console.log(`❌ Unknown block command: ${subCommand}`);
+        console.log("Commands: list, add, remove");
+        return false;
+    }
+  }
+
   if (command === "chat") {
     const subCommand = parsedArgs._[0] || "";
     const jid = parsedArgs._[1] || "";
@@ -545,6 +721,37 @@ export async function runCommand(
         return await cmdChatClear(client, { jid });
       case "delete":
         return await cmdChatDelete(client, { jid });
+      case "ephemeral": {
+        const seconds = parseEphemeral(parsedArgs._[2]);
+        if (seconds === null) {
+          console.log("❌ Usage: miaw-cli chat ephemeral <jid|phone> <off|24h|7d|90d|seconds>");
+          return false;
+        }
+        return await cmdChatEphemeral(client, { jid, seconds });
+      }
+      case "pin-message":
+      case "unpin-message": {
+        const pin = subCommand === "pin-message";
+        if (!parsedArgs._[2]) {
+          console.log(`❌ Usage: miaw-cli chat ${subCommand} <jid|phone> <messageId>${pin ? " [24h|7d|30d]" : ""}`);
+          return false;
+        }
+        let duration: PinDurationValue | undefined;
+        if (pin && parsedArgs._[3]) {
+          const parsed = PIN_DURATIONS[parsedArgs._[3].toLowerCase()];
+          if (parsed === undefined) {
+            console.log("❌ Usage: miaw-cli chat pin-message <jid|phone> <messageId> [24h|7d|30d]");
+            return false;
+          }
+          duration = parsed;
+        }
+        return await cmdChatPinMessage(client, {
+          jid,
+          messageId: parsedArgs._[2],
+          pin,
+          duration,
+        });
+      }
       default:
         if (subCommand) {
           console.log(`❌ Unknown chat command: ${subCommand}`);
@@ -552,7 +759,7 @@ export async function runCommand(
           console.log("Usage: chat <command> <jid|phone> [--duration <ms> for mute]");
         }
         console.log(
-          "Commands: archive, unarchive, pin, unpin, mute, unmute, read, unread, clear, delete"
+          "Commands: archive, unarchive, pin, unpin, mute, unmute, read, unread, clear, delete, ephemeral, pin-message, unpin-message"
         );
         return false;
     }
@@ -801,13 +1008,94 @@ export async function runCommand(
         console.log("❌ Usage: miaw-cli group picture set <jid> <path>");
         return false;
 
+      // Settings (v1.12.0)
+      case "announce": {
+        const on = parseToggle(parsedArgs._[2]);
+        if (!parsedArgs._[1] || on === null) {
+          console.log("❌ Usage: miaw-cli group announce <jid> <on|off>");
+          return false;
+        }
+        return await cmdGroupAnnounce(client, { jid: parsedArgs._[1], on });
+      }
+
+      case "restrict": {
+        const on = parseToggle(parsedArgs._[2]);
+        if (!parsedArgs._[1] || on === null) {
+          console.log("❌ Usage: miaw-cli group restrict <jid> <on|off>");
+          return false;
+        }
+        return await cmdGroupRestrict(client, { jid: parsedArgs._[1], on });
+      }
+
+      case "add-mode": {
+        const mode = parseMemberAddMode(parsedArgs._[2]);
+        if (!parsedArgs._[1] || mode === null) {
+          console.log("❌ Usage: miaw-cli group add-mode <jid> <admin|all>");
+          return false;
+        }
+        return await cmdGroupAddMode(client, { jid: parsedArgs._[1], mode });
+      }
+
+      case "approval": {
+        const on = parseToggle(parsedArgs._[2]);
+        if (!parsedArgs._[1] || on === null) {
+          console.log("❌ Usage: miaw-cli group approval <jid> <on|off>");
+          return false;
+        }
+        return await cmdGroupApprovalMode(client, { jid: parsedArgs._[1], on });
+      }
+
+      case "ephemeral": {
+        const seconds = parseEphemeral(parsedArgs._[2]);
+        if (!parsedArgs._[1] || seconds === null) {
+          console.log("❌ Usage: miaw-cli group ephemeral <jid> <off|24h|7d|90d|seconds>");
+          return false;
+        }
+        return await cmdGroupEphemeral(client, { jid: parsedArgs._[1], seconds });
+      }
+
+      // Nested join-request commands (v1.12.0)
+      case "requests":
+        switch (subSubCommand) {
+          case "list":
+          case "ls":
+            if (!parsedArgs._[2]) {
+              console.log("❌ Usage: miaw-cli group requests list <jid>");
+              return false;
+            }
+            return await cmdGroupRequestsList(client, { jid: parsedArgs._[2] }, jsonOutput);
+          case "approve":
+            if (parsedArgs._.length < 4) {
+              console.log("❌ Usage: miaw-cli group requests approve <jid> <phone1> [phone2] ...");
+              return false;
+            }
+            return await cmdGroupRequestsDecide(client, {
+              jid: parsedArgs._[2],
+              phones: parsedArgs._.slice(3),
+              action: "approve",
+            });
+          case "reject":
+            if (parsedArgs._.length < 4) {
+              console.log("❌ Usage: miaw-cli group requests reject <jid> <phone1> [phone2] ...");
+              return false;
+            }
+            return await cmdGroupRequestsDecide(client, {
+              jid: parsedArgs._[2],
+              phones: parsedArgs._.slice(3),
+              action: "reject",
+            });
+          default:
+            console.log("❌ Usage: miaw-cli group requests <list|approve|reject> <jid> [phones...]");
+            return false;
+        }
+
       default:
         if (!subCommand) {
           console.log("Usage: group <command>");
-          console.log("Commands: list, info, create, leave, participants, invite, invite-link, name, description, picture");
+          console.log(GROUP_COMMANDS);
         } else {
           console.log(`❌ Unknown group command: ${subCommand}`);
-          console.log("Commands: list, info, create, leave, participants, invite, invite-link, name, description, picture");
+          console.log(GROUP_COMMANDS);
         }
         return false;
     }
@@ -1114,13 +1402,105 @@ export async function runCommand(
             console.log("❌ Usage: miaw-cli community invite link|accept|revoke|info ...");
             return false;
         }
+
+      // Backward compatibility: invite-link (mirrors `group invite-link`).
+      // COMMUNITY_COMMANDS has advertised this since v1.9.0; without the case it
+      // fell through to the unknown-command branch.
+      case "invite-link":
+        if (!parsedArgs._[1]) {
+          console.log("❌ Usage: miaw-cli community invite-link <jid>");
+          return false;
+        }
+        return await cmdCommunityInviteLink(client, { jid: parsedArgs._[1] });
+
+      // Settings (v1.12.0)
+      case "announce": {
+        const on = parseToggle(parsedArgs._[2]);
+        if (!parsedArgs._[1] || on === null) {
+          console.log("❌ Usage: miaw-cli community announce <jid> <on|off>");
+          return false;
+        }
+        return await cmdCommunityAnnounce(client, { jid: parsedArgs._[1], on });
+      }
+
+      case "restrict": {
+        const on = parseToggle(parsedArgs._[2]);
+        if (!parsedArgs._[1] || on === null) {
+          console.log("❌ Usage: miaw-cli community restrict <jid> <on|off>");
+          return false;
+        }
+        return await cmdCommunityRestrict(client, { jid: parsedArgs._[1], on });
+      }
+
+      case "add-mode": {
+        const mode = parseMemberAddMode(parsedArgs._[2]);
+        if (!parsedArgs._[1] || mode === null) {
+          console.log("❌ Usage: miaw-cli community add-mode <jid> <admin|all>");
+          return false;
+        }
+        return await cmdCommunityAddMode(client, { jid: parsedArgs._[1], mode });
+      }
+
+      case "approval": {
+        const on = parseToggle(parsedArgs._[2]);
+        if (!parsedArgs._[1] || on === null) {
+          console.log("❌ Usage: miaw-cli community approval <jid> <on|off>");
+          return false;
+        }
+        return await cmdCommunityApprovalMode(client, { jid: parsedArgs._[1], on });
+      }
+
+      case "ephemeral": {
+        const seconds = parseEphemeral(parsedArgs._[2]);
+        if (!parsedArgs._[1] || seconds === null) {
+          console.log("❌ Usage: miaw-cli community ephemeral <jid> <off|24h|7d|90d|seconds>");
+          return false;
+        }
+        return await cmdCommunityEphemeral(client, { jid: parsedArgs._[1], seconds });
+      }
+
+      // Nested join-request commands (v1.12.0)
+      case "requests":
+        switch (subSubCommand) {
+          case "list":
+          case "ls":
+            if (!parsedArgs._[2]) {
+              console.log("❌ Usage: miaw-cli community requests list <jid>");
+              return false;
+            }
+            return await cmdCommunityRequestsList(client, { jid: parsedArgs._[2] }, jsonOutput);
+          case "approve":
+            if (parsedArgs._.length < 4) {
+              console.log("❌ Usage: miaw-cli community requests approve <jid> <phone1> [phone2] ...");
+              return false;
+            }
+            return await cmdCommunityRequestsDecide(client, {
+              jid: parsedArgs._[2],
+              phones: parsedArgs._.slice(3),
+              action: "approve",
+            });
+          case "reject":
+            if (parsedArgs._.length < 4) {
+              console.log("❌ Usage: miaw-cli community requests reject <jid> <phone1> [phone2] ...");
+              return false;
+            }
+            return await cmdCommunityRequestsDecide(client, {
+              jid: parsedArgs._[2],
+              phones: parsedArgs._.slice(3),
+              action: "reject",
+            });
+          default:
+            console.log("❌ Usage: miaw-cli community requests <list|approve|reject> <jid> [phones...]");
+            return false;
+        }
+
       default:
         if (subCommand) {
           console.log(`❌ Unknown community command: ${subCommand}`);
         } else {
           console.log("Usage: community <command> ...");
         }
-        console.log("Commands: list, info, create, leave, name, description, linked, link, unlink, group, members, invite");
+        console.log(COMMUNITY_COMMANDS);
         return false;
     }
   }
@@ -1296,7 +1676,7 @@ export async function runCommand(
  * Parse command arguments.
  * Only auto-converts known numeric flags to numbers; all others stay as strings.
  */
-const NUMERIC_FLAGS = new Set(["limit", "count", "cursor", "timeout"]);
+const NUMERIC_FLAGS = new Set(["limit", "count", "cursor", "timeout", "start"]);
 
 function parseCommandArgs(args: string[]): any {
   const parsed: any = { _: [] };

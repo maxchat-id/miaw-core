@@ -16,8 +16,13 @@ This document covers all current capabilities of Miaw Core. It will be updated a
 - [Sending Messages](#sending-messages)
 - [Media Messages](#media-messages)
 - [Advanced Messaging](#advanced-messaging)
+- [Chat Management (v1.7.0)](#chat-management-v170)
 - [Contact & Validation](#contact--validation)
+- [Status / Stories (v1.8.0)](#status--stories-v180)
 - [Group Management](#group-management)
+- [Communities (v1.9.0)](#communities-v190)
+- [Privacy & Blocklist](#privacy--blocklist)
+- [Calls](#calls)
 - [Profile Management](#profile-management)
 - [UX & Presence](#ux--presence)
 - [Business Features](#business-features)
@@ -33,6 +38,7 @@ This document covers all current capabilities of Miaw Core. It will be updated a
 - [TypeScript Usage](#typescript-usage)
 - [LID Privacy Support](#lid-privacy-support)
 - [Debugging](#debugging)
+- [Complete Example](#complete-example)
 
 ## Installation
 
@@ -94,6 +100,9 @@ const client = new MiawClient({
   maxReconnectAttempts: 10, // Default: Infinity
   reconnectDelay: 5000, // Default: 3000 (ms)
 
+  // Browser identity (v1.6.1+). Default: BrowserPresets.macOS("Chrome")
+  browser: BrowserPresets.macOS("Chrome"),
+
   // Proxy configuration (v1.3.0+)
   proxy: "socks5://proxy.example.com:1080", // Proxy URL string
   // or: proxy: { url: "http://proxy:8080", username: "user", password: "pass" }
@@ -120,9 +129,79 @@ const client = new MiawClient({
 | `qrGracePeriod`        | `number`  | `30000`        | QR code grace period                                |
 | `qrScanTimeout`        | `number`  | `60000`        | QR code scan timeout                                |
 | `connectionTimeout`    | `number`  | `120000`       | Connection establishment timeout                    |
+| `browser`              | `BrowserTuple` | `BrowserPresets.macOS("Chrome")` | Browser identity sent to WhatsApp (see [Browser Identity](#browser-identity)) |
 | `proxy`                | `string \| ProxyConfig` | _none_ | Proxy URL or config object (see [Proxy Support](#proxy-support)) |
 | `agent`                | `Agent`   | _none_         | Custom WebSocket agent (advanced, overrides proxy)  |
 | `fetchAgent`           | `unknown` | _none_         | Custom media-upload agent (advanced, overrides proxy). Must be an `http.Agent`, **not** an undici Dispatcher |
+
+### Browser Identity
+
+WhatsApp is told what kind of client is connecting via a three-part tuple,
+`[os, browserName, version]`. The choice is load-bearing: it decides the label
+the linked device shows on the phone, how deep a history sync you are given,
+and whether the handshake is negotiated as a web client or an Android one.
+
+Use `BrowserPresets` rather than writing a tuple by hand:
+
+```typescript
+import { MiawClient, BrowserPresets } from "miaw-core";
+
+const client = new MiawClient({
+  instanceId: "bot",
+  browser: BrowserPresets.macOS("Chrome"), // the default
+});
+```
+
+| Preset | Tuple | Notes |
+| ------ | ----- | ----- |
+| `BrowserPresets.macOS(browser?)`   | `["Mac OS", "Chrome", "14.4.1"]`   | **Default.** |
+| `BrowserPresets.windows(browser?)` | `["Windows", "Chrome", "10.0.22631"]` | |
+| `BrowserPresets.ubuntu(browser?)`  | `["Ubuntu", "Chrome", "22.04.4"]`  | |
+| `BrowserPresets.android(version?)` | `["13", "Android", ""]`            | Experimental. Reportedly required to receive view-once media. |
+
+> **Never use a `"Desktop"` browser name.** Since ~2026-06-29 WhatsApp rejects the
+> legacy Desktop identity (webSubPlatform `DARWIN`/`WIN32`) with a **428 before
+> issuing a QR**. Browser identities still pair.
+> See [Baileys #2671](https://github.com/WhiskeySockets/Baileys/issues/2671).
+
+#### Receiving view-once messages (Android identity)
+
+Baileys reports that a web-identity session is **not delivered view-once media**
+by WhatsApp at all, and that an Android-identity session is
+([WhiskeySockets/Baileys#2201](https://github.com/WhiskeySockets/Baileys/pull/2201)).
+Since 7.0.0-rc14 the handshake negotiates as `Platform.ANDROID` when the browser
+tuple names Android:
+
+```typescript
+const client = new MiawClient({
+  instanceId: "viewonce-bot",
+  browser: BrowserPresets.android("13"),
+});
+
+client.on("message", async (message) => {
+  if (message.media?.viewOnce) {
+    const buffer = await client.downloadMedia(message);
+    // ...
+  }
+});
+```
+
+miaw-core already normalizes view-once messages (all three envelope variants), so
+`message.media.viewOnce` and `downloadMedia()` work with no further change once
+the identity is in place.
+
+> **What we verified, and what we didn't.** The Android handshake is confirmed
+> working: pairing with this identity is accepted by WhatsApp and the session
+> connects and reconnects normally. The *receipt* of view-once media is
+> upstream's claim, not something miaw-core has confirmed end-to-end — it needs
+> a second device to send from. If you depend on it, verify it yourself first:
+> `npx tsx tests/verify-viewonce.ts` pairs a throwaway instance and reports
+> whether a view-once image actually arrives and downloads.
+
+**Trade-offs.** Baileys marks this identity experimental and logs a warning on
+connect. The linked device is labelled differently on the phone, and history sync
+may be shallower. Pair it on a **dedicated `instanceId`** rather than switching an
+established session over — changing the identity of a live session means re-pairing.
 
 ## Authentication
 
@@ -768,6 +847,199 @@ await client.acceptCommunityInvite("https://chat.whatsapp.com/AbCdEf");
 const invitePreview = await client.getCommunityInviteInfo("AbCdEf");
 ```
 
+### Group & Community Settings (v1.12.0)
+
+Groups and communities take the same settings, under matching method names.
+All require admin rights and return `{ success, error? }`.
+
+```typescript
+// Who may send messages
+await client.setGroupAnnounceOnly(groupJid, true);   // admins only
+await client.setGroupAnnounceOnly(groupJid, false);  // everyone
+
+// Who may edit the subject / description / picture
+await client.setGroupRestrictInfo(groupJid, true);
+
+// Who may add new members
+await client.setGroupMemberAddMode(groupJid, "admin_add");     // or "all_member_add"
+
+// Require admin approval for invite-link joins
+await client.setGroupJoinApproval(groupJid, true);
+
+// Community equivalents
+await client.setCommunityAnnounceOnly(communityJid, true);
+await client.setCommunityRestrictInfo(communityJid, true);
+await client.setCommunityMemberAddMode(communityJid, "admin_add");
+await client.setCommunityJoinApproval(communityJid, true);
+```
+
+### Join Requests (v1.12.0)
+
+Requests only accumulate while join approval is on.
+
+```typescript
+const requests = await client.getGroupJoinRequests(groupJid);
+for (const req of requests) {
+  console.log(req.jid, req.requestedAt); // requestedAt may be undefined
+}
+
+// Returns one result per participant, same shape as add/remove/promote
+await client.approveGroupJoinRequests(groupJid, ["6281234567890"]);
+await client.rejectGroupJoinRequests(groupJid, ["6289999999999"]);
+
+// Community equivalents
+await client.getCommunityJoinRequests(communityJid);
+await client.approveCommunityJoinRequests(communityJid, ["6281234567890"]);
+await client.rejectCommunityJoinRequests(communityJid, ["6289999999999"]);
+```
+
+### Group Invite Cards (v1.12.0)
+
+Sends the rich "join my group" card rather than a pasted link.
+
+```typescript
+import { MiawClient } from "miaw-core";
+
+const link = await client.getGroupInviteLink(groupJid);
+const info = await client.getGroupInfo(groupJid);
+
+await client.sendGroupInvite("6281234567890", {
+  groupJid,
+  groupName: info.name,
+  inviteCode: link.replace(/^.*chat\.whatsapp\.com\//, ""),
+  expiration: Math.floor(Date.now() / 1000) + 3 * 24 * 60 * 60,
+  caption: "Come join us",
+});
+```
+
+> `GroupInviteMessage` (what you send) is a different type from `GroupInviteInfo`
+> (the preview `getGroupInviteInfo()` returns before you join). They are not
+> interchangeable.
+
+### Disappearing Messages (v1.12.0)
+
+```typescript
+import { EphemeralDuration } from "miaw-core";
+
+await client.setChatEphemeral("6281234567890", EphemeralDuration.SevenDays);
+await client.setGroupEphemeral(groupJid, EphemeralDuration.TwentyFourHours);
+await client.setCommunityEphemeral(communityJid, EphemeralDuration.NinetyDays);
+
+// Turn it off
+await client.setChatEphemeral("6281234567890", EphemeralDuration.Off);
+
+// Default for NEW chats only — does not touch existing ones
+await client.setDefaultDisappearingMode(EphemeralDuration.SevenDays);
+```
+
+`EphemeralDuration` is a convenience for the four durations the WhatsApp UI
+offers (`Off`, `TwentyFourHours`, `SevenDays`, `NinetyDays`); a raw second count
+works too.
+
+### Pin Messages (v1.12.0)
+
+```typescript
+import { PinDuration } from "miaw-core";
+
+client.on("message", async (msg) => {
+  await client.pinMessage(msg);                        // default: 24 hours
+  await client.pinMessage(msg, PinDuration.SevenDays);
+  await client.unpinMessage(msg);
+});
+```
+
+Pinning needs the raw Baileys key, so it only works on a `MiawMessage` that
+carries `raw` — i.e. one this session received or sent. WhatsApp accepts only
+three pin durations: `TwentyFourHours`, `SevenDays`, `ThirtyDays`. Note these
+differ from the disappearing-message durations.
+
+## Privacy & Blocklist
+
+### Privacy Settings (v1.12.0)
+
+```typescript
+const settings = await client.getPrivacySettings();
+console.log(settings.lastSeen);      // 'all' | 'contacts' | 'contact_blacklist' | 'none'
+console.log(settings.readReceipts);  // 'all' | 'none'
+console.log(settings.raw);           // everything WhatsApp returned, unnormalized
+
+// Pass true to bypass the cache and re-query
+await client.getPrivacySettings(true);
+```
+
+Every field is optional — WhatsApp omits categories it has no value for, and has
+added new ones over time, so unrecognized keys are preserved under `raw` rather
+than dropped.
+
+```typescript
+await client.setLastSeenPrivacy("contacts");
+await client.setOnlinePrivacy("match_last_seen");
+await client.setProfilePicturePrivacy("contacts");
+await client.setStatusPrivacy("contact_blacklist");
+await client.setReadReceiptsPrivacy("none");     // turn off blue ticks
+await client.setGroupAddPrivacy("contacts");
+await client.setMessagesPrivacy("contacts");
+await client.setCallPrivacy("known");
+await client.setLinkPreviewsDisabled(true);
+```
+
+| Setting | Accepted values |
+| ------- | --------------- |
+| `setLastSeenPrivacy` | `all`, `contacts`, `contact_blacklist`, `none` |
+| `setOnlinePrivacy` | `all`, `match_last_seen` |
+| `setProfilePicturePrivacy` | `all`, `contacts`, `contact_blacklist`, `none` |
+| `setStatusPrivacy` | `all`, `contacts`, `contact_blacklist`, `none` |
+| `setReadReceiptsPrivacy` | `all`, `none` |
+| `setGroupAddPrivacy` | `all`, `contacts`, `contact_blacklist` |
+| `setMessagesPrivacy` | `all`, `contacts` |
+| `setCallPrivacy` | `all`, `known` |
+
+> `contact_blacklist` means "my contacts, except…". The exclusion list itself is
+> managed in the WhatsApp app and is not exposed over this protocol.
+
+### Blocklist (v1.12.0)
+
+```typescript
+await client.blockContact("6281234567890");
+await client.unblockContact("6281234567890");
+
+const blocked = await client.getBlocklist();   // string[] of JIDs
+const isBlocked = await client.isBlocked("6281234567890");
+```
+
+`isBlocked()` refetches the list on each call — cache `getBlocklist()` yourself
+if you are checking many numbers.
+
+## Calls
+
+### Handling Incoming Calls (v1.12.0)
+
+```typescript
+client.on("call", async (call) => {
+  // A single call fires several times as it progresses:
+  //   offer -> ringing -> accept | reject | timeout | terminate
+  // `offer` is the first, and the only stage where rejectCall() still works.
+  if (call.status !== "offer") return;
+
+  console.log(`${call.isVideo ? "Video" : "Voice"} call from ${call.from}`);
+  if (call.isGroup) console.log("Group call in", call.groupJid);
+
+  await client.rejectCall(call.id, call.from);
+});
+```
+
+### Call Links (v1.12.0)
+
+```typescript
+const link = await client.createCallLink("video");
+const audioLink = await client.createCallLink("audio");
+
+// Scheduled for a specific time (Unix seconds)
+const scheduled = await client.createCallLink("video", 1767225600);
+```
+
+Returns the link URL, or `null` on failure.
+
 ## Profile Management
 
 ### Update Profile Picture
@@ -1300,6 +1572,17 @@ client.on("message_receipt", (receipt) => {
   console.log(`Message ${receipt.messageId} ${receipt.type} by ${receipt.recipientId}`);
   // receipt.type: 'delivery' | 'read' | 'played'
 });
+
+// Incoming or outgoing call (v1.12.0)
+client.on("call", async (call) => {
+  // The same call fires several times as it progresses:
+  //   offer -> ringing -> accept | reject | timeout | terminate
+  // `offer` is the first, and the only stage where rejectCall() still works.
+  if (call.status !== "offer") return;
+
+  console.log(`${call.isVideo ? "Video" : "Voice"} call from ${call.from}`);
+  await client.rejectCall(call.id, call.from);
+});
 ```
 
 ### Filter Messages
@@ -1541,11 +1824,14 @@ const client = new MiawClient({
 | `message_delete`  | `(deletion: MessageDelete)`| Message was deleted                  |
 | `message_reaction`| `(reaction: MessageReaction)` | Message received reaction         |
 | `message_receipt` | `(receipt: MessageReceiptUpdate)` | Sent message delivered/read/played |
+| `call`            | `(call: MiawCall)`         | Call offered, accepted, rejected or terminated |
 | `presence`        | `(update: PresenceUpdate)` | Contact's presence changed           |
 | `connection`      | `(state: ConnectionState)` | Connection state changed             |
 | `disconnected`    | `(reason?: string, statusCode?: number)` | Client disconnected. `reason` is `"intentional"` for an explicit `disconnect()`, otherwise the Baileys `DisconnectReason` name |
 | `reconnecting`    | `(attempt: number)`        | Attempting to reconnect              |
 | `error`           | `(error: Error)`           | Error occurred                       |
+| `poll_vote`       | `(vote: PollVoteUpdate)`   | Someone voted on a poll you sent     |
+| `pairing_code`    | `(code: string)`           | Pairing code issued (phone-number pairing) |
 | `session_saved`   | `()`                       | Session credentials saved            |
 
 ## Error Handling

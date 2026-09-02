@@ -112,13 +112,30 @@ export interface MiawClientOptions {
    * Browser identity tuple sent to WhatsApp: [os, browserName, version].
    * Default: Baileys' Browsers.macOS("Chrome").
    *
+   * Use `BrowserPresets` for the spellings known to work rather than writing
+   * a tuple by hand.
+   *
    * Do NOT use a "Desktop" browser name: since ~2026-06-29 WhatsApp rejects
    * the legacy Desktop identity (webSubPlatform DARWIN/WIN32) with a 428
    * before issuing a QR. Browser identities ("Chrome", etc.) still pair.
    * Note: the linked device is labeled with this tuple on the phone (e.g.
    * "Chrome (Mac OS)"), and browser identities may receive shallower history
    * sync than the old Desktop identity.
+   *
+   * `BrowserPresets.android()` is the exception to "browser identity": it
+   * negotiates as an Android client. Baileys reports that this is required to
+   * **receive view-once media**, which a web session is never sent; that claim
+   * is upstream's and is not verified in this repo. Baileys marks the identity
+   * experimental. Prefer it on a dedicated instance over switching an
+   * established session.
+   *
    * @see https://github.com/WhiskeySockets/Baileys/issues/2671
+   * @example
+   * // default web identity
+   * new MiawClient({ instanceId: "bot" })
+   * @example
+   * // opt in to view-once receipt
+   * new MiawClient({ instanceId: "bot", browser: BrowserPresets.android("13") })
    */
   browser?: [string, string, string];
 
@@ -361,6 +378,72 @@ export interface MessageReceiptUpdate {
 }
 
 /**
+ * Stage of an incoming or outgoing call (v1.12.0).
+ *
+ * `offer` is the one that matters for most bots — it is the first event of a
+ * new call and the point at which {@link MiawClient.rejectCall} still works.
+ */
+export type CallStatus =
+  | "offer"
+  | "ringing"
+  | "preaccept"
+  | "transport"
+  | "relaylatency"
+  | "timeout"
+  | "reject"
+  | "accept"
+  | "terminate";
+
+/**
+ * A call event (v1.12.0). Emitted on the `call` event.
+ */
+export interface MiawCall {
+  /** Call ID — pass to rejectCall() together with `from` */
+  id: string;
+
+  /** JID of the caller */
+  from: string;
+
+  /** Caller's phone JID, when the caller is addressed by @lid */
+  callerPhone?: string;
+
+  /** Chat JID the call belongs to */
+  chatId: string;
+
+  /** Whether this is a group call */
+  isGroup: boolean;
+
+  /** Group JID for a group call */
+  groupJid?: string;
+
+  /** Whether this is a video call (audio call otherwise) */
+  isVideo: boolean;
+
+  /** Stage of the call */
+  status: CallStatus;
+
+  /** When the event occurred */
+  date: Date;
+
+  /** Whether the event was delivered from WhatsApp's offline queue */
+  offline: boolean;
+
+  /** Original raw Baileys call event for advanced use */
+  raw?: any;
+}
+
+/**
+ * Result of a call operation (v1.12.0).
+ */
+export interface CallOperationResult {
+  /** Whether the operation was successful */
+  success: boolean;
+
+  /** Error message if failed */
+  error?: string;
+}
+
+/**
  * Events emitted by MiawClient
  */
 export interface MiawClientEvents {
@@ -387,6 +470,9 @@ export interface MiawClientEvents {
 
   /** Emitted when someone votes on a poll (carries the aggregated tally) */
   poll_vote: (vote: PollVoteUpdate) => void;
+
+  /** Emitted when a call is offered, accepted, rejected or terminated */
+  call: (call: MiawCall) => void;
 
   /** Emitted when a pairing code is generated (pairing-code auth) */
   pairing_code: (code: string) => void;
@@ -947,6 +1033,171 @@ export interface CreateCommunityResult {
 export interface CommunityOperationResult {
   /** Whether the operation was successful */
   success: boolean;
+  /** Error message if failed */
+  error?: string;
+}
+
+// ============================================
+// Group & Community Admin Types (v1.12.0)
+// ============================================
+
+/**
+ * Who may add new members to a group or community.
+ * - `admin_add`      - admins only
+ * - `all_member_add` - any member
+ */
+export type MemberAddMode = "admin_add" | "all_member_add";
+
+/**
+ * A pending request to join a group or community whose join-approval mode is on.
+ *
+ * Baileys returns these as an untyped string map; miaw-core normalizes the two
+ * fields that are always present and keeps the rest under `raw` rather than
+ * discarding data WhatsApp may add later.
+ */
+export interface JoinRequest {
+  /** JID of the account requesting to join */
+  jid: string;
+
+  /** Unix timestamp (seconds) the request was made, when WhatsApp supplies it */
+  requestedAt?: number;
+
+  /** The unnormalized entry as returned by WhatsApp */
+  raw: Record<string, string>;
+}
+
+/**
+ * Disappearing-message durations WhatsApp offers, in seconds.
+ * `Off` clears the timer.
+ *
+ * A plain number is accepted anywhere this is, so these are a convenience for
+ * the four values the WhatsApp UI itself exposes, not a restriction.
+ */
+export const EphemeralDuration = {
+  Off: 0,
+  TwentyFourHours: 86400,
+  SevenDays: 604800,
+  NinetyDays: 7776000,
+} as const;
+
+/** One of the {@link EphemeralDuration} values. */
+export type EphemeralDurationValue =
+  (typeof EphemeralDuration)[keyof typeof EphemeralDuration];
+
+// ============================================
+// Group Invite Messages & Pinning (v1.12.0)
+// ============================================
+
+/**
+ * A group-invite message payload — the rich "join my group" card, as opposed to
+ * pasting a plain invite link.
+ *
+ * Note this is distinct from {@link GroupInviteInfo}, which is the *preview* you
+ * get back from {@link MiawClient.getGroupInviteInfo} before joining.
+ *
+ * Build one from an invite code you already hold, e.g. via
+ * {@link MiawClient.getGroupInviteLink}.
+ */
+export interface GroupInviteMessage {
+  /** Group JID being invited to */
+  groupJid: string;
+
+  /** Group name shown on the card */
+  groupName: string;
+
+  /** Invite code (the part after chat.whatsapp.com/) */
+  inviteCode: string;
+
+  /** Invite expiry as a Unix timestamp in seconds */
+  expiration: number;
+
+  /** Caption shown with the invite */
+  caption?: string;
+}
+
+/**
+ * How long a pinned message stays pinned.
+ * WhatsApp accepts only these three durations.
+ */
+export const PinDuration = {
+  TwentyFourHours: 86400,
+  SevenDays: 604800,
+  ThirtyDays: 2592000,
+} as const;
+
+/** One of the {@link PinDuration} values. */
+export type PinDurationValue =
+  (typeof PinDuration)[keyof typeof PinDuration];
+
+// ============================================
+// Privacy & Blocklist Types (v1.12.0)
+// ============================================
+
+/**
+ * Audience for a privacy setting.
+ * `contact_blacklist` means "my contacts, except..." — the exclusion list itself
+ * is managed in the WhatsApp app and is not exposed over this protocol.
+ */
+export type PrivacyValue = "all" | "contacts" | "contact_blacklist" | "none";
+
+/** Who may see you as online. `match_last_seen` mirrors the last-seen setting. */
+export type PrivacyOnlineValue = "all" | "match_last_seen";
+
+/** Who may add you to groups. */
+export type PrivacyGroupAddValue = "all" | "contacts" | "contact_blacklist";
+
+/** Whether read receipts (blue ticks) are sent. */
+export type ReadReceiptsValue = "all" | "none";
+
+/** Who may call you. */
+export type PrivacyCallValue = "all" | "known";
+
+/** Who may message you. */
+export type PrivacyMessagesValue = "all" | "contacts";
+
+/**
+ * Your current privacy settings.
+ *
+ * WhatsApp returns these as a flat string map and has added keys over time, so
+ * every field is optional and the unrecognized remainder is kept under `raw`
+ * rather than dropped.
+ */
+export interface PrivacySettings {
+  /** Who can see your last-seen timestamp */
+  lastSeen?: PrivacyValue;
+
+  /** Who can see when you are online */
+  online?: PrivacyOnlineValue;
+
+  /** Who can see your profile picture */
+  profilePicture?: PrivacyValue;
+
+  /** Who can see your status updates */
+  status?: PrivacyValue;
+
+  /** Whether read receipts are sent */
+  readReceipts?: ReadReceiptsValue;
+
+  /** Who can add you to groups */
+  groupAdd?: PrivacyGroupAddValue;
+
+  /** Who can message you */
+  messages?: PrivacyMessagesValue;
+
+  /** Who can call you */
+  calls?: PrivacyCallValue;
+
+  /** The unnormalized map as returned by WhatsApp */
+  raw: Record<string, string>;
+}
+
+/**
+ * Result of a privacy or blocklist operation.
+ */
+export interface PrivacyOperationResult {
+  /** Whether the operation was successful */
+  success: boolean;
+
   /** Error message if failed */
   error?: string;
 }

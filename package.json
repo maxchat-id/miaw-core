@@ -1,6 +1,6 @@
 {
   "name": "miaw-core",
-  "version": "1.11.0",
+  "version": "1.12.0",
   "description": "Simplified WhatsApp API wrapper for Baileys - Multiple Instance of Awesome WhatsApp",
   "type": "module",
   "main": "dist/index.js",
@@ -18,15 +18,18 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
+    "typecheck": "tsc --noEmit -p tsconfig.test.json",
     "lint": "eslint src tests examples bin",
     "lint:fix": "eslint src tests examples bin --fix",
     "prepublishOnly": "npm run build",
     "test": "NODE_OPTIONS='--experimental-vm-modules' jest",
+    "test:unit": "NODE_OPTIONS='--experimental-vm-modules' jest tests/unit",
     "test:watch": "NODE_OPTIONS='--experimental-vm-modules' jest --watch",
     "test:coverage": "NODE_OPTIONS='--experimental-vm-modules' jest --coverage",
     "test:cli": "NODE_OPTIONS='--experimental-vm-modules' jest --testPathPattern='tests/integration/cli' --runInBand --forceExit",
     "test:manual": "tsx tests/interactive-test.ts",
-    "test:manual:build": "npm run build && node dist/tests/interactive-test.js",
+    "test:manual:auto": "tsx tests/interactive-test.ts all --auto",
+    "test:viewonce": "tsx tests/verify-viewonce.ts",
     "cli": "tsx bin/miaw-cli.ts"
   },
   "keywords": [
@@ -44,7 +47,7 @@
   },
   "dependencies": {
     "@hapi/boom": "^10.0.1",
-    "@whiskeysockets/baileys": "7.0.0-rc13",
+    "@whiskeysockets/baileys": "7.0.0-rc14",
     "cli-table3": "^0.6.5",
     "https-proxy-agent": "^8.0.0",
     "pino": "^8.19.0",
