@@ -2695,19 +2695,29 @@ function warnOnDegenerateConfig(ownJid: string | undefined): void {
   const b = TEST_CONFIG.testPhone2;
   const warnings: string[] = [];
 
+  // Name the entries each problem actually breaks. Advice that does not track
+  // which variable is wrong is worse than none: it sent a reader to fix B when
+  // the participant and blocklist entries read A.
   if (a && b && a === b) {
     warnings.push(
-      "TEST_CONTACT_PHONE_A and TEST_CONTACT_PHONE_B are the same number."
+      "TEST_CONTACT_PHONE_A and TEST_CONTACT_PHONE_B are the same number — " +
+        "checkNumbers() deduplicates a repeated number and will report one result."
     );
   }
   if (own && a && a === own) {
     warnings.push(
-      "TEST_CONTACT_PHONE_A is this account's OWN number — every 'send to " +
-        "someone else' test is really a send-to-self."
+      "TEST_CONTACT_PHONE_A is this account's OWN number. Sends become " +
+        "send-to-self, and addParticipants(), promoteToAdmin(), " +
+        "demoteFromAdmin() and blockContact() read A — WhatsApp refuses all " +
+        "four against your own account. Point A at a real second number to " +
+        "exercise them."
     );
   }
   if (own && b && b === own) {
-    warnings.push("TEST_CONTACT_PHONE_B is this account's OWN number.");
+    warnings.push(
+      "TEST_CONTACT_PHONE_B is this account's OWN number — forwardMessage() " +
+        "and createGroup() read B."
+    );
   }
   if (!TEST_CONFIG.testGroupJid) {
     warnings.push("TEST_GROUP_JID is unset — group entries will prompt or skip.");
@@ -2718,9 +2728,7 @@ function warnOnDegenerateConfig(ownJid: string | undefined): void {
   console.log("\n⚠️  TEST CONFIG WARNINGS (.env.test)");
   for (const w of warnings) console.log(`   - ${w}`);
   console.log(
-    "   Expect failures in checkNumbers, addParticipants, promoteToAdmin,\n" +
-      "   demoteFromAdmin and blockContact that are caused by the config,\n" +
-      "   not by miaw-core. Set B to a real second number for honest coverage."
+    "   Failures caused by the above are config problems, not miaw-core bugs."
   );
 }
 
