@@ -97,17 +97,20 @@ const commandTree: Record<string, CommandNode> = {
     subcommands: [
       "list", "info", "create", "leave", "name", "description",
       "linked", "link", "unlink", "group", "members", "invite",
+      "announce", "restrict", "add-mode", "approval", "ephemeral", "requests",
     ],
     nestedSubcommands: {
       members: ["add", "remove", "promote", "demote"],
       invite: ["link", "accept", "revoke", "info"],
+      requests: ["list", "ls", "approve", "reject"],
     },
     flags: ["--json"],
   },
   group: {
     subcommands: [
       "list", "ls", "info", "participants", "invite-link", "invite", "create", "leave",
-      "name", "description", "picture"
+      "name", "description", "picture",
+      "announce", "restrict", "add-mode", "approval", "ephemeral", "requests",
     ],
     nestedSubcommands: {
       participants: ["add", "remove", "promote", "demote"],
@@ -115,6 +118,7 @@ const commandTree: Record<string, CommandNode> = {
       name: ["set"],
       description: ["set"],
       picture: ["set"],
+      requests: ["list", "ls", "approve", "reject"],
     },
     flags: ["--limit", "--filter", "--json"],
   },
@@ -1010,6 +1014,16 @@ GROUP SETTINGS:
   group name set <jid> <name>                 Update group name
   group description set <jid> [desc]          Update group description
   group picture set <jid> <path>              Update group picture
+  group announce <jid> <on|off>               Restrict messaging to admins
+  group restrict <jid> <on|off>               Restrict info editing to admins
+  group add-mode <jid> <admin|all>            Who may add new members
+  group approval <jid> <on|off>               Require approval to join
+  group ephemeral <jid> <off|24h|7d|90d>      Disappearing message timer
+
+JOIN REQUESTS:
+  group requests list <jid>                   List pending join requests
+  group requests approve <jid> <phones>       Approve join requests
+  group requests reject <jid> <phones>        Reject join requests
 
 OPTIONS:
   --limit N                                   Limit number of results
@@ -1017,10 +1031,13 @@ OPTIONS:
 
 EXAMPLE:
   group participants add 120363xxx@g.us 628xxx 628yyy
+  group ephemeral 120363xxx@g.us 7d
 
 NOTES:
   - Group JID format: groupid@g.us
   - Admin rights required for participant/settings management
+  - Join requests only accumulate while 'group approval' is on
+  - ephemeral also accepts a raw number of seconds
 `);
 }
 

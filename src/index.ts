@@ -41,6 +41,10 @@ export type {
   LinkedGroup,
   CreateCommunityResult,
   CommunityOperationResult,
+  // v1.12.0 Group & Community Admin
+  MemberAddMode,
+  JoinRequest,
+  EphemeralDurationValue,
   // v0.8.0 Profile Management
   ProfileOperationResult,
   // v0.9.0 Labels
@@ -124,6 +128,9 @@ export {
   isBaileysMessage,
   isBaileysMessageUpsert,
 } from "./utils/type-guards.js";
+
+// v1.12.0 Group & Community Admin constants
+export { EphemeralDuration } from "./types/index.js";
 
 // Browser identity presets
 export { BrowserPresets } from "./utils/browser-presets.js";

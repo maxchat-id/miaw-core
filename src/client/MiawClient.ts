@@ -60,6 +60,10 @@ import {
   LinkedGroup,
   CreateCommunityResult,
   CommunityOperationResult,
+  // v1.12.0 Group & Community Admin
+  MemberAddMode,
+  JoinRequest,
+  EphemeralDurationValue,
   // v0.8.0 Profile Management
   ProfileOperationResult,
   // v0.9.0 Labels
@@ -5624,6 +5628,446 @@ export class MiawClient extends EventEmitter {
       this.logger.error("Failed to get community invite info:", error);
       return null;
     }
+  }
+
+
+  // ============================================
+  // Group & Community Admin Methods (v1.12.0)
+  // ============================================
+
+  /**
+   * Run a group-or-community admin call behind the standard guards.
+   *
+   * Groups and communities expose byte-identical signatures for every setting
+   * and join-request method (`groupSettingUpdate`/`communitySettingUpdate`,
+   * `groupMemberAddMode`/`communityMemberAddMode`, and so on), so both surfaces
+   * bind to this one helper rather than duplicating sixteen near-identical
+   * bodies. Community JIDs are group JIDs, so the `@g.us` check applies to both.
+   *
+   * @param label - noun used in error messages ('group' or 'community')
+   * @param what - verb phrase used in error messages
+   * @param jid - group or community JID
+   * @param run - the socket call to perform
+   */
+  private async runGroupAdmin(
+    label: "group" | "community",
+    what: string,
+    jid: string,
+    run: (socket: WASocket) => Promise<void>
+  ): Promise<GroupOperationResult> {
+    try {
+      const socket = this.requireGroupLike(label, `Cannot ${what}`, jid);
+      await run(socket);
+      return { success: true };
+    } catch (error) {
+      this.logger.error(`Failed to ${what}:`, error);
+      return { success: false, error: (error as Error).message };
+    }
+  }
+
+  /**
+   * Assert we have a live socket and a well-formed group/community JID.
+   * @returns the connected socket
+   * @throws if disconnected or the JID is not a group JID
+   */
+  private requireGroupLike(
+    label: "group" | "community",
+    cannot: string,
+    jid: string
+  ): WASocket {
+    if (!this.socket) {
+      throw new Error("Not connected. Call connect() first.");
+    }
+
+    if (this.connectionState !== "connected") {
+      throw new Error(`${cannot}. Connection state: ${this.connectionState}`);
+    }
+
+    if (!jid.endsWith("@g.us")) {
+      throw new Error(`Invalid ${label} JID. Must end with @g.us`);
+    }
+
+    return this.socket;
+  }
+
+  /**
+   * List pending join requests for a group or community.
+   * Shared by both surfaces; see {@link runGroupAdmin}.
+   */
+  private async fetchJoinRequests(
+    label: "group" | "community",
+    jid: string,
+    fetch: (socket: WASocket) => Promise<{ [key: string]: string }[]>
+  ): Promise<JoinRequest[]> {
+    try {
+      const socket = this.requireGroupLike(
+        label,
+        `Cannot get ${label} join requests`,
+        jid
+      );
+
+      const requests = (await fetch(socket)) || [];
+
+      return requests.map((entry) => {
+        // WhatsApp has spelled the requester's JID both `jid` and
+        // `phone_number` across versions, and supplies the request time as `t`.
+        const requestedAt = entry.t ? Number(entry.t) : undefined;
+
+        return {
+          jid: entry.jid || entry.phone_number || "",
+          requestedAt:
+            requestedAt !== undefined && Number.isFinite(requestedAt)
+              ? requestedAt
+              : undefined,
+          raw: entry,
+        };
+      });
+    } catch (error) {
+      this.logger.error(`Failed to get ${label} join requests:`, error);
+      return [];
+    }
+  }
+
+  /**
+   * Approve or reject pending join requests for a group or community.
+   * Returns one {@link ParticipantOperationResult} per requested participant,
+   * matching the shape used by add/remove/promote/demote.
+   */
+  private async updateJoinRequests(
+    label: "group" | "community",
+    jid: string,
+    participants: string[],
+    action: "approve" | "reject",
+    update: (
+      socket: WASocket,
+      formatted: string[]
+    ) => Promise<{ status: string; jid: string | undefined }[]>
+  ): Promise<ParticipantOperationResult[]> {
+    const formatted = participants.map((p) =>
+      MessageHandler.formatPhoneToJid(p)
+    );
+
+    try {
+      const socket = this.requireGroupLike(
+        label,
+        `Cannot ${action} ${label} join requests`,
+        jid
+      );
+
+      const results = await update(socket, formatted);
+
+      return results.map((result) => ({
+        jid: result.jid || "",
+        status: result.status,
+        success: result.status === "200",
+      }));
+    } catch (error) {
+      this.logger.error(`Failed to ${action} ${label} join requests:`, error);
+      return formatted.map((participantJid) => ({
+        jid: participantJid,
+        status: "error",
+        success: false,
+      }));
+    }
+  }
+
+  // ---------- Group settings ----------
+
+  /**
+   * Restrict who may send messages in a group.
+   * @param groupJid - Group JID (e.g., '123456789@g.us')
+   * @param announceOnly - true = admins only, false = everyone
+   */
+  async setGroupAnnounceOnly(
+    groupJid: string,
+    announceOnly: boolean
+  ): Promise<GroupOperationResult> {
+    return this.runGroupAdmin(
+      "group",
+      "update group announce mode",
+      groupJid,
+      (socket) =>
+        socket.groupSettingUpdate(
+          groupJid,
+          announceOnly ? "announcement" : "not_announcement"
+        )
+    );
+  }
+
+  /**
+   * Restrict who may edit a group's subject, description and picture.
+   * @param groupJid - Group JID (e.g., '123456789@g.us')
+   * @param restricted - true = admins only, false = everyone
+   */
+  async setGroupRestrictInfo(
+    groupJid: string,
+    restricted: boolean
+  ): Promise<GroupOperationResult> {
+    return this.runGroupAdmin(
+      "group",
+      "update group info restriction",
+      groupJid,
+      (socket) =>
+        socket.groupSettingUpdate(groupJid, restricted ? "locked" : "unlocked")
+    );
+  }
+
+  /**
+   * Set who may add new members to a group.
+   * @param groupJid - Group JID (e.g., '123456789@g.us')
+   * @param mode - 'admin_add' or 'all_member_add'
+   */
+  async setGroupMemberAddMode(
+    groupJid: string,
+    mode: MemberAddMode
+  ): Promise<GroupOperationResult> {
+    return this.runGroupAdmin(
+      "group",
+      "update group member-add mode",
+      groupJid,
+      (socket) => socket.groupMemberAddMode(groupJid, mode)
+    );
+  }
+
+  /**
+   * Require admin approval for people joining via invite link.
+   * @param groupJid - Group JID (e.g., '123456789@g.us')
+   * @param required - true = approval required, false = join freely
+   */
+  async setGroupJoinApproval(
+    groupJid: string,
+    required: boolean
+  ): Promise<GroupOperationResult> {
+    return this.runGroupAdmin(
+      "group",
+      "update group join-approval mode",
+      groupJid,
+      (socket) => socket.groupJoinApprovalMode(groupJid, required ? "on" : "off")
+    );
+  }
+
+  /**
+   * Set the disappearing-message timer for a group.
+   * @param groupJid - Group JID (e.g., '123456789@g.us')
+   * @param seconds - Duration in seconds; 0 (EphemeralDuration.Off) disables it
+   */
+  async setGroupEphemeral(
+    groupJid: string,
+    seconds: EphemeralDurationValue | number
+  ): Promise<GroupOperationResult> {
+    return this.runGroupAdmin(
+      "group",
+      "update group disappearing messages",
+      groupJid,
+      (socket) => socket.groupToggleEphemeral(groupJid, seconds)
+    );
+  }
+
+  // ---------- Group join requests ----------
+
+  /**
+   * List pending requests to join a group.
+   * Only meaningful when join approval is on (see {@link setGroupJoinApproval}).
+   * @param groupJid - Group JID (e.g., '123456789@g.us')
+   */
+  async getGroupJoinRequests(groupJid: string): Promise<JoinRequest[]> {
+    return this.fetchJoinRequests("group", groupJid, (socket) =>
+      socket.groupRequestParticipantsList(groupJid)
+    );
+  }
+
+  /**
+   * Approve pending requests to join a group.
+   * @param groupJid - Group JID (e.g., '123456789@g.us')
+   * @param participants - Phone numbers or JIDs to approve
+   */
+  async approveGroupJoinRequests(
+    groupJid: string,
+    participants: string[]
+  ): Promise<ParticipantOperationResult[]> {
+    return this.updateJoinRequests(
+      "group",
+      groupJid,
+      participants,
+      "approve",
+      (socket, formatted) =>
+        socket.groupRequestParticipantsUpdate(groupJid, formatted, "approve")
+    );
+  }
+
+  /**
+   * Reject pending requests to join a group.
+   * @param groupJid - Group JID (e.g., '123456789@g.us')
+   * @param participants - Phone numbers or JIDs to reject
+   */
+  async rejectGroupJoinRequests(
+    groupJid: string,
+    participants: string[]
+  ): Promise<ParticipantOperationResult[]> {
+    return this.updateJoinRequests(
+      "group",
+      groupJid,
+      participants,
+      "reject",
+      (socket, formatted) =>
+        socket.groupRequestParticipantsUpdate(groupJid, formatted, "reject")
+    );
+  }
+
+  // ---------- Community settings ----------
+
+  /**
+   * Restrict who may send messages in a community announcement group.
+   * @param communityJid - Community JID
+   * @param announceOnly - true = admins only, false = everyone
+   */
+  async setCommunityAnnounceOnly(
+    communityJid: string,
+    announceOnly: boolean
+  ): Promise<CommunityOperationResult> {
+    return this.runGroupAdmin(
+      "community",
+      "update community announce mode",
+      communityJid,
+      (socket) =>
+        socket.communitySettingUpdate(
+          communityJid,
+          announceOnly ? "announcement" : "not_announcement"
+        )
+    );
+  }
+
+  /**
+   * Restrict who may edit a community's subject, description and picture.
+   * @param communityJid - Community JID
+   * @param restricted - true = admins only, false = everyone
+   */
+  async setCommunityRestrictInfo(
+    communityJid: string,
+    restricted: boolean
+  ): Promise<CommunityOperationResult> {
+    return this.runGroupAdmin(
+      "community",
+      "update community info restriction",
+      communityJid,
+      (socket) =>
+        socket.communitySettingUpdate(
+          communityJid,
+          restricted ? "locked" : "unlocked"
+        )
+    );
+  }
+
+  /**
+   * Set who may add new members to a community.
+   * @param communityJid - Community JID
+   * @param mode - 'admin_add' or 'all_member_add'
+   */
+  async setCommunityMemberAddMode(
+    communityJid: string,
+    mode: MemberAddMode
+  ): Promise<CommunityOperationResult> {
+    return this.runGroupAdmin(
+      "community",
+      "update community member-add mode",
+      communityJid,
+      (socket) => socket.communityMemberAddMode(communityJid, mode)
+    );
+  }
+
+  /**
+   * Require admin approval for people joining a community via invite link.
+   * @param communityJid - Community JID
+   * @param required - true = approval required, false = join freely
+   */
+  async setCommunityJoinApproval(
+    communityJid: string,
+    required: boolean
+  ): Promise<CommunityOperationResult> {
+    return this.runGroupAdmin(
+      "community",
+      "update community join-approval mode",
+      communityJid,
+      (socket) =>
+        socket.communityJoinApprovalMode(communityJid, required ? "on" : "off")
+    );
+  }
+
+  /**
+   * Set the disappearing-message timer for a community.
+   * @param communityJid - Community JID
+   * @param seconds - Duration in seconds; 0 (EphemeralDuration.Off) disables it
+   */
+  async setCommunityEphemeral(
+    communityJid: string,
+    seconds: EphemeralDurationValue | number
+  ): Promise<CommunityOperationResult> {
+    return this.runGroupAdmin(
+      "community",
+      "update community disappearing messages",
+      communityJid,
+      (socket) => socket.communityToggleEphemeral(communityJid, seconds)
+    );
+  }
+
+  // ---------- Community join requests ----------
+
+  /**
+   * List pending requests to join a community.
+   * @param communityJid - Community JID
+   */
+  async getCommunityJoinRequests(
+    communityJid: string
+  ): Promise<JoinRequest[]> {
+    return this.fetchJoinRequests("community", communityJid, (socket) =>
+      socket.communityRequestParticipantsList(communityJid)
+    );
+  }
+
+  /**
+   * Approve pending requests to join a community.
+   * @param communityJid - Community JID
+   * @param participants - Phone numbers or JIDs to approve
+   */
+  async approveCommunityJoinRequests(
+    communityJid: string,
+    participants: string[]
+  ): Promise<ParticipantOperationResult[]> {
+    return this.updateJoinRequests(
+      "community",
+      communityJid,
+      participants,
+      "approve",
+      (socket, formatted) =>
+        socket.communityRequestParticipantsUpdate(
+          communityJid,
+          formatted,
+          "approve"
+        )
+    );
+  }
+
+  /**
+   * Reject pending requests to join a community.
+   * @param communityJid - Community JID
+   * @param participants - Phone numbers or JIDs to reject
+   */
+  async rejectCommunityJoinRequests(
+    communityJid: string,
+    participants: string[]
+  ): Promise<ParticipantOperationResult[]> {
+    return this.updateJoinRequests(
+      "community",
+      communityJid,
+      participants,
+      "reject",
+      (socket, formatted) =>
+        socket.communityRequestParticipantsUpdate(
+          communityJid,
+          formatted,
+          "reject"
+        )
+    );
   }
 
   // ============================================

@@ -967,6 +967,53 @@ export interface CommunityOperationResult {
 }
 
 // ============================================
+// Group & Community Admin Types (v1.12.0)
+// ============================================
+
+/**
+ * Who may add new members to a group or community.
+ * - `admin_add`      - admins only
+ * - `all_member_add` - any member
+ */
+export type MemberAddMode = "admin_add" | "all_member_add";
+
+/**
+ * A pending request to join a group or community whose join-approval mode is on.
+ *
+ * Baileys returns these as an untyped string map; miaw-core normalizes the two
+ * fields that are always present and keeps the rest under `raw` rather than
+ * discarding data WhatsApp may add later.
+ */
+export interface JoinRequest {
+  /** JID of the account requesting to join */
+  jid: string;
+
+  /** Unix timestamp (seconds) the request was made, when WhatsApp supplies it */
+  requestedAt?: number;
+
+  /** The unnormalized entry as returned by WhatsApp */
+  raw: Record<string, string>;
+}
+
+/**
+ * Disappearing-message durations WhatsApp offers, in seconds.
+ * `Off` clears the timer.
+ *
+ * A plain number is accepted anywhere this is, so these are a convenience for
+ * the four values the WhatsApp UI itself exposes, not a restriction.
+ */
+export const EphemeralDuration = {
+  Off: 0,
+  TwentyFourHours: 86400,
+  SevenDays: 604800,
+  NinetyDays: 7776000,
+} as const;
+
+/** One of the {@link EphemeralDuration} values. */
+export type EphemeralDurationValue =
+  (typeof EphemeralDuration)[keyof typeof EphemeralDuration];
+
+// ============================================
 // Profile Management Types (v0.8.0)
 // ============================================
 

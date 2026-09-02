@@ -304,4 +304,140 @@ describe("CLI Command Router", () => {
       capture.stop();
     }
   });
+
+  // ============================================
+  // Group & Community Admin (v1.12.0)
+  // ============================================
+  //
+  // These all fail at the routing level -- a bad toggle or a missing JID is
+  // rejected before the client is touched -- so they run without a connection.
+
+  describe.each([
+    ["group", "announce"],
+    ["group", "restrict"],
+    ["group", "approval"],
+    ["community", "announce"],
+    ["community", "restrict"],
+    ["community", "approval"],
+  ])("%s %s", (command, sub) => {
+    test("missing jid shows usage", async () => {
+      const capture = captureConsole();
+      try {
+        const result = await runCmd(command, [sub]);
+        expect(result).toBe(false);
+        expect(capture.getFullOutput()).toContain("Usage:");
+      } finally {
+        capture.stop();
+      }
+    });
+
+    test("unparseable toggle shows usage rather than guessing", async () => {
+      const capture = captureConsole();
+      try {
+        const result = await runCmd(command, [sub, "123@g.us", "maybe"]);
+        expect(result).toBe(false);
+        expect(capture.getFullOutput()).toContain("Usage:");
+      } finally {
+        capture.stop();
+      }
+    });
+  });
+
+  describe.each(["group", "community"])("%s add-mode", (command) => {
+    test("unrecognized mode shows usage", async () => {
+      const capture = captureConsole();
+      try {
+        const result = await runCmd(command, ["add-mode", "123@g.us", "nobody"]);
+        expect(result).toBe(false);
+        expect(capture.getFullOutput()).toContain("Usage:");
+      } finally {
+        capture.stop();
+      }
+    });
+  });
+
+  describe.each(["group", "community"])("%s ephemeral", (command) => {
+    test("unparseable duration shows usage", async () => {
+      const capture = captureConsole();
+      try {
+        const result = await runCmd(command, ["ephemeral", "123@g.us", "soon"]);
+        expect(result).toBe(false);
+        expect(capture.getFullOutput()).toContain("Usage:");
+      } finally {
+        capture.stop();
+      }
+    });
+
+    test("a negative duration is rejected", async () => {
+      const capture = captureConsole();
+      try {
+        const result = await runCmd(command, ["ephemeral", "123@g.us", "-1"]);
+        expect(result).toBe(false);
+        expect(capture.getFullOutput()).toContain("Usage:");
+      } finally {
+        capture.stop();
+      }
+    });
+  });
+
+  describe.each(["group", "community"])("%s requests", (command) => {
+    test("unknown subcommand shows usage", async () => {
+      const capture = captureConsole();
+      try {
+        const result = await runCmd(command, ["requests", "foobar"]);
+        expect(result).toBe(false);
+        expect(capture.getFullOutput()).toContain("Usage:");
+      } finally {
+        capture.stop();
+      }
+    });
+
+    test("list without a jid shows usage", async () => {
+      const capture = captureConsole();
+      try {
+        const result = await runCmd(command, ["requests", "list"]);
+        expect(result).toBe(false);
+        expect(capture.getFullOutput()).toContain("Usage:");
+      } finally {
+        capture.stop();
+      }
+    });
+
+    test("approve without phones shows usage", async () => {
+      const capture = captureConsole();
+      try {
+        const result = await runCmd(command, ["requests", "approve", "123@g.us"]);
+        expect(result).toBe(false);
+        expect(capture.getFullOutput()).toContain("Usage:");
+      } finally {
+        capture.stop();
+      }
+    });
+  });
+
+  test("group usage line advertises the new admin subcommands", async () => {
+    const capture = captureConsole();
+    try {
+      await runCmd("group", []);
+      const output = capture.getFullOutput();
+      for (const sub of ["announce", "restrict", "add-mode", "approval", "ephemeral", "requests"]) {
+        expect(output).toContain(sub);
+      }
+    } finally {
+      capture.stop();
+    }
+  });
+
+  test("community usage line advertises the new admin subcommands", async () => {
+    const capture = captureConsole();
+    try {
+      await runCmd("community", []);
+      const output = capture.getFullOutput();
+      for (const sub of ["announce", "restrict", "add-mode", "approval", "ephemeral", "requests"]) {
+        expect(output).toContain(sub);
+      }
+    } finally {
+      capture.stop();
+    }
+  });
 });

@@ -79,6 +79,14 @@ export {
   cmdCommunityInviteRevoke,
   cmdCommunityInviteAccept,
   cmdCommunityInviteInfo,
+  // Community admin (v1.12.0)
+  cmdCommunityAnnounce,
+  cmdCommunityRestrict,
+  cmdCommunityAddMode,
+  cmdCommunityApprovalMode,
+  cmdCommunityEphemeral,
+  cmdCommunityRequestsList,
+  cmdCommunityRequestsDecide,
 } from "./community.js";
 
 export { cmdMediaDownload } from "./media.js";
@@ -100,6 +108,14 @@ export {
   cmdGroupNameSet,
   cmdGroupDescriptionSet,
   cmdGroupPictureSet,
+  // Group admin (v1.12.0)
+  cmdGroupAnnounce,
+  cmdGroupRestrict,
+  cmdGroupAddMode,
+  cmdGroupApprovalMode,
+  cmdGroupEphemeral,
+  cmdGroupRequestsList,
+  cmdGroupRequestsDecide,
 } from "./group.js";
 
 export {

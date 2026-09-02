@@ -291,3 +291,151 @@ export async function cmdCommunityInviteInfo(
   console.log(formatKeyValue(info, `🏘️  Community: ${info.name}`));
   return true;
 }
+
+// ============================================
+// Community Settings & Join Requests (v1.12.0)
+// ============================================
+
+export async function cmdCommunityAnnounce(
+  client: MiawClient,
+  args: { jid: string; on: boolean }
+): Promise<boolean> {
+  if (!(await requireConn(client))) return false;
+  const r = await client.setCommunityAnnounceOnly(args.jid, args.on);
+  console.log(
+    formatMessage(
+      r.success,
+      r.success
+        ? `Community messaging set to ${args.on ? "admins only" : "all members"}`
+        : "Failed to update announce mode",
+      r.error
+    )
+  );
+  return r.success;
+}
+
+export async function cmdCommunityRestrict(
+  client: MiawClient,
+  args: { jid: string; on: boolean }
+): Promise<boolean> {
+  if (!(await requireConn(client))) return false;
+  const r = await client.setCommunityRestrictInfo(args.jid, args.on);
+  console.log(
+    formatMessage(
+      r.success,
+      r.success
+        ? `Community info editing set to ${args.on ? "admins only" : "all members"}`
+        : "Failed to update info restriction",
+      r.error
+    )
+  );
+  return r.success;
+}
+
+export async function cmdCommunityAddMode(
+  client: MiawClient,
+  args: { jid: string; mode: "admin_add" | "all_member_add" }
+): Promise<boolean> {
+  if (!(await requireConn(client))) return false;
+  const r = await client.setCommunityMemberAddMode(args.jid, args.mode);
+  console.log(
+    formatMessage(
+      r.success,
+      r.success
+        ? `Member-add mode set to ${args.mode}`
+        : "Failed to update member-add mode",
+      r.error
+    )
+  );
+  return r.success;
+}
+
+export async function cmdCommunityApprovalMode(
+  client: MiawClient,
+  args: { jid: string; on: boolean }
+): Promise<boolean> {
+  if (!(await requireConn(client))) return false;
+  const r = await client.setCommunityJoinApproval(args.jid, args.on);
+  console.log(
+    formatMessage(
+      r.success,
+      r.success
+        ? `Join approval ${args.on ? "required" : "not required"}`
+        : "Failed to update join approval",
+      r.error
+    )
+  );
+  return r.success;
+}
+
+export async function cmdCommunityEphemeral(
+  client: MiawClient,
+  args: { jid: string; seconds: number }
+): Promise<boolean> {
+  if (!(await requireConn(client))) return false;
+  const r = await client.setCommunityEphemeral(args.jid, args.seconds);
+  console.log(
+    formatMessage(
+      r.success,
+      r.success
+        ? args.seconds === 0
+          ? "Disappearing messages disabled"
+          : `Disappearing messages set to ${args.seconds}s`
+        : "Failed to update disappearing messages",
+      r.error
+    )
+  );
+  return r.success;
+}
+
+export async function cmdCommunityRequestsList(
+  client: MiawClient,
+  args: { jid: string },
+  jsonOutput: boolean
+): Promise<boolean> {
+  if (!(await requireConn(client))) return false;
+
+  const requests = await client.getCommunityJoinRequests(args.jid);
+
+  if (jsonOutput) {
+    console.log(formatJson(requests));
+    return true;
+  }
+
+  if (requests.length === 0) {
+    console.log("\n📭 No pending join requests\n");
+    return true;
+  }
+
+  console.log(`\n📥 Join requests (${requests.length}):\n`);
+  console.log(
+    formatTable(
+      requests.map((r) => ({
+        jid: r.jid,
+        requested: r.requestedAt
+          ? new Date(r.requestedAt * 1000).toISOString()
+          : "-",
+      })),
+      [
+        { key: "jid", label: "JID", width: 40 },
+        { key: "requested", label: "Requested", width: 26 },
+      ]
+    )
+  );
+  return true;
+}
+
+export async function cmdCommunityRequestsDecide(
+  client: MiawClient,
+  args: { jid: string; phones: string[]; action: "approve" | "reject" }
+): Promise<boolean> {
+  if (!(await requireConn(client))) return false;
+
+  const results =
+    args.action === "approve"
+      ? await client.approveCommunityJoinRequests(args.jid, args.phones)
+      : await client.rejectCommunityJoinRequests(args.jid, args.phones);
+
+  printParticipantResults(results);
+  return results.every((r) => r.success);
+}
