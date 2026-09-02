@@ -1,7 +1,7 @@
 # Baileys vs Miaw Core - Comprehensive Feature Comparison
 
 **Last Updated:** June 26, 2026  
-**Baileys Version:** 7.0.0-rc13  
+**Baileys Version:** 7.0.0-rc14  
 **Miaw Core Version:** 1.9.1
 
 ## Overview
@@ -459,7 +459,7 @@ Miaw Core prioritizes the features that **90% of WhatsApp bots actually need**:
 
 ### What Miaw Core Doesn't Implement (Yet)
 
-These are all backed by methods that exist in Baileys 7.0.0-rc13 and can be wrapped. Ordered by the prioritized backlog (see **[ROADMAP.md → Not-Yet-Implemented Baileys Features](./ROADMAP.md)**):
+These are all backed by methods that exist in Baileys 7.0.0-rc14 and can be wrapped. Ordered by the prioritized backlog (see **[ROADMAP.md → Not-Yet-Implemented Baileys Features](./ROADMAP.md)**):
 
 1. ✅ **Chat Management** _(v1.7.0)_ - archive, pin, mute, mark read/unread, clear, delete chat, star/unstar messages (`chatModify`)
 2. ❌ **Rich Messages** _(priority)_ - location, contact/vCard, poll (+ vote decoding), sticker, group-invite, pin-in-chat, `@mentions`
@@ -524,4 +524,4 @@ These are all backed by methods that exist in Baileys 7.0.0-rc13 and can be wrap
 
 ---
 
-_This analysis was last updated on July 7, 2026, based on Baileys v7.0.0-rc13 and Miaw Core v1.9.1._
+_This analysis was last updated on July 7, 2026, based on Baileys v7.0.0-rc14 and Miaw Core v1.9.1._

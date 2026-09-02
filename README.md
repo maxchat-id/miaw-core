@@ -133,7 +133,7 @@ For more examples and detailed usage, see the [Usage Guide](./docs/USAGE.md).
 
 ### Manual Interactive Testing
 
-Test all 92 API methods interactively:
+Drive the API interactively against a live connection:
 
 ```bash
 # Show available test groups
@@ -182,9 +182,9 @@ npm run test:watch
 npm run test:coverage
 ```
 
-## Current Capabilities (v1.11.0)
+## Current Capabilities (v1.12.0)
 
-Built on **Baileys v7.0.0-rc13** - the latest WhatsApp Web protocol implementation.
+Built on **Baileys v7.0.0-rc14** - the latest WhatsApp Web protocol implementation.
 
 ### Core Features
 
@@ -299,8 +299,8 @@ MIT
 
 ## Credits
 
-Built on top of [@whiskeysockets/baileys](https://github.com/WhiskeySockets/Baileys) v7.0.0-rc13
+Built on top of [@whiskeysockets/baileys](https://github.com/WhiskeySockets/Baileys) v7.0.0-rc14
 
 ---
 
-**Version:** 1.11.0 | **Baileys:** 7.0.0-rc13 | **Status:** Stable | **Updated:** 2026-09-02
+**Version:** 1.12.0 | **Baileys:** 7.0.0-rc14 | **Status:** Stable | **Updated:** 2026-09-02

@@ -18,6 +18,8 @@ This document covers all current capabilities of Miaw Core. It will be updated a
 - [Advanced Messaging](#advanced-messaging)
 - [Contact & Validation](#contact--validation)
 - [Group Management](#group-management)
+- [Privacy & Blocklist](#privacy--blocklist)
+- [Calls](#calls)
 - [Profile Management](#profile-management)
 - [UX & Presence](#ux--presence)
 - [Business Features](#business-features)
@@ -830,6 +832,199 @@ const newLink = await client.revokeCommunityInvite(communityJid);
 await client.acceptCommunityInvite("https://chat.whatsapp.com/AbCdEf");
 const invitePreview = await client.getCommunityInviteInfo("AbCdEf");
 ```
+
+### Group & Community Settings (v1.12.0)
+
+Groups and communities take the same settings, under matching method names.
+All require admin rights and return `{ success, error? }`.
+
+```typescript
+// Who may send messages
+await client.setGroupAnnounceOnly(groupJid, true);   // admins only
+await client.setGroupAnnounceOnly(groupJid, false);  // everyone
+
+// Who may edit the subject / description / picture
+await client.setGroupRestrictInfo(groupJid, true);
+
+// Who may add new members
+await client.setGroupMemberAddMode(groupJid, "admin_add");     // or "all_member_add"
+
+// Require admin approval for invite-link joins
+await client.setGroupJoinApproval(groupJid, true);
+
+// Community equivalents
+await client.setCommunityAnnounceOnly(communityJid, true);
+await client.setCommunityRestrictInfo(communityJid, true);
+await client.setCommunityMemberAddMode(communityJid, "admin_add");
+await client.setCommunityJoinApproval(communityJid, true);
+```
+
+### Join Requests (v1.12.0)
+
+Requests only accumulate while join approval is on.
+
+```typescript
+const requests = await client.getGroupJoinRequests(groupJid);
+for (const req of requests) {
+  console.log(req.jid, req.requestedAt); // requestedAt may be undefined
+}
+
+// Returns one result per participant, same shape as add/remove/promote
+await client.approveGroupJoinRequests(groupJid, ["6281234567890"]);
+await client.rejectGroupJoinRequests(groupJid, ["6289999999999"]);
+
+// Community equivalents
+await client.getCommunityJoinRequests(communityJid);
+await client.approveCommunityJoinRequests(communityJid, ["6281234567890"]);
+await client.rejectCommunityJoinRequests(communityJid, ["6289999999999"]);
+```
+
+### Group Invite Cards (v1.12.0)
+
+Sends the rich "join my group" card rather than a pasted link.
+
+```typescript
+import { MiawClient } from "miaw-core";
+
+const link = await client.getGroupInviteLink(groupJid);
+const info = await client.getGroupInfo(groupJid);
+
+await client.sendGroupInvite("6281234567890", {
+  groupJid,
+  groupName: info.name,
+  inviteCode: link.replace(/^.*chat\.whatsapp\.com\//, ""),
+  expiration: Math.floor(Date.now() / 1000) + 3 * 24 * 60 * 60,
+  caption: "Come join us",
+});
+```
+
+> `GroupInviteMessage` (what you send) is a different type from `GroupInviteInfo`
+> (the preview `getGroupInviteInfo()` returns before you join). They are not
+> interchangeable.
+
+### Disappearing Messages (v1.12.0)
+
+```typescript
+import { EphemeralDuration } from "miaw-core";
+
+await client.setChatEphemeral("6281234567890", EphemeralDuration.SevenDays);
+await client.setGroupEphemeral(groupJid, EphemeralDuration.TwentyFourHours);
+await client.setCommunityEphemeral(communityJid, EphemeralDuration.NinetyDays);
+
+// Turn it off
+await client.setChatEphemeral("6281234567890", EphemeralDuration.Off);
+
+// Default for NEW chats only — does not touch existing ones
+await client.setDefaultDisappearingMode(EphemeralDuration.SevenDays);
+```
+
+`EphemeralDuration` is a convenience for the four durations the WhatsApp UI
+offers (`Off`, `TwentyFourHours`, `SevenDays`, `NinetyDays`); a raw second count
+works too.
+
+### Pin Messages (v1.12.0)
+
+```typescript
+import { PinDuration } from "miaw-core";
+
+client.on("message", async (msg) => {
+  await client.pinMessage(msg);                        // default: 24 hours
+  await client.pinMessage(msg, PinDuration.SevenDays);
+  await client.unpinMessage(msg);
+});
+```
+
+Pinning needs the raw Baileys key, so it only works on a `MiawMessage` that
+carries `raw` — i.e. one this session received or sent. WhatsApp accepts only
+three pin durations: `TwentyFourHours`, `SevenDays`, `ThirtyDays`. Note these
+differ from the disappearing-message durations.
+
+## Privacy & Blocklist
+
+### Privacy Settings (v1.12.0)
+
+```typescript
+const settings = await client.getPrivacySettings();
+console.log(settings.lastSeen);      // 'all' | 'contacts' | 'contact_blacklist' | 'none'
+console.log(settings.readReceipts);  // 'all' | 'none'
+console.log(settings.raw);           // everything WhatsApp returned, unnormalized
+
+// Pass true to bypass the cache and re-query
+await client.getPrivacySettings(true);
+```
+
+Every field is optional — WhatsApp omits categories it has no value for, and has
+added new ones over time, so unrecognized keys are preserved under `raw` rather
+than dropped.
+
+```typescript
+await client.setLastSeenPrivacy("contacts");
+await client.setOnlinePrivacy("match_last_seen");
+await client.setProfilePicturePrivacy("contacts");
+await client.setStatusPrivacy("contact_blacklist");
+await client.setReadReceiptsPrivacy("none");     // turn off blue ticks
+await client.setGroupAddPrivacy("contacts");
+await client.setMessagesPrivacy("contacts");
+await client.setCallPrivacy("known");
+await client.setLinkPreviewsDisabled(true);
+```
+
+| Setting | Accepted values |
+| ------- | --------------- |
+| `setLastSeenPrivacy` | `all`, `contacts`, `contact_blacklist`, `none` |
+| `setOnlinePrivacy` | `all`, `match_last_seen` |
+| `setProfilePicturePrivacy` | `all`, `contacts`, `contact_blacklist`, `none` |
+| `setStatusPrivacy` | `all`, `contacts`, `contact_blacklist`, `none` |
+| `setReadReceiptsPrivacy` | `all`, `none` |
+| `setGroupAddPrivacy` | `all`, `contacts`, `contact_blacklist` |
+| `setMessagesPrivacy` | `all`, `contacts` |
+| `setCallPrivacy` | `all`, `known` |
+
+> `contact_blacklist` means "my contacts, except…". The exclusion list itself is
+> managed in the WhatsApp app and is not exposed over this protocol.
+
+### Blocklist (v1.12.0)
+
+```typescript
+await client.blockContact("6281234567890");
+await client.unblockContact("6281234567890");
+
+const blocked = await client.getBlocklist();   // string[] of JIDs
+const isBlocked = await client.isBlocked("6281234567890");
+```
+
+`isBlocked()` refetches the list on each call — cache `getBlocklist()` yourself
+if you are checking many numbers.
+
+## Calls
+
+### Handling Incoming Calls (v1.12.0)
+
+```typescript
+client.on("call", async (call) => {
+  // A single call fires several times as it progresses:
+  //   offer -> ringing -> accept | reject | timeout | terminate
+  // `offer` is the first, and the only stage where rejectCall() still works.
+  if (call.status !== "offer") return;
+
+  console.log(`${call.isVideo ? "Video" : "Voice"} call from ${call.from}`);
+  if (call.isGroup) console.log("Group call in", call.groupJid);
+
+  await client.rejectCall(call.id, call.from);
+});
+```
+
+### Call Links (v1.12.0)
+
+```typescript
+const link = await client.createCallLink("video");
+const audioLink = await client.createCallLink("audio");
+
+// Scheduled for a specific time (Unix seconds)
+const scheduled = await client.createCallLink("video", 1767225600);
+```
+
+Returns the link URL, or `null` on failure.
 
 ## Profile Management
 

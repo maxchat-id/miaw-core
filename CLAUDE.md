@@ -8,8 +8,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Key abstraction**: miaw-core handles all Baileys boilerplate so developers can focus on bot logic instead of connection lifecycle, auth state management, and message parsing.
 
-**Current Version**: 1.11.0
-**Baileys Version**: 7.0.0-rc13
+**Current Version**: 1.12.0
+**Baileys Version**: 7.0.0-rc14
 **Module System**: ESM-only (`"type": "module"`)
 **Node.js Required**: >= 18.0.0
 
@@ -28,24 +28,30 @@ npm run lint:fix      # Auto-fix linting issues
 
 ### Testing
 
+Jest runs serially (`maxWorkers: 1` in `jest.config.js`): the live-connection
+suites share one WhatsApp session, and a full parallel run is memory-hungry.
+Do not run two test commands concurrently.
+
 ```bash
 # Unit and integration tests (Jest)
 npm test                    # Run all tests
 npm run test:watch          # Watch mode
 npm run test:coverage       # Generate coverage report
 
-# CLI integration tests (99 tests, real WhatsApp connection)
+# CLI integration tests (13 files, real WhatsApp connection)
 npm run test:cli            # Run all CLI tests (skips if not connected)
 
-# Interactive manual testing (80+ API methods)
+# Interactive manual testing (live connection, human-driven)
 npm run test:manual         # Show available test groups
 npm run test:manual all     # Test all features
 npm run test:manual messaging   # Test messaging only
 npm run test:manual business    # Test business features
 npm run test:manual newsletter  # Test newsletter/channels
+npm run test:manual privacy     # Test privacy + blocklist
+npm run test:manual calls       # Test call event / reject / links
 ```
 
-The interactive test suite (`npm run test:manual`) provides comprehensive testing of all 92 API methods organized into 8 groups: core, get, messaging, contacts, group, profile, business, newsletter, and ux. See [Test Coverage Analysis](./docs/TEST_COVERAGE_ANALYSIS.md).
+The interactive test suite (`npm run test:manual`) drives a curated subset of the API against a live connection, organized into 11 groups: core, get, messaging, contacts, group, profile, business, newsletter, ux, privacy, and calls. It is a human smoke-test harness (it prompts before every test and has no machine-readable exit), not a gate. See [Test Coverage Analysis](./docs/TEST_COVERAGE_ANALYSIS.md).
 
 **CLI integration tests** (`npm run test:cli`) exercise all CLI commands via `runCommand()` with a real WhatsApp connection. Tests skip gracefully when not connected. Uses `--runInBand` (sequential, shared connection) and `--forceExit`. See [CLI Integration Test Plan](./docs/CLI_INTEGRATION_TEST_PLAN.md).
 
@@ -76,7 +82,7 @@ The main entry point that extends EventEmitter for event-driven architecture.
 - Manages Baileys socket lifecycle
 - Coordinates AuthHandler and MessageHandler
 - Implements auto-reconnection with exponential backoff
-- Exposes 92 API methods across 8 categories
+- Exposes ~200 public API methods across 12 categories
 - Tracks connection states: `disconnected`, `connecting`, `connected`, `reconnecting`, `qr_required`
 
 **Key Patterns:**
@@ -253,6 +259,62 @@ Sessions are stored at `{sessionPath}/{instanceId}/` using Baileys' multi-file a
   warns, and rebuilds **only** when the instance is disconnected.
 - See [docs/PROXY.md](docs/PROXY.md).
 
+### Browser Identity
+
+- The `browser` option takes a `[os, browserName, version]` tuple. Use
+  **`BrowserPresets`** ([src/utils/browser-presets.ts](src/utils/browser-presets.ts)),
+  not Baileys' `Browsers`.
+- **Never re-export Baileys' `Browsers` from `src/index.ts`, and never call it
+  from `MiawClient`.** All thirteen unit mock factories stub it as `{ macOS }`
+  alone, and `tests/unit/types.test.ts` imports `src/index.js` *without* mocking
+  Baileys — either route drags the native bridge into the unit run. The presets
+  duplicate Baileys' tuples deliberately; `tests/unit/browser-presets.test.ts`
+  pins them against the real map so the duplication cannot drift silently.
+- **Never use a `"Desktop"` browser name** — WhatsApp 428s it before issuing a QR.
+- `BrowserPresets.android()` negotiates as an Android client, which is the only
+  way to **receive view-once media**. Baileys marks it experimental. The tuple
+  order is load-bearing: `browser[1]` must contain "android", since that is what
+  `validate-connection.js` sniffs to pick `Platform.ANDROID`.
+
+### Group vs Community Admin
+
+Baileys gives groups and communities **byte-identical signatures** for every
+settings and join-request method. Both surfaces therefore bind to three shared
+private helpers in `MiawClient` — `runGroupAdmin`, `fetchJoinRequests`,
+`updateJoinRequests`. When adding to that family, extend the helper rather than
+writing a fourth pair of near-identical bodies, and add a test to
+`tests/unit/group-community-admin.test.ts` for **both** surfaces — a copy-paste
+slip binding a group method to a community socket call is the failure mode that
+shape invites, and nothing in the compiler catches it.
+
+Community JIDs are group JIDs, so the `@g.us` check applies to both.
+
+### Wire Constants and the Mock Blind Spot
+
+- **13 unit files replace `@whiskeysockets/baileys` wholesale** with hand-written
+  `jest.unstable_mockModule` factories that snapshot the rc-era export surface.
+  A green unit suite therefore proves nothing about a Baileys upgrade.
+  `tests/unit/baileys-export-surface.test.ts` is the counterweight: it imports
+  the **real** module and asserts every symbol the two import sites destructure.
+  Add to it whenever you add a Baileys import.
+- `MiawClient` deliberately does **not** import `proto`. Where a protobuf enum
+  value is needed (`PinInChat.Type`), it is a *named* local constant, and the
+  export-surface suite pins it against the real enum. Importing `proto` would
+  force a `proto` entry into all thirteen mock factories.
+
+### Duration Constants
+
+Three different duration sets exist and are easy to confuse:
+
+| Constant | Values | Used by |
+|---|---|---|
+| `EphemeralDuration` | `Off`, 24h, 7d, **90d** | `setChatEphemeral`, `setGroupEphemeral`, `setCommunityEphemeral`, `setDefaultDisappearingMode` |
+| `PinDuration` | 24h, 7d, **30d** | `pinMessage` |
+
+Note also that `setChatEphemeral` maps `0` to `false` (Baileys does not treat 0
+as "off" on the `sendMessage` path) while `setDefaultDisappearingMode` passes `0`
+straight through. That asymmetry is intentional and covered by tests.
+
 ### Adding New Client Methods
 
 When adding new methods to MiawClient:
@@ -285,16 +347,24 @@ When adding new methods to MiawClient:
 
 See [tests/README.md](tests/README.md) for detailed testing guide.
 
-**Interactive testing**: Use `npm run test:manual` to test all 92 API methods with a real WhatsApp connection. This is the fastest way to verify functionality during development.
+**Interactive testing**: Use `npm run test:manual` to drive the API against a real WhatsApp connection. This is the fastest way to verify functionality during development. Run with `DEBUG=true` when chasing a protocol issue — it otherwise suppresses libsignal/Baileys chatter.
 
-**CLI integration tests**: 99 tests across 11 files in `tests/integration/cli/`. Key architecture:
+**CLI integration tests**: 13 files in `tests/integration/cli/`. Key architecture:
 
 - Shared setup in `cli-setup.ts` pre-warms the client cache via `getOrCreateClient()` so `runCommand()` finds the connected client
 - All files share one WhatsApp connection (`--runInBand`); only the last file disconnects
 - Connection-dependent tests skip with `if (!isConnected()) return;`
 - Console output assertions use `captureConsole()` in `try/finally` blocks
-- Exception: `11-proxy-commands.test.ts` needs no connection at all (proxy commands
-  dispatch before `getOrCreateClient()`), so it runs unconditionally and offline
+- Exception: `11-proxy-commands.test.ts` and `12-instance-proxy-commands.test.ts`
+  need no connection at all (those commands dispatch before `getOrCreateClient()`),
+  so they run unconditionally and offline
+- **Teardown lives in the last CONNECTION-USING file**, currently
+  `13-privacy-call-commands.test.ts` — not the last file overall, since 11 and 12
+  sort after the connected ones but are offline. Putting it elsewhere disconnects
+  the socket out from under a later file. Both headers say so; nothing enforces it.
+- The connection guards `return` rather than `it.skip`, so a disconnected run
+  reports **all-green while exercising almost nothing**. Trust the
+  `=== CLI TEST CLIENT CONNECTED ===` banner, not the pass count.
 
 ---
 
@@ -311,7 +381,7 @@ See [tests/README.md](tests/README.md) for detailed testing guide.
 ## Dependencies
 
 **Core:**
-- `@whiskeysockets/baileys` (v7.0.0-rc13) - WhatsApp Web protocol
+- `@whiskeysockets/baileys` (v7.0.0-rc14) - WhatsApp Web protocol
 - `pino` - Structured logging
 - `@hapi/boom` - HTTP-friendly error objects
 - `qrcode-terminal` - QR code display in terminal
@@ -354,7 +424,7 @@ docs/                   # Documentation
 tests/
 ├── fixtures/           # Test assets (images, documents)
 ├── integration/        # Integration tests (require real WhatsApp)
-│   └── cli/           # CLI command tests (99 tests, 11 files)
+│   └── cli/           # CLI command tests (13 files)
 ├── unit/              # Unit tests
 └── README.md          # Testing guide
 

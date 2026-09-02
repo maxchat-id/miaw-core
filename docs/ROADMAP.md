@@ -4,12 +4,12 @@ This roadmap focuses on **essential bot features** (< 1.0.0) that 90% of WhatsAp
 
 ## Version Status
 
-**Current Version:** 1.11.0
-**Baileys Version:** 7.0.0-rc13
+**Current Version:** 1.12.0
+**Baileys Version:** 7.0.0-rc14
 **Node.js Required:** >= 18.0.0
 **Module System:** ESM-only
 **Status:** Stable Release
-**Last Updated:** 2026-07-29
+**Last Updated:** 2026-09-02
 
 ---
 
@@ -329,11 +329,26 @@ These shipped after the first stable release (see [CHANGELOG.md](../CHANGELOG.md
 - [x] **[DEPLOYMENT_INSTANCE_PROXY.md](./DEPLOYMENT_INSTANCE_PROXY.md)** - operator guide for the new persistent pin store
 - [x] ⚠️ **Breaking:** `ProxyRotator` now defaults to `deterministic`, matching the docs; `next()` without an `instanceId` throws
 
+### v1.12.0 - Baileys rc14 + Backlog Completion ✅ (2026-09-02)
+
+- [x] **Baileys v7.0.0-rc13 → rc14** - WA Web version bump, profile-picture tctoken nesting fix, Android browser identity
+- [x] **`BrowserPresets`** - configurable browser identity; `BrowserPresets.android()` is the only way to **receive view-once media**
+- [x] **Group + community admin** - announce/restrict/member-add/join-approval/ephemeral, and join-request list/approve/reject on both surfaces
+- [x] **Privacy & blocklist** - eight privacy setters, normalized `getPrivacySettings()`, block/unblock/list
+- [x] **Calls** - `call` event, `rejectCall()`, `createCallLink()`
+- [x] **Group-invite cards & pin-in-chat** - `sendGroupInvite()`, `pinMessage()` / `unpinMessage()`
+- [x] **Disappearing messages** - `setChatEphemeral()` / `setGroupEphemeral()` / `setCommunityEphemeral()` + account default
+- [x] **`baileys-export-surface` test** - real unmocked import, so a renamed Baileys export can no longer hide behind the unit mocks
+
 ---
 
 ## Not-Yet-Implemented Baileys Features (Prioritized)
 
-Every item below is a thin wrapper over a method that **exists in Baileys 7.0.0-rc13** but is not yet exposed by miaw-core. Verified against the installed `@whiskeysockets/baileys` type definitions. Ordered as the backlog for the next implementation round.
+Every item below is a thin wrapper over a method that **exists in Baileys 7.0.0-rc14** but is not yet exposed by miaw-core. Verified against the installed `@whiskeysockets/baileys` type definitions. Ordered as the backlog for the next implementation round.
+
+> **As of v1.12.0 this backlog is empty.** Every section below is shipped. See
+> [DEFERRED_FEATURES.md](./DEFERRED_FEATURES.md) for what remains deliberately
+> out of scope, and [FOLLOW_UPS.md](./FOLLOW_UPS.md) for known debt.
 
 ### 1. Chat Management — ✅ shipped in v1.7.0
 
@@ -479,13 +494,13 @@ If you need any of these features, please:
 | v1.9.2  | CommonJS `require()` resolution fix (exports map)          | ✅ Released |
 | v1.10.0 | Proxy files + rotation + CLI diagnostics                   | ✅ Released |
 | v1.11.0 | Per-instance proxy pins + `setProxy()`                     | ✅ Released |
-| next    | Community + group admin (settings, join-requests)          | 📋 Planned  |
+| v1.12.0 | Baileys rc14 + group/community admin, privacy, calls, pinning | ✅ Released |
 
 ---
 
 ## Baileys Compatibility
 
-This roadmap is aligned with **@whiskeysockets/baileys v7.0.0-rc13**:
+This roadmap is aligned with **@whiskeysockets/baileys v7.0.0-rc14**:
 
 - ✅ All planned features are supported by Baileys
 - ✅ Features verified against current Baileys API
@@ -648,6 +663,6 @@ Want to help implement a feature?
 ---
 
 **Last Updated:** 2026-09-02
-**Status:** Stable (v1.11.0, Baileys 7.0.0-rc13)
-**Next Release:** Chat management + rich messages — see [Not-Yet-Implemented Baileys Features (Prioritized)](#not-yet-implemented-baileys-features-prioritized)
-**Path So Far:** v0.1.0 → … → v0.9.0 ✅ → v1.0.0 ✅ (Stable) → v1.1.0 ✅ (Baileys v7/ESM) → v1.2.0 ✅ → v1.3.0 ✅ (Proxy) → v1.4.x ✅ (CLI + rc13)
+**Status:** Stable (v1.12.0, Baileys 7.0.0-rc14)
+**Next Release:** Unscheduled — the Baileys feature backlog is empty as of v1.12.0. See [FOLLOW_UPS.md](./FOLLOW_UPS.md) for known debt.
+**Path So Far:** v0.1.0 → … → v0.9.0 ✅ → v1.0.0 ✅ (Stable) → v1.1.0 ✅ (Baileys v7/ESM) → v1.2.0 ✅ → v1.3.0 ✅ (Proxy) → v1.4.x ✅ (CLI + rc13) → … → v1.11.0 ✅ (Per-instance proxies) → v1.12.0 ✅ (rc14 + backlog)

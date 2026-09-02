@@ -42,6 +42,8 @@ const CATEGORY_MAP: { [key: string]: string[] } = {
   business: ["Business"],
   newsletter: ["Newsletter"],
   ux: ["UX Features"],
+  privacy: ["Privacy & Blocklist"],
+  calls: ["Calls"],
 };
 
 // Get CLI argument
@@ -1839,6 +1841,291 @@ const tests: TestItem[] = [
   },
 
   // ============================================================
+  // ============================================================
+  // PRIVACY & BLOCKLIST (v1.12.0)
+  // ============================================================
+  {
+    category: "Privacy & Blocklist",
+    name: "getPrivacySettings() - Read current privacy settings",
+    test: async (client: MiawClient) => {
+      const settings = await client.getPrivacySettings();
+      if (!settings) {
+        console.log("❌ Failed to fetch privacy settings");
+        return false;
+      }
+      console.log("Last seen:      ", settings.lastSeen ?? "(not set)");
+      console.log("Online:         ", settings.online ?? "(not set)");
+      console.log("Profile picture:", settings.profilePicture ?? "(not set)");
+      console.log("Status:         ", settings.status ?? "(not set)");
+      console.log("Read receipts:  ", settings.readReceipts ?? "(not set)");
+      console.log("Group add:      ", settings.groupAdd ?? "(not set)");
+      console.log("Messages:       ", settings.messages ?? "(not set)");
+      console.log("Calls:          ", settings.calls ?? "(not set)");
+      console.log("\nRaw:", JSON.stringify(settings.raw));
+      return true;
+    },
+  },
+  {
+    category: "Privacy & Blocklist",
+    name: "setLastSeenPrivacy() - Round-trip the current value",
+    action: async (client: MiawClient) => {
+      // Read first and write the SAME value back, so a manual run does not
+      // silently change the tester's own privacy settings.
+      const settings = await client.getPrivacySettings();
+      const current = settings?.lastSeen;
+      if (!current) {
+        console.log("⏭️  WhatsApp reported no last-seen setting; skipping");
+        return "skipped";
+      }
+      console.log(`\n🔁 Writing last-seen back as "${current}" (no change)...`);
+      const result = await client.setLastSeenPrivacy(current);
+      console.log("Success:", result.success, result.error || "");
+      return result.success;
+    },
+  },
+  {
+    category: "Privacy & Blocklist",
+    name: "getBlocklist() - List blocked contacts",
+    test: async (client: MiawClient) => {
+      const blocked = await client.getBlocklist();
+      console.log("Blocked contacts:", blocked.length);
+      for (const jid of blocked.slice(0, 10)) {
+        console.log("  -", jid);
+      }
+      return true;
+    },
+  },
+  {
+    category: "Privacy & Blocklist",
+    name: "blockContact() / unblockContact() - Block then restore",
+    action: async (client: MiawClient) => {
+      const phone = await getTestPhone(
+        "Enter a phone number to block and then immediately unblock:"
+      );
+
+      const before = await client.isBlocked(phone);
+      if (before) {
+        console.log("⏭️  Already blocked; skipping so we don't unblock it");
+        return "skipped";
+      }
+
+      console.log(`\n🚫 Blocking ${phone}...`);
+      const blockResult = await client.blockContact(phone);
+      console.log("Block success:", blockResult.success, blockResult.error || "");
+      if (!blockResult.success) return false;
+
+      console.log("Now blocked?", await client.isBlocked(phone));
+
+      console.log(`\n✅ Unblocking ${phone} to restore the original state...`);
+      const unblockResult = await client.unblockContact(phone);
+      console.log("Unblock success:", unblockResult.success, unblockResult.error || "");
+      return unblockResult.success;
+    },
+  },
+
+  // ============================================================
+  // CALLS (v1.12.0)
+  // ============================================================
+  {
+    category: "Calls",
+    name: "call event - Receive an incoming call",
+    action: async (client: MiawClient) => {
+      console.log("\n📞 Call the bot from another phone within 45 seconds.");
+      console.log("   (Do not answer — we only need the 'offer' event.)");
+
+      const call: any = await new Promise((resolve) => {
+        const timer = setTimeout(() => resolve(null), 45000);
+        client.once("call", (c) => {
+          clearTimeout(timer);
+          resolve(c);
+        });
+      });
+
+      if (!call) {
+        console.log("⏭️  No call received within the timeout");
+        return "skipped";
+      }
+
+      console.log("\n✅ Call event received:");
+      console.log("  id:      ", call.id);
+      console.log("  from:    ", call.from);
+      console.log("  status:  ", call.status);
+      console.log("  isVideo: ", call.isVideo);
+      console.log("  isGroup: ", call.isGroup);
+      console.log("  date:    ", call.date?.toISOString?.());
+      return true;
+    },
+  },
+  {
+    category: "Calls",
+    name: "rejectCall() - Reject an incoming call",
+    action: async (client: MiawClient) => {
+      console.log("\n📞 Call the bot from another phone within 45 seconds.");
+      console.log("   It should be rejected automatically.");
+
+      const call: any = await new Promise((resolve) => {
+        const timer = setTimeout(() => resolve(null), 45000);
+        const onCall = (c: any) => {
+          if (c.status !== "offer") return;
+          clearTimeout(timer);
+          client.off("call", onCall);
+          resolve(c);
+        };
+        client.on("call", onCall);
+      });
+
+      if (!call) {
+        console.log("⏭️  No call offer received within the timeout");
+        return "skipped";
+      }
+
+      console.log(`\n🚫 Rejecting call ${call.id} from ${call.from}...`);
+      const result = await client.rejectCall(call.id, call.from);
+      console.log("Success:", result.success, result.error || "");
+      return result.success;
+    },
+  },
+  {
+    category: "Calls",
+    name: "createCallLink() - Create a shareable video call link",
+    action: async (client: MiawClient) => {
+      console.log("\n⚠️  This mints a REAL shareable call link.");
+      console.log("   [y] Create it   [n] Skip (default)");
+      const answer = await waitForInput("> [y/n]: ");
+      if (answer.toLowerCase() !== "y") {
+        console.log("⏭️  Skipped");
+        return "skipped";
+      }
+
+      const link = await client.createCallLink("video");
+      if (!link) {
+        console.log("❌ Failed to create call link");
+        return false;
+      }
+      console.log("\n✅ Call link:", link);
+      return true;
+    },
+  },
+
+  // ============================================================
+  // GROUP ADMIN (v1.12.0)
+  // ============================================================
+  {
+    category: "Group Mgmt",
+    name: "getGroupJoinRequests() - List pending join requests",
+    test: async (client: MiawClient) => {
+      const groupJid = await getTestGroup("Enter group JID:");
+      const requests = await client.getGroupJoinRequests(groupJid);
+      console.log("Pending join requests:", requests.length);
+      for (const r of requests) {
+        console.log(
+          "  -",
+          r.jid,
+          r.requestedAt ? new Date(r.requestedAt * 1000).toISOString() : "(no timestamp)"
+        );
+      }
+      console.log(
+        "\n⚠️  Requests only accumulate while join approval is ON for the group."
+      );
+      return true;
+    },
+  },
+  {
+    category: "Group Mgmt",
+    name: "setGroupJoinApproval() - Toggle join approval and restore",
+    action: async (client: MiawClient) => {
+      const groupJid = await getTestGroup("Enter group JID (you must be admin):");
+
+      console.log("\n🔒 Turning join approval ON...");
+      const on = await client.setGroupJoinApproval(groupJid, true);
+      console.log("Success:", on.success, on.error || "");
+      if (!on.success) return false;
+
+      console.log("\n🔓 Turning it back OFF to restore the original state...");
+      const off = await client.setGroupJoinApproval(groupJid, false);
+      console.log("Success:", off.success, off.error || "");
+      return off.success;
+    },
+  },
+  {
+    category: "Group Mgmt",
+    name: "setGroupAnnounceOnly() - Toggle announce mode and restore",
+    action: async (client: MiawClient) => {
+      const groupJid = await getTestGroup("Enter group JID (you must be admin):");
+
+      const info = await client.getGroupInfo(groupJid);
+      const wasAnnounce = Boolean(info?.announce);
+      console.log(`\nCurrent announce mode: ${wasAnnounce ? "ON" : "OFF"}`);
+
+      console.log(`\n🔒 Setting announce mode to ${!wasAnnounce ? "ON" : "OFF"}...`);
+      const toggled = await client.setGroupAnnounceOnly(groupJid, !wasAnnounce);
+      console.log("Success:", toggled.success, toggled.error || "");
+      if (!toggled.success) return false;
+
+      console.log("\n↩️  Restoring the original setting...");
+      const restored = await client.setGroupAnnounceOnly(groupJid, wasAnnounce);
+      console.log("Success:", restored.success, restored.error || "");
+      return restored.success;
+    },
+  },
+  {
+    category: "Group Mgmt",
+    name: "setGroupEphemeral() - Set disappearing messages, then disable",
+    action: async (client: MiawClient) => {
+      const groupJid = await getTestGroup("Enter group JID (you must be admin):");
+
+      console.log("\n⏳ Setting disappearing messages to 24 hours...");
+      const on = await client.setGroupEphemeral(groupJid, 86400);
+      console.log("Success:", on.success, on.error || "");
+      if (!on.success) return false;
+
+      console.log("\n↩️  Disabling it again...");
+      const off = await client.setGroupEphemeral(groupJid, 0);
+      console.log("Success:", off.success, off.error || "");
+      return off.success;
+    },
+  },
+  {
+    category: "Messaging",
+    name: "pinMessage() / unpinMessage() - Pin a message then unpin it",
+    action: async (client: MiawClient) => {
+      console.log("\n📝 Send a text message to the bot from another phone.");
+
+      const message = await waitForMessage(
+        client,
+        (msg) => msg.type === "text",
+        30000
+      );
+
+      console.log(`\n📌 Pinning message ${message.id} for 24 hours...`);
+      const pinned = await client.pinMessage(message);
+      console.log("Success:", pinned.success, pinned.error || "");
+      if (!pinned.success) return false;
+
+      console.log("\n📌 Unpinning it again...");
+      const unpinned = await client.unpinMessage(message);
+      console.log("Success:", unpinned.success, unpinned.error || "");
+      return unpinned.success;
+    },
+  },
+  {
+    category: "Messaging",
+    name: "setChatEphemeral() - Disappearing messages in a 1:1 chat",
+    action: async (client: MiawClient) => {
+      const phone = await getTestPhone("Enter phone number:");
+
+      console.log("\n⏳ Setting disappearing messages to 24 hours...");
+      const on = await client.setChatEphemeral(phone, 86400);
+      console.log("Success:", on.success, on.error || "");
+      if (!on.success) return false;
+
+      console.log("\n↩️  Disabling it again...");
+      const off = await client.setChatEphemeral(phone, 0);
+      console.log("Success:", off.success, off.error || "");
+      return off.success;
+    },
+  },
+
   // FINAL CLEANUP
   // ============================================================
   {
@@ -2061,6 +2348,8 @@ function showHelp() {
   console.log("  business    - Business [BIZ] (labels + catalog)");
   console.log("  newsletter  - Newsletter (create, metadata, follow)");
   console.log("  ux          - UX Features (typing, presence, read receipts)");
+  console.log("  privacy     - Privacy & Blocklist (settings, block/unblock)");
+  console.log("  calls       - Calls (call event, reject, call links)");
 
   console.log("\n💡 Examples:");
   console.log("  npm run test:manual all       # Run all tests");

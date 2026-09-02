@@ -511,6 +511,74 @@ npx miaw-cli send audio 6281234567890 ./music.mp3
 npx miaw-cli send audio 6281234567890 ./voice.ogg --ptt
 ```
 
+#### Send Group Invite (v1.12.0)
+
+Sends the rich "join my group" card rather than a pasted link.
+
+```bash
+npx miaw-cli send group-invite <phone> <groupJid> [caption]
+```
+
+**Examples:**
+```bash
+npx miaw-cli send group-invite 6281234567890 120363xxx@g.us
+npx miaw-cli send group-invite 6281234567890 120363xxx@g.us "Come join us"
+```
+
+**Notes:**
+- The invite code and group name are looked up from the group itself, so you
+  need admin rights on it — no code to copy by hand, and no stale codes.
+- The card expires after 3 days, matching what the WhatsApp app offers when
+  sharing an invite.
+
+### Chat Operations
+
+Manage chats: archive, pin, mute, mark read/unread, clear, delete, and (v1.12.0)
+disappearing messages and pinned messages.
+
+```bash
+npx miaw-cli chat archive <jid|phone>
+npx miaw-cli chat unarchive <jid|phone>
+npx miaw-cli chat pin <jid|phone>
+npx miaw-cli chat unpin <jid|phone>
+npx miaw-cli chat mute <jid|phone> [--duration <ms>]
+npx miaw-cli chat unmute <jid|phone>
+npx miaw-cli chat read <jid|phone>
+npx miaw-cli chat unread <jid|phone>
+npx miaw-cli chat clear <jid|phone>
+npx miaw-cli chat delete <jid|phone>
+```
+
+#### Disappearing Messages (v1.12.0)
+
+```bash
+npx miaw-cli chat ephemeral <jid|phone> <off|24h|7d|90d|seconds>
+```
+
+**Examples:**
+```bash
+npx miaw-cli chat ephemeral 6281234567890 7d
+npx miaw-cli chat ephemeral 6281234567890 off
+```
+
+#### Pin a Message (v1.12.0)
+
+```bash
+npx miaw-cli chat pin-message <jid|phone> <messageId> [24h|7d|30d]
+npx miaw-cli chat unpin-message <jid|phone> <messageId>
+```
+
+**Workflow:**
+1. Use `get messages <jid>` to list messages and find the message ID
+2. Pass that ID to `chat pin-message`
+
+**Notes:**
+- `chat pin` pins the **chat** in your list; `chat pin-message` pins a **message**
+  inside the chat. They are unrelated operations.
+- WhatsApp accepts only `24h`, `7d` and `30d` for pinned messages — note this is
+  a different set from the disappearing-message durations, which allow `90d`.
+- Only messages this session has seen carry the raw key pinning needs.
+
 ### Media Operations
 
 Download media from messages.
@@ -634,6 +702,108 @@ npx miaw-cli group create "Project Team" \
 ```
 
 **Note:** At least 2 participants required (you + 1 other).
+
+#### Group & Community Settings (v1.12.0)
+
+All require admin rights. `community` takes the same subcommands as `group`.
+
+```bash
+npx miaw-cli group announce <jid> <on|off>       # on = admins only can message
+npx miaw-cli group restrict <jid> <on|off>       # on = admins only can edit info
+npx miaw-cli group add-mode <jid> <admin|all>    # who may add new members
+npx miaw-cli group approval <jid> <on|off>       # require approval to join
+npx miaw-cli group ephemeral <jid> <off|24h|7d|90d|seconds>
+
+npx miaw-cli community announce <jid> <on|off>
+npx miaw-cli community restrict <jid> <on|off>
+npx miaw-cli community add-mode <jid> <admin|all>
+npx miaw-cli community approval <jid> <on|off>
+npx miaw-cli community ephemeral <jid> <off|24h|7d|90d|seconds>
+```
+
+Toggles accept `on`/`off`, `true`/`false`, `yes`/`no`, `1`/`0`. An unrecognized
+value is rejected with a usage line rather than guessed — guessing wrong here
+would silently flip a setting the wrong way for every member.
+
+#### Join Requests (v1.12.0)
+
+Requests only accumulate while `approval` is on.
+
+```bash
+npx miaw-cli group requests list <jid> [--json]
+npx miaw-cli group requests approve <jid> <phone1> [phone2] ...
+npx miaw-cli group requests reject <jid> <phone1> [phone2] ...
+
+npx miaw-cli community requests list <jid> [--json]
+npx miaw-cli community requests approve <jid> <phone1> [...]
+npx miaw-cli community requests reject <jid> <phone1> [...]
+```
+
+### Privacy & Blocklist (v1.12.0)
+
+#### Privacy Settings
+
+```bash
+npx miaw-cli privacy show [--json] [--force]
+npx miaw-cli privacy set <setting> <value>
+npx miaw-cli privacy disappearing <off|24h|7d|90d|seconds>
+npx miaw-cli privacy link-previews <on|off>
+```
+
+| Setting | Accepted values |
+| ------- | --------------- |
+| `last-seen` | `all`, `contacts`, `contact_blacklist`, `none` |
+| `online` | `all`, `match_last_seen` |
+| `picture` | `all`, `contacts`, `contact_blacklist`, `none` |
+| `status` | `all`, `contacts`, `contact_blacklist`, `none` |
+| `read-receipts` | `all`, `none` |
+| `group-add` | `all`, `contacts`, `contact_blacklist` |
+| `messages` | `all`, `contacts` |
+| `calls` | `all`, `known` |
+
+**Examples:**
+```bash
+npx miaw-cli privacy show
+npx miaw-cli privacy set last-seen contacts
+npx miaw-cli privacy set read-receipts none      # turn off blue ticks
+npx miaw-cli privacy set calls known
+```
+
+The setting name and its value are both validated before a connection is even
+opened — the accepted values differ per setting, so `calls known` is valid while
+`last-seen known` is not.
+
+**Notes:**
+- `--force` bypasses the cache and re-queries WhatsApp.
+- `privacy disappearing` only affects **new** chats. Use `chat ephemeral`,
+  `group ephemeral` or `community ephemeral` for existing ones.
+- `contact_blacklist` means "my contacts, except…"; the exclusion list is
+  managed in the WhatsApp app and is not exposed over this protocol.
+
+#### Blocklist
+
+```bash
+npx miaw-cli block list [--json]
+npx miaw-cli block add <phone>
+npx miaw-cli block remove <phone>
+```
+
+### Call Operations (v1.12.0)
+
+```bash
+npx miaw-cli call link [audio|video] [--start <unix-seconds>]
+```
+
+**Examples:**
+```bash
+npx miaw-cli call link                       # video link (default)
+npx miaw-cli call link audio
+npx miaw-cli call link video --start 1767225600
+```
+
+**Note:** Rejecting a call is not a CLI operation — it only works while a call
+is ringing, so it belongs in a bot's `call` event handler. See
+[USAGE.md → Calls](./USAGE.md#calls).
 
 ### Utility Commands
 

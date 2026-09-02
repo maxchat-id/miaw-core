@@ -5,6 +5,98 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.0] - 2026-09-02
+
+**Baileys 7.0.0-rc14, and the deferred feature backlog cleared.** All additive;
+no breaking changes.
+
+### Changed
+
+- **Upgraded `@whiskeysockets/baileys` from `7.0.0-rc13` to `7.0.0-rc14`** (pinned
+  exactly, as before). Four substantive upstream commits:
+  - WhatsApp Web version `2.3000.1035194821` → `2.3000.1043857760`. Low impact —
+    `resolveWAVersion()` already prefers the live version from `web.whatsapp.com`,
+    so the bundled constant is only the third-tier fallback — but a fresher
+    fallback is still worth having.
+  - **`profilePictureUrl` fix.** The privacy `tctoken` now nests under the
+    `picture` query node and carries a `t` attribute, matching WA Web. This
+    affects `getContactInfo()`, `getProfilePicture()` and `getChatInfo()` when
+    the target has profile-picture privacy enabled.
+  - New `Browsers.android()` identity (see below).
+  - An internal `Long` type import fix.
+
+  No public API changed; miaw-core's whole Baileys surface — including the
+  `updateBussinesProfile` typo, `signalRepository.lidMapping`, the hand-built
+  `remove-companion-device` node, `messaging-history.set` `lidPnMappings`, the
+  `resyncAppState` collection names, and the dispatcher passed into
+  `downloadMediaMessage` — is byte-identical between the two releases.
+
+### Added
+
+- **`BrowserPresets`** — `macOS`, `windows`, `ubuntu` and `android` browser
+  identities for the `browser` option, which was previously undocumented outside
+  its JSDoc. The default is unchanged (`macOS("Chrome")`).
+- **View-once receipt.** `BrowserPresets.android()` negotiates the connection as
+  an Android client, which is the only way to **receive view-once media** — a web
+  session is never sent it. miaw-core already normalizes view-once messages, so
+  `message.media.viewOnce` and `downloadMedia()` start working with no further
+  change. Baileys marks this identity experimental; prefer a dedicated
+  `instanceId` over switching an established session.
+- **Group & community administration.** `setGroupAnnounceOnly`,
+  `setGroupRestrictInfo`, `setGroupMemberAddMode`, `setGroupJoinApproval`,
+  `setGroupEphemeral`, `getGroupJoinRequests`, `approveGroupJoinRequests`,
+  `rejectGroupJoinRequests`, and the eight `setCommunity*` /
+  `*CommunityJoinRequests` equivalents.
+- **Privacy settings.** `getPrivacySettings()` plus `setLastSeenPrivacy`,
+  `setOnlinePrivacy`, `setProfilePicturePrivacy`, `setStatusPrivacy`,
+  `setReadReceiptsPrivacy`, `setGroupAddPrivacy`, `setMessagesPrivacy`,
+  `setCallPrivacy`, `setDefaultDisappearingMode` and `setLinkPreviewsDisabled`.
+- **Blocklist.** `blockContact()`, `unblockContact()`, `getBlocklist()`,
+  `isBlocked()`.
+- **Calls.** A new `call` event carrying a normalized `MiawCall`, plus
+  `rejectCall()` and `createCallLink()`. A single call fires the event several
+  times as it progresses; `status === "offer"` is the only stage at which
+  `rejectCall()` still works.
+- **Disappearing messages.** `setChatEphemeral()` for 1:1 chats alongside the
+  group and community variants, with an `EphemeralDuration` constant for the four
+  durations the WhatsApp UI offers.
+- **Group invite cards.** `sendGroupInvite()` sends the rich "join my group" card
+  rather than a pasted link. Its payload type is `GroupInviteMessage` — distinct
+  from the existing `GroupInviteInfo`, which is the *preview* returned by
+  `getGroupInviteInfo()` before joining.
+- **Pin-in-chat.** `pinMessage()` / `unpinMessage()`, with a `PinDuration`
+  constant. WhatsApp accepts only 24h, 7d and 30d here — a different set from the
+  disappearing-message durations.
+- **CLI:** `group|community announce|restrict|add-mode|approval|ephemeral`,
+  `group|community requests list|approve|reject`, `privacy
+  show|set|disappearing|link-previews`, `block list|add|remove`, `call link`,
+  `chat ephemeral|pin-message|unpin-message`, and `send group-invite`. All with
+  tab completion and `help` topics.
+- **`tests/unit/baileys-export-surface.test.ts`** — imports Baileys unmocked and
+  asserts every symbol the two import sites destructure still exists. Thirteen
+  unit suites replace the module wholesale with hand-written factories, so
+  without this a renamed or removed upstream export stays invisible until
+  runtime.
+
+### Fixed
+
+- **`--force` could swallow the following token.** It was missing from
+  `BOOLEAN_FLAGS` in `bin/miaw-cli.ts`, the same class of bug that `--json` hit
+  previously.
+- **CLI docs gap.** `chat` commands were entirely undocumented in
+  [CLI.md](docs/CLI.md) despite shipping in v1.7.0; they now have a section.
+
+### Internal
+
+- `jest.config.js` sets `maxWorkers: 1`. The live-connection suites share a
+  single WhatsApp session, and forking one worker per core for a full run is
+  memory-hungry; `test:cli` already passed `--runInBand` for the first reason.
+- CLI integration teardown moved from `10-business-commands.test.ts` to the new
+  `13-privacy-call-commands.test.ts`. Files run in name order and 13 is now the
+  last one needing a connection (11 and 12 are deliberately offline), so
+  disconnecting at 10 would pull the socket out from under it.
+- 548 unit tests (up from 417), 66 CLI router tests (up from 26).
+
 ## [1.11.0] - 2026-09-02
 
 ### Added
