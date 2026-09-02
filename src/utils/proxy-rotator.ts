@@ -268,7 +268,7 @@ export class ProxyRotator {
     let bestScore = -1;
 
     for (let i = 0; i < this.proxies.length; i++) {
-      const score = fnv1a32(`${instanceId} ${proxyKey(this.proxies[i])}`);
+      const score = fnv1a32(`${instanceId}\x00${proxyKey(this.proxies[i])}`);
       // Strict > breaks ties by lowest index, keeping duplicate URLs deterministic.
       if (score > bestScore) {
         bestScore = score;
