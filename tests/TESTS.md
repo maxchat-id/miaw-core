@@ -1,5 +1,15 @@
 # Test Plan for Miaw-Core v1.0.0
 
+> ⚠️ **Superseded — historical record.**
+> Written as the v1.0.0 test plan (2025-12-24). Its numbers, coverage figures and open action items describe
+> that snapshot and have **not** been updated since; several are now wrong by a
+> wide margin. Kept because the reasoning still has value, not as a description
+> of the code today.
+>
+> For current information see [tests/README.md](./README.md) for how to run the suites, and [CLAUDE.md](../CLAUDE.md) for the current architecture.
+>
+> _Marked superseded 2026-09-02 (miaw-core v1.12.0, Baileys 7.0.0-rc14)._
+
 ## Testing Strategy
 
 **Goal**: Ensure miaw-core works correctly and doesn't break when updating to newer Baileys versions due to WhatsApp protocol changes.

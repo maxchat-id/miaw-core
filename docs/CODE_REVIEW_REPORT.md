@@ -1,5 +1,15 @@
 # Code Review Report: miaw-core
 
+> ⚠️ **Superseded — historical record.**
+> Written against miaw-core v1.1.1 -> v1.2.0 (January 2026). Its numbers, coverage figures and open action items describe
+> that snapshot and have **not** been updated since; several are now wrong by a
+> wide margin. Kept because the reasoning still has value, not as a description
+> of the code today.
+>
+> For current information see [FOLLOW_UPS.md](./FOLLOW_UPS.md) for currently-open defects and debt.
+>
+> _Marked superseded 2026-09-02 (miaw-core v1.12.0, Baileys 7.0.0-rc14)._
+
 **Date:** January 12, 2026
 **Reviewer:** Claude Code Analysis
 **Codebase Version:** v1.1.1 → v1.2.0
