@@ -12,6 +12,7 @@ import * as path from "node:path";
 import {
   resolveProxyForInstance,
   buildClientConfig,
+  buildClientConfigLenient,
   describePinnedProxy,
   describeProxySource,
   baseOf,
@@ -291,5 +292,91 @@ describe("Proxy Resolver", () => {
       expect(describeProxySource("file")).toBe("--proxy-file");
       expect(describeProxySource("none")).toBe("direct");
     });
+  });
+});
+
+describe("Proxy Resolver - failure containment", () => {
+  let sessionPath: string;
+  let logSpy: ReturnType<typeof jest.spyOn>;
+
+  beforeEach(() => {
+    sessionPath = fs.mkdtempSync(path.join(os.tmpdir(), "miaw-resolver-lenient-"));
+    logSpy = jest.spyOn(console, "log").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    logSpy.mockRestore();
+    fs.rmSync(sessionPath, { recursive: true, force: true });
+  });
+
+  describe("buildClientConfigLenient", () => {
+    it("should return a config carrying proxyError instead of throwing", async () => {
+      // A bad pin must not lock the operator out of `instance unset-proxy`.
+      setInstanceProxyPin(sessionPath, "bot", { label: "nowhere" });
+      const config = await buildClientConfigLenient({ sessionPath, proxyFile: FIXTURE }, "bot");
+      expect(config.proxyError).toContain("matches no entry");
+      expect(config.proxy).toBeUndefined();
+    });
+
+    it("should leave proxyError unset on success", async () => {
+      setInstanceProxyPin(sessionPath, "bot", { url: "socks5://a.example.com:1080" });
+      const config = await buildClientConfigLenient({ sessionPath }, "bot");
+      expect(config.proxyError).toBeUndefined();
+      expect(config.proxy).toBe("socks5://a.example.com:1080");
+    });
+
+    it("should not leak credentials through proxyError", async () => {
+      setInstanceProxyPin(sessionPath, "bot", { label: "nowhere" });
+      const config = await buildClientConfigLenient({ sessionPath, proxyFile: FIXTURE }, "bot");
+      expect(config.proxyError).not.toContain(FIXTURE_SECRET);
+    });
+  });
+
+  describe("quiet resolution", () => {
+    it("should suppress the override warning when asked", async () => {
+      setInstanceProxyPin(sessionPath, "bot", { url: "socks5://pin.example.com:1080" });
+      await resolveProxyForInstance(
+        { sessionPath, explicitProxy: "socks5://flag.example.com:1080" },
+        "bot",
+        { quiet: true }
+      );
+      expect(logSpy).not.toHaveBeenCalled();
+    });
+
+    it("should still return the same result when quiet", async () => {
+      setInstanceProxyPin(sessionPath, "bot", { url: "socks5://pin.example.com:1080" });
+      const loud = await resolveProxyForInstance(
+        { sessionPath, explicitProxy: "socks5://flag.example.com:1080" },
+        "bot"
+      );
+      const quiet = await resolveProxyForInstance(
+        { sessionPath, explicitProxy: "socks5://flag.example.com:1080" },
+        "bot",
+        { quiet: true }
+      );
+      expect(quiet).toEqual(loud);
+    });
+  });
+});
+
+describe("createClient proxy guard", () => {
+  it("should refuse to build a client when proxy resolution failed", async () => {
+    // Connecting with no proxy would leak the real IP the operator was
+    // deliberately hiding, so this must throw rather than silently go direct.
+    const { createClient } = await import("../../src/cli/utils/session.js");
+    expect(() =>
+      createClient({
+        instanceId: "bot",
+        sessionPath: "/tmp/miaw-guard-nope",
+        proxyError: "label \"eu\" matches no entry",
+      })
+    ).toThrow(/Refusing to connect "bot" without its configured proxy/);
+  });
+
+  it("should build normally when no proxyError is set", async () => {
+    const { createClient } = await import("../../src/cli/utils/session.js");
+    expect(() =>
+      createClient({ instanceId: "bot", sessionPath: "/tmp/miaw-guard-nope" })
+    ).not.toThrow();
   });
 });

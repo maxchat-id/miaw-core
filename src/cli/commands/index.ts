@@ -125,7 +125,12 @@ import {
 } from "./commands-index.js";
 import { parseProxyStrategy, resolveProxyFile } from "../utils/proxy-config.js";
 import { getErrorMessage } from "../../utils/type-guards.js";
-import { buildClientConfig, type ProxyResolutionBase } from "../utils/proxy-resolver.js";
+import {
+  configFromResolved,
+  resolveProxyForInstance,
+  type ProxyResolutionBase,
+  type ProxySource,
+} from "../utils/proxy-resolver.js";
 import type { ProxyRotationStrategy } from "../../utils/proxy-rotator.js";
 import type { ClientConfig } from "../utils/session.js";
 
@@ -193,7 +198,7 @@ export async function runCommand(
       switch (subCommand) {
         case "ls":
         case "list":
-          return await cmdInstanceList(clientConfig.sessionPath);
+          return await cmdInstanceList(clientConfig.sessionPath, jsonOutput);
         case "set-proxy":
           if (!subArgs[0]) {
             console.log(
@@ -226,7 +231,7 @@ export async function runCommand(
             console.log("❌ Usage: miaw-cli instance unset-proxy <id>");
             return false;
           }
-          return await cmdInstanceUnsetProxy(clientConfig.sessionPath, subArgs[0]);
+          return await cmdInstanceUnsetProxy(clientConfig.sessionPath, subArgs[0], jsonOutput);
       }
 
       // The rest construct or inspect a client, so resolve the proxy for the
@@ -241,9 +246,42 @@ export async function runCommand(
         proxyStrategy,
       };
 
+      // Validate the subcommand and its arguments BEFORE resolving a proxy.
+      // Resolving first meant `instance create` with no id, or an unknown
+      // subcommand, could fail with "Proxy resolution failed" instead of the
+      // usage error the user actually needed (and 09-instance-commands.test.ts
+      // asserts on).
+      const NEEDS_ID = new Set(["create", "delete", "connect", "disconnect", "logout"]);
+      const KNOWN = new Set([...NEEDS_ID, "status"]);
+
+      if (!KNOWN.has(subCommand)) {
+        if (!subCommand) {
+          console.log("Usage: instance <command>");
+        } else {
+          console.log(`❌ Unknown instance command: ${subCommand}`);
+        }
+        console.log(
+          "Commands: ls, status, create, delete, connect, disconnect, logout, set-proxy, unset-proxy"
+        );
+        return false;
+      }
+
+      if (NEEDS_ID.has(subCommand) && !subArgs[0]) {
+        console.log(`❌ Usage: miaw-cli instance ${subCommand} <id>`);
+        return false;
+      }
+
+      // Resolve for the TARGET instance. Quiet when the target is the instance
+      // the CLI already resolved at startup: the result is identical and
+      // re-announcing every override warning on each command is just noise.
       let targetConfig: ClientConfig;
+      let proxySource: ProxySource;
       try {
-        targetConfig = await buildClientConfig(base, targetId);
+        const resolved = await resolveProxyForInstance(base, targetId, {
+          quiet: targetId === clientConfig.instanceId,
+        });
+        proxySource = resolved.source;
+        targetConfig = configFromResolved(base, targetId, resolved);
       } catch (error) {
         console.log(`❌ Proxy resolution failed: ${getErrorMessage(error)}`);
         return false;
@@ -251,46 +289,19 @@ export async function runCommand(
 
       switch (subCommand) {
         case "status":
-          return await cmdInstanceStatus(targetConfig, targetId, defaultCLIContext);
+          return await cmdInstanceStatus(targetConfig, targetId, defaultCLIContext, proxySource);
         case "create":
-          if (!subArgs[0]) {
-            console.log("❌ Usage: miaw-cli instance create <id>");
-            return false;
-          }
           return await cmdInstanceCreate(targetConfig);
         case "delete":
-          if (!subArgs[0]) {
-            console.log("❌ Usage: miaw-cli instance delete <id>");
-            return false;
-          }
           return await cmdInstanceDelete(targetConfig);
         case "connect":
-          if (!subArgs[0]) {
-            console.log("❌ Usage: miaw-cli instance connect <id>");
-            return false;
-          }
           return await cmdInstanceConnect(targetConfig);
         case "disconnect":
-          if (!subArgs[0]) {
-            console.log("❌ Usage: miaw-cli instance disconnect <id>");
-            return false;
-          }
           return await cmdInstanceDisconnect(targetConfig, clientConfig.instanceId);
         case "logout":
-          if (!subArgs[0]) {
-            console.log("❌ Usage: miaw-cli instance logout <id>");
-            return false;
-          }
           return await cmdInstanceLogout(targetConfig, clientConfig.instanceId);
         default:
-          if (!subCommand) {
-            console.log("Usage: instance <command>");
-          } else {
-            console.log(`❌ Unknown instance command: ${subCommand}`);
-          }
-          console.log(
-            "Commands: ls, status, create, delete, connect, disconnect, logout, set-proxy, unset-proxy"
-          );
+          // Unreachable: KNOWN is checked above.
           return false;
       }
     } catch (error) {

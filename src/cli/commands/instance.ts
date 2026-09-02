@@ -31,7 +31,11 @@ import {
 import { DEFAULT_PROXY_STRATEGY, selectProxyForInstance } from "../utils/proxy-config.js";
 import type { ProxyRotationStrategy } from "../../utils/proxy-rotator.js";
 import { getErrorMessage } from "../../utils/type-guards.js";
-import { describePinnedProxy } from "../utils/proxy-resolver.js";
+import {
+  describePinnedProxy,
+  describeProxySource,
+  type ProxySource,
+} from "../utils/proxy-resolver.js";
 import { formatTable } from "../utils/formatter.js";
 import type { CLIContext } from "../context.js";
 
@@ -66,7 +70,10 @@ export interface InstanceDisconnectResult {
 /**
  * List all instances
  */
-export async function cmdInstanceList(sessionPath: string): Promise<boolean> {
+export async function cmdInstanceList(
+  sessionPath: string,
+  jsonOutput = false
+): Promise<boolean> {
   const instances = listInstances(sessionPath);
 
   // Instances pinned to a proxy but not created yet are worth listing:
@@ -78,6 +85,10 @@ export async function cmdInstanceList(sessionPath: string): Promise<boolean> {
   );
 
   if (instances.length === 0 && pinnedOnly.length === 0) {
+    if (jsonOutput) {
+      console.log(JSON.stringify({ count: 0, instances: [] }, null, 2));
+      return true;
+    }
     console.log("No instances found.");
     console.log(`Create one with: miaw-cli instance create <id>`);
     return true;
@@ -102,7 +113,27 @@ export async function cmdInstanceList(sessionPath: string): Promise<boolean> {
     })),
   ];
 
-  console.log(`\n📱 Instances (${instances.length}):\n`);
+  if (jsonOutput) {
+    console.log(
+      JSON.stringify(
+        {
+          count: rows.length,
+          instances: rows.map((row) => ({
+            instanceId: row.instanceId,
+            status: row.status,
+            created: instances.includes(row.instanceId),
+            // Masked - a pinned url carries credentials.
+            proxy: row.proxy === "-" ? null : row.proxy,
+          })),
+        },
+        null,
+        2
+      )
+    );
+    return true;
+  }
+
+  console.log(`\n📱 Instances (${rows.length}):\n`);
   console.log(
     formatTable(rows, [
       { key: "instanceId", label: "Instance", width: 24 },
@@ -121,7 +152,9 @@ export async function cmdInstanceList(sessionPath: string): Promise<boolean> {
 export async function cmdInstanceStatus(
   config: ClientConfig,
   instanceId: string,
-  context: CLIContext
+  context: CLIContext,
+  /** Which precedence rule produced `config.proxy`. Reported verbatim. */
+  proxySource?: ProxySource
 ): Promise<boolean> {
   const { sessionPath } = config;
   const instances = listInstances(sessionPath);
@@ -161,14 +194,15 @@ export async function cmdInstanceStatus(
     console.log(`Status: ${state}`);
     console.log(`Session: ${path.join(sessionPath, id)}`);
 
-    // The proxy line describes the target instance, which is not necessarily
-    // the one this config was resolved for.
+    // Report the rule that actually won, not merely whether a pin exists - a
+    // `--proxy` override used to be labelled "pinned", which is exactly
+    // backwards for the one case an operator most needs to notice.
     if (id === config.instanceId) {
-      const source = config.proxy
-        ? describePinnedProxy(sessionPath, id)
-          ? "pinned"
-          : "--proxy / --proxy-file"
-        : "none";
+      const source = proxySource
+        ? describeProxySource(proxySource)
+        : config.proxy
+          ? "configured"
+          : "direct";
       console.log(`Proxy: ${describeConfigProxy(config)} (${source})`);
     } else {
       const pin = describePinnedProxy(sessionPath, id);
@@ -449,7 +483,8 @@ export async function cmdInstanceSetProxy(
   sessionPath: string,
   instanceId: string,
   spec: SetProxySpec,
-  options: { proxyFile?: string; proxyStrategy?: ProxyRotationStrategy } = {}
+  options: { proxyFile?: string; proxyStrategy?: ProxyRotationStrategy } = {},
+  jsonOutput = false
 ): Promise<boolean> {
   const given = [
     spec.url ? "a url" : null,
@@ -507,6 +542,17 @@ export async function cmdInstanceSetProxy(
     return false;
   }
 
+  if (jsonOutput) {
+    console.log(
+      JSON.stringify(
+        { instanceId, pinned: describePin(pin), appliesOn: "next-connect" },
+        null,
+        2
+      )
+    );
+    return true;
+  }
+
   console.log(
     `✅ Pinned ${describePin(pin)} to "${instanceId}". Takes effect on the NEXT connect - a live session must not change egress IP.`
   );
@@ -546,9 +592,17 @@ function hasCredentials(url: string): boolean {
  */
 export async function cmdInstanceUnsetProxy(
   sessionPath: string,
-  instanceId: string
+  instanceId: string,
+  jsonOutput = false
 ): Promise<boolean> {
-  if (!clearInstanceProxyPin(sessionPath, instanceId)) {
+  const removed = clearInstanceProxyPin(sessionPath, instanceId);
+
+  if (jsonOutput) {
+    console.log(JSON.stringify({ instanceId, removed }, null, 2));
+    return removed;
+  }
+
+  if (!removed) {
     console.log(`ℹ️  No proxy pinned for "${instanceId}".`);
     return false;
   }

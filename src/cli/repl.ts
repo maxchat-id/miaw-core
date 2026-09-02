@@ -331,8 +331,10 @@ function saveHistory(sessionPath: string, history: string[]): void {
       fs.mkdirSync(dir, { recursive: true });
     }
 
-    // Keep only the last MAX_HISTORY_SIZE entries
-    const trimmedHistory = history.slice(-MAX_HISTORY_SIZE);
+    // Redact again at the disk boundary. addToHistory() already redacts, but
+    // this is the only place credentials can actually reach persistent storage,
+    // so it is the right place to be certain.
+    const trimmedHistory = history.slice(-MAX_HISTORY_SIZE).map(redactHistoryEntry);
     // 0600: history can still hold instance ids and session paths, and this
     // file previously defaulted to 0644.
     fs.writeFileSync(historyPath, trimmedHistory.join("\n") + "\n", {
@@ -362,12 +364,10 @@ function addToHistory(history: string[], command: string): void {
  * store. The command still runs in full - only the recorded copy is redacted.
  */
 function redactHistoryEntry(command: string): string {
-  if (!/^instance\s+set-proxy\b/.test(command)) {
-    return command;
-  }
-  const parts = command.split(/\s+/);
-  // instance set-proxy <id> ...  -> keep the shape, drop everything after the id.
-  return parts.length > 3 ? `${parts.slice(0, 3).join(" ")} ***` : command;
+  // The REPL accepts both `instance set-proxy ...` and the `miaw-cli`-prefixed
+  // form (the prefix is stripped before dispatch), so both must be redacted.
+  const match = /^(\s*(?:miaw-cli\s+)?instance\s+set-proxy\s+\S+)\s+\S.*$/.exec(command);
+  return match ? `${match[1]} ***` : command;
 }
 
 // ClientConfig lives in ./utils/session.js - re-exported here because the CLI
@@ -422,8 +422,14 @@ export async function runRepl(config: ClientConfig): Promise<void> {
     console.log("✅ Connected to WhatsApp!");
   }
 
-  // Load command history from previous sessions
+  // Load command history from previous sessions.
+  //
+  // readline is handed a COPY: in terminal mode it unshifts every raw line it
+  // reads onto the array it was given, which would put unredacted `set-proxy`
+  // credentials straight back into the array we later persist (and duplicate
+  // every entry). Our copy is appended to only via addToHistory().
   const commandHistory = loadHistory(config.sessionPath);
+  const readlineHistory = [...commandHistory];
 
   // Create readline interface with autocomplete and history
   const rl = readline.createInterface({
@@ -431,7 +437,7 @@ export async function runRepl(config: ClientConfig): Promise<void> {
     output: process.stdout,
     prompt: getPrompt(config.instanceId, state),
     completer: createCompleter(config.sessionPath),
-    history: commandHistory,
+    history: readlineHistory,
     historySize: MAX_HISTORY_SIZE,
   });
 

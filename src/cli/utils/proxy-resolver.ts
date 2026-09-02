@@ -126,19 +126,25 @@ async function resolveLabelPin(
  */
 export async function resolveProxyForInstance(
   base: ProxyResolutionBase,
-  instanceId: string
+  instanceId: string,
+  options: { quiet?: boolean } = {}
 ): Promise<ResolvedProxy> {
   const pin = getPinnedProxy(base.sessionPath, instanceId);
+  // `quiet` suppresses the override warnings for a resolution that merely
+  // repeats one already reported - e.g. a per-command re-resolve for the same
+  // instance the CLI already resolved at startup. The result is identical;
+  // only the announcement is skipped.
+  const warn = options.quiet ? () => {} : (line: string) => console.log(line);
 
   // 1. --proxy always wins.
   if (base.explicitProxy) {
     if (base.proxyFile) {
-      console.log("⚠️  --proxy overrides --proxy-file");
+      warn("⚠️  --proxy overrides --proxy-file");
     }
     if (pin) {
       // Worth shouting about: overriding a pin is how a live session's egress
       // IP gets changed by accident, which WhatsApp reads as account takeover.
-      console.log(
+      warn(
         `⚠️  --proxy overrides the pinned proxy for "${instanceId}" (${describePin(pin)})`
       );
     }
@@ -180,9 +186,14 @@ export async function resolveProxyForInstance(
  */
 export async function buildClientConfig(
   base: ProxyResolutionBase,
-  instanceId: string
+  instanceId: string,
+  options: { quiet?: boolean } = {}
 ): Promise<ClientConfig> {
-  return configFromResolved(base, instanceId, await resolveProxyForInstance(base, instanceId));
+  return configFromResolved(
+    base,
+    instanceId,
+    await resolveProxyForInstance(base, instanceId, options)
+  );
 }
 
 /**
@@ -192,6 +203,29 @@ export async function buildClientConfig(
  * itself (to report the source, say) does not resolve twice - which would
  * print every override warning twice.
  */
+/**
+ * Resolve without throwing: on failure, return a config carrying `proxyError`.
+ *
+ * Lets offline commands (`instance ls`, `instance unset-proxy`, `proxy list`)
+ * keep working when a pin is unresolvable, while `createClient()` still refuses
+ * to build a client that would connect direct. Without this, a bad pin locked
+ * the operator out of the very command that repairs it.
+ */
+export async function buildClientConfigLenient(
+  base: ProxyResolutionBase,
+  instanceId: string,
+  options: { quiet?: boolean } = {}
+): Promise<ClientConfig> {
+  try {
+    return await buildClientConfig(base, instanceId, options);
+  } catch (error) {
+    return {
+      ...configFromResolved(base, instanceId, { source: "none" }),
+      proxyError: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 export function configFromResolved(
   base: ProxyResolutionBase,
   instanceId: string,

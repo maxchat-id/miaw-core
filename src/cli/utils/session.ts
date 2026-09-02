@@ -34,6 +34,14 @@ export interface ClientConfig {
   proxyFile?: string;
   /** Selection strategy from --proxy-strategy. */
   proxyStrategy?: ProxyRotationStrategy;
+  /**
+   * Set when proxy resolution failed for this instance (an unresolvable label
+   * pin, an unreadable proxy file). Offline commands still run - you must be
+   * able to reach `instance unset-proxy` to repair a bad pin - but building a
+   * client is refused, because connecting with no proxy would leak the real IP
+   * the operator was deliberately hiding.
+   */
+  proxyError?: string;
 }
 
 /**
@@ -88,6 +96,14 @@ export function deleteInstance(
  * Create a new MiawClient instance
  */
 export function createClient(config: ClientConfig): MiawClient {
+  // The single MiawClient construction site, and therefore the right place to
+  // stop a connection that would silently go direct.
+  if (config.proxyError) {
+    throw new Error(
+      `Refusing to connect "${config.instanceId}" without its configured proxy: ${config.proxyError}`
+    );
+  }
+
   return new MiawClient({
     instanceId: config.instanceId,
     sessionPath: config.sessionPath,

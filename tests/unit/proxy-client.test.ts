@@ -305,6 +305,27 @@ describe("MiawClient.setProxy", () => {
       // Documented contract: null means "no miaw-core-managed proxy".
       expect(client({ agent: {} as Agent }).getProxyInfo()).toBeNull();
     });
+
+    it("should not claim active when a custom agent supersedes the proxy", () => {
+      // agent + proxy together: resolveProxyAgents() early-returns the agent, so
+      // the socket does NOT dial through options.proxy. Reporting active here
+      // would be the same silent lie setProxy()'s refusal exists to prevent.
+      const c = client({ proxy: "socks5://a.example.com:1080", agent: {} as Agent });
+      expect(c.getProxyInfo()?.active).toBe(false);
+    });
+
+    it("should distinguish proxies that differ only by credentials", () => {
+      // `active` compares the RAW url; masking hides the password, so comparing
+      // masked forms would treat these two as the same proxy.
+      const c = client({
+        proxy: "http://user:one@a.example.com:8080",
+      });
+      const before = c.getProxyInfo()?.url;
+      c.setProxy("http://user:two@a.example.com:8080");
+      // Same masked display, different underlying credentials.
+      expect(c.getProxyInfo()?.url).toBe(before);
+      expect(c.getProxyInfo()?.active).toBe(false);
+    });
   });
 });
 
@@ -421,6 +442,24 @@ describe("MiawClient explicit disconnect", () => {
     expect(client.getProxyInfo()?.url).toBe("socks5://new.example.com:1080");
     // The socket is live and was built from this config.
     expect(client.getProxyInfo()?.active).toBe(true);
+  });
+
+  it("should not destroy a caller-supplied agent on disconnect", async () => {
+    // The agent is the caller's object, quite possibly shared with their other
+    // HTTP clients; tearing its sockets down would be a rude surprise.
+    const destroy = jest.fn();
+    const client = new MiawClient({
+      instanceId: "test-custom-agent",
+      sessionPath: "/tmp/miaw-unit-does-not-exist",
+      agent: { destroy } as never,
+      reconnectDelay: 100,
+    });
+
+    await client.connect();
+    await client.disconnect();
+    await client.connect();
+
+    expect(destroy).not.toHaveBeenCalled();
   });
 
   it("should keep user event handlers across the cycle", async () => {

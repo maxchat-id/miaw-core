@@ -211,6 +211,24 @@ class LruCache {
 /**
  * Main client class for interacting with WhatsApp
  */
+/**
+ * Run a teardown call, swallowing both synchronous throws and promise
+ * rejections. undici's close()/destroy() return promises, and an escaping
+ * rejection is fatal under Node's default unhandled-rejection policy.
+ */
+function settle(fn: () => unknown): void {
+  try {
+    const result = fn();
+    if (result && typeof (result as Promise<unknown>).catch === "function") {
+      void (result as Promise<unknown>).catch(() => {
+        /* a transport that refuses to close is not worth failing over */
+      });
+    }
+  } catch {
+    /* likewise */
+  }
+}
+
 export class MiawClient extends EventEmitter {
   private options: Required<Omit<MiawClientOptions, "proxy" | "agent" | "fetchAgent" | "usePairingCode" | "phoneNumber" | "browser">> & Pick<MiawClientOptions, "proxy" | "agent" | "fetchAgent" | "usePairingCode" | "phoneNumber" | "browser">;
   private socket: WASocket | null = null;
@@ -231,6 +249,20 @@ export class MiawClient extends EventEmitter {
    * options.proxy, which setProxy() can change while a socket is still live.
    */
   private activeProxy?: { url: string; protocol: string };
+
+  /**
+   * The RAW url behind `activeProxy`, used only for comparison. Masking hides
+   * the password, so two proxies differing only in credentials would otherwise
+   * compare equal.
+   */
+  private activeProxyKey?: string;
+
+  /**
+   * Whether the current transports were built by us from `options.proxy`.
+   * A caller-supplied `agent`/`fetchAgent` must never be destroyed here - it is
+   * their object, quite possibly shared with their other HTTP clients.
+   */
+  private ownsProxyTransport = false;
   // Cached WA Web version (resolved once, reused across reconnects)
   private cachedVersion: WAVersion | null = null;
   private loggingOut = false;
@@ -363,6 +395,11 @@ export class MiawClient extends EventEmitter {
       // download path, so we have to supply the dispatcher ourselves.
       // Release the previous connection's pools before replacing them.
       this.disposeProxyTransport();
+
+      // We own the transports only when we built them from options.proxy; with
+      // a custom agent these are the caller's objects.
+      const usingCustomAgent = Boolean(this.options.agent || this.options.fetchAgent);
+      this.ownsProxyTransport = !usingCustomAgent && Boolean(proxyAgents);
       this.downloadDispatcher = proxyAgents?.downloadDispatcher;
       this.proxyWsAgent = proxyAgents?.wsAgent;
 
@@ -373,9 +410,10 @@ export class MiawClient extends EventEmitter {
 
       // Remember what this socket is actually dialling through, so a later
       // setProxy() can report the divergence instead of pretending it took.
-      this.activeProxy = proxyAgents?.wsAgent
-        ? this.describeConfiguredProxy()
-        : undefined;
+      // With a custom agent we genuinely do not know the egress, so we claim
+      // nothing rather than reporting options.proxy as if it were in use.
+      this.activeProxy = usingCustomAgent ? undefined : this.describeConfiguredProxy();
+      this.activeProxyKey = usingCustomAgent ? undefined : this.configuredProxyUrl();
 
       // Create socket
       const debugMode = this.options.debug;
@@ -567,25 +605,32 @@ export class MiawClient extends EventEmitter {
    * without this a long reconnect loop leaks socket pools.
    */
   private disposeProxyTransport(): void {
-    const closable = [this.downloadDispatcher, this.proxyWsAgent];
-    for (const item of closable) {
-      try {
-        (item as { close?: () => void })?.close?.();
-        (item as { destroy?: () => void })?.destroy?.();
-      } catch {
-        // A transport that refuses to close is not worth failing over.
+    // Never touch a caller-supplied agent: it is their object, and destroying
+    // it would tear down sockets their other HTTP clients are using.
+    if (this.ownsProxyTransport) {
+      for (const item of [this.downloadDispatcher, this.proxyWsAgent]) {
+        // undici returns promises from close()/destroy(); an escaping rejection
+        // would be an unhandled rejection, which Node treats as fatal.
+        settle(() => (item as { close?: () => unknown })?.close?.());
+        settle(() => (item as { destroy?: () => unknown })?.destroy?.());
       }
     }
+
+    this.ownsProxyTransport = false;
     this.downloadDispatcher = undefined;
     this.proxyWsAgent = undefined;
   }
 
-  /** Masked description of the configured proxy, or undefined when direct. */
-  private describeConfiguredProxy(): { url: string; protocol: string } | undefined {
-    const proxyUrl = typeof this.options.proxy === "string"
+  /** The raw configured proxy URL, or undefined when direct. Never printed. */
+  private configuredProxyUrl(): string | undefined {
+    return typeof this.options.proxy === "string"
       ? this.options.proxy
       : this.options.proxy?.url;
+  }
 
+  /** Masked description of the configured proxy, or undefined when direct. */
+  private describeConfiguredProxy(): { url: string; protocol: string } | undefined {
+    const proxyUrl = this.configuredProxyUrl();
     if (!proxyUrl) return undefined;
 
     const masked = maskProxyUrl(this.options.proxy!);
@@ -609,7 +654,10 @@ export class MiawClient extends EventEmitter {
     const configured = this.describeConfiguredProxy();
     if (!configured) return null;
 
-    const active = this.socket !== null && this.activeProxy?.url === configured.url;
+    const active =
+      this.socket !== null &&
+      this.activeProxyKey !== undefined &&
+      this.activeProxyKey === this.configuredProxyUrl();
 
     return {
       ...configured,
@@ -1656,6 +1704,7 @@ export class MiawClient extends EventEmitter {
 
     this.disposeProxyTransport();
     this.activeProxy = undefined;
+    this.activeProxyKey = undefined;
     this.releaseConsoleFilter();
 
     this.updateConnectionState("disconnected");
@@ -7179,6 +7228,7 @@ export class MiawClient extends EventEmitter {
 
     this.disposeProxyTransport();
     this.activeProxy = undefined;
+    this.activeProxyKey = undefined;
 
     // Cleanup console filter if it was enabled (reference counted)
     this.releaseConsoleFilter();

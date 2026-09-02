@@ -44,6 +44,12 @@ const DEFAULT_PROXY_FILE = process.env.MIAW_PROXY_FILE || undefined;
 const DEFAULT_PROXY_STRATEGY_ENV = process.env.MIAW_PROXY_STRATEGY || undefined;
 
 /**
+ * Global flags that never take a value. Listed explicitly because the parser is
+ * positional: without this an `--ip`-style flag consumes the command name.
+ */
+const BOOLEAN_FLAGS = new Set(["json", "debug", "help", "version", "ip", "from-file"]);
+
+/**
  * Parse CLI arguments
  */
 function parseArgs(args: string[]): {
@@ -58,6 +64,14 @@ function parseArgs(args: string[]): {
     const arg = args[i];
     if (arg.startsWith("--")) {
       const flagName = arg.slice(2);
+      // Value-less flags must never swallow the next token. `--json instance ls`
+      // otherwise parsed as json="instance", leaving the command empty and
+      // reporting "Unknown command: ls" - even though --json is documented as a
+      // global option, i.e. valid before the command.
+      if (BOOLEAN_FLAGS.has(flagName)) {
+        flags[flagName] = true;
+        continue;
+      }
       const nextArg = args[i + 1];
       if (nextArg && !nextArg.startsWith("--")) {
         flags[flagName] = nextArg;
@@ -187,6 +201,10 @@ async function main() {
     proxyStrategy,
   };
 
+  // A failure here is reported but does NOT exit. A bad pin would otherwise
+  // lock the operator out of `instance unset-proxy` and `instance ls` - the
+  // commands that repair it. The config instead carries `proxyError`, and
+  // createClient() refuses to build a client, so nothing connects direct.
   let clientConfig;
   let resolvedProxy;
   try {
@@ -195,8 +213,17 @@ async function main() {
     resolvedProxy = await resolveProxyForInstance(proxyBase, instanceId);
     clientConfig = configFromResolved(proxyBase, instanceId, resolvedProxy);
   } catch (error: unknown) {
-    console.error(`❌ ${getErrorMessage(error)}`);
-    process.exit(1);
+    const reason = getErrorMessage(error);
+    console.error(`❌ ${reason}`);
+    console.error(
+      `   Commands needing a connection will refuse until this is fixed; ` +
+        `"instance unset-proxy ${instanceId}" removes the pin.`
+    );
+    resolvedProxy = { source: "none" as const };
+    clientConfig = {
+      ...configFromResolved(proxyBase, instanceId, resolvedProxy),
+      proxyError: reason,
+    };
   }
 
   const proxyUrl = clientConfig.proxy;
