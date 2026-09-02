@@ -21,6 +21,42 @@ export interface ProxyConfig {
 }
 
 /**
+ * What a proxy change did. Follows the library's result-object convention:
+ * setProxy() reports failure rather than throwing.
+ */
+export interface SetProxyResult {
+  success: boolean;
+  /** Password-masked URL now staged for the next connect(). Absent when cleared. */
+  proxy?: string;
+  /**
+   * True when a socket is still bound to the previous egress, i.e. the change
+   * will not take effect until you disconnect() and connect() again.
+   */
+  reconnectRequired: boolean;
+  /** Present only when success is false. Always credential-masked. */
+  error?: string;
+}
+
+/** What proxy a client is configured for, and whether the socket is using it. */
+export interface ProxyInfo {
+  /** Password-masked proxy URL. */
+  url: string;
+  /** "http" | "https" | "socks5" | ... | "unknown" */
+  protocol: string;
+  /**
+   * True when the currently-open socket was built from THIS config. False
+   * before connect(), and after setProxy() until you reconnect.
+   */
+  active: boolean;
+  /**
+   * Set only when a setProxy() value is staged but the live socket predates it:
+   * `url`/`protocol` above describe the staged config, this describes what the
+   * socket is actually using.
+   */
+  pending?: { url: string; protocol: string };
+}
+
+/**
  * A LID (Linked ID) ↔ phone-number mapping pair, as exposed by Baileys'
  * native LID store and the `messaging-history.set` `lidPnMappings` array.
  */

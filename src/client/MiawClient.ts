@@ -26,6 +26,9 @@ import {
 import {
   MiawClientOptions,
   ConnectionState,
+  ProxyConfig,
+  ProxyInfo,
+  SetProxyResult,
   SendTextOptions,
   SendMessageResult,
   MiawClientEvents,
@@ -219,6 +222,12 @@ export class MiawClient extends EventEmitter {
   private reconnectTimer: NodeJS.Timeout | null = null;
   /** undici Dispatcher used to route media downloads through the proxy. */
   private downloadDispatcher: unknown;
+
+  /**
+   * The proxy the CURRENTLY OPEN socket was built from, masked. Distinct from
+   * options.proxy, which setProxy() can change while a socket is still live.
+   */
+  private activeProxy?: { url: string; protocol: string };
   // Cached WA Web version (resolved once, reused across reconnects)
   private cachedVersion: WAVersion | null = null;
   private loggingOut = false;
@@ -337,6 +346,9 @@ export class MiawClient extends EventEmitter {
       // Kept for downloadMedia(): Baileys never plumbs a proxy into its
       // download path, so we have to supply the dispatcher ourselves.
       this.downloadDispatcher = proxyAgents?.downloadDispatcher;
+    // Remember what this socket is actually dialling through, so a later
+    // setProxy() can report the divergence instead of pretending it took.
+    this.activeProxy = proxyAgents?.wsAgent ? this.describeConfiguredProxy() : undefined;
 
       // Create socket
       const debugMode = this.options.debug;
@@ -505,27 +517,103 @@ export class MiawClient extends EventEmitter {
     return undefined;
   }
 
-  /**
-   * Get current proxy configuration info (URL with credentials masked).
-   * Returns null if no proxy is configured.
-   */
-  getProxyInfo(): { url: string; protocol: string } | null {
+  /** Masked description of the configured proxy, or undefined when direct. */
+  private describeConfiguredProxy(): { url: string; protocol: string } | undefined {
     const proxyUrl = typeof this.options.proxy === "string"
       ? this.options.proxy
       : this.options.proxy?.url;
 
-    if (!proxyUrl) return null;
+    if (!proxyUrl) return undefined;
 
     const masked = maskProxyUrl(this.options.proxy!);
 
     try {
-      return {
-        url: masked,
-        protocol: new URL(proxyUrl).protocol.replace(":", ""),
-      };
+      return { url: masked, protocol: new URL(proxyUrl).protocol.replace(":", "") };
     } catch {
       return { url: masked, protocol: "unknown" };
     }
+  }
+
+  /**
+   * Get current proxy configuration info (URL with credentials masked).
+   *
+   * Returns null when no miaw-core-managed proxy is configured. Note that a
+   * client constructed with a custom `agent`/`fetchAgent` also returns null:
+   * there is no URL to report, so null means "no managed proxy", not
+   * "no proxy".
+   */
+  getProxyInfo(): ProxyInfo | null {
+    const configured = this.describeConfiguredProxy();
+    if (!configured) return null;
+
+    const active = this.socket !== null && this.activeProxy?.url === configured.url;
+
+    return {
+      ...configured,
+      active,
+      // Only meaningful while a socket built from a *different* config is open.
+      ...(!active && this.socket !== null && this.activeProxy
+        ? { pending: { ...this.activeProxy } }
+        : {}),
+    };
+  }
+
+  /**
+   * Change the proxy this instance will use on its NEXT connect().
+   *
+   * Deliberately does not touch the live socket. Changing a connected
+   * session's egress IP is read by WhatsApp as account takeover, so applying
+   * the change is an explicit `disconnect()` then `connect()` that you write
+   * yourself - see the failover recipe in docs/PROXY.md.
+   *
+   * Staging (rather than refusing while connected) is what makes that recipe
+   * safe: you can put the replacement in place before tearing the old socket
+   * down, so no auto-reconnect can fire on the dead proxy in between.
+   *
+   * @param proxy a URL string, a ProxyConfig, or null/undefined to go direct.
+   */
+  setProxy(proxy: ProxyConfig | string | null | undefined): SetProxyResult {
+    const reconnectRequired = this.connectionState !== "disconnected";
+
+    // A custom agent short-circuits resolveProxyAgents(), so accepting this
+    // would be a silent no-op - the worst possible outcome.
+    if (this.options.agent || this.options.fetchAgent) {
+      return {
+        success: false,
+        reconnectRequired: false,
+        error:
+          "Cannot set proxy: this client was constructed with a custom agent/fetchAgent, which takes precedence over proxy config. Construct without agent/fetchAgent to use setProxy().",
+      };
+    }
+
+    if (proxy === null || proxy === undefined) {
+      this.options.proxy = undefined;
+      this.logger.info("Proxy cleared; next connect() will be direct");
+      return { success: true, reconnectRequired };
+    }
+
+    // Validate eagerly. Left to connect(), an invalid proxy throws inside a
+    // catch that turns it into an `error` event, and scheduleReconnect() then
+    // retries it forever.
+    if (!validateProxyConfig(proxy)) {
+      return {
+        success: false,
+        reconnectRequired: false,
+        error: `Invalid proxy configuration: ${maskProxyUrl(proxy)}`,
+      };
+    }
+
+    this.options.proxy = proxy;
+    const masked = maskProxyUrl(proxy);
+    this.logger.info(`Proxy staged for next connect: ${masked}`);
+
+    if (reconnectRequired) {
+      this.logger.warn(
+        "Proxy change does not affect the live session; call disconnect() then connect() to apply it. Never rotate a connected session's IP casually - WhatsApp reads an IP change on a live session as account takeover."
+      );
+    }
+
+    return { success: true, proxy: masked, reconnectRequired };
   }
 
   /**

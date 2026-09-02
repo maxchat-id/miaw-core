@@ -132,7 +132,7 @@ export {
   maskProxyUrl,
 } from "./utils/proxy-agent.js";
 export type { ProxyAgents } from "./utils/proxy-agent.js";
-export type { ProxyConfig, LidMapping } from "./types/index.js";
+export type { ProxyConfig, ProxyInfo, SetProxyResult, LidMapping } from "./types/index.js";
 
 // v1.10.0 Proxy list files
 export {
