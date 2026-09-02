@@ -122,15 +122,15 @@ import {
   cmdProxyTestAll,
 } from "./commands-index.js";
 import { resolveProxyFile } from "../utils/proxy-config.js";
+import type { ClientConfig } from "../utils/session.js";
 
 export interface CommandContext {
-  clientConfig: {
-    instanceId: string;
-    sessionPath: string;
-    debug?: boolean;
-    /** Set by bin/miaw-cli.ts from --proxy or a --proxy-file selection. */
-    proxy?: string;
-  };
+  /**
+   * Fully-resolved config for the *startup* instance. Commands targeting a
+   * different instance must re-resolve rather than reuse this - see the
+   * `instance` block below.
+   */
+  clientConfig: ClientConfig;
   jsonOutput?: boolean;
   flags?: { [key: string]: string | boolean };
   /** Proxy list file from --proxy-file, for the `proxy` commands. */

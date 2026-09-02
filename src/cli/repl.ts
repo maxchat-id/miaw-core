@@ -7,7 +7,7 @@
 import * as readline from "readline";
 import * as fs from "fs";
 import * as path from "path";
-import { listInstances } from "./utils/session.js";
+import { listInstances, type ClientConfig } from "./utils/session.js";
 import { disconnectAll, disconnectClient, getOrCreateClient } from "./utils/client-cache.js";
 import { runCommand } from "./commands/index.js";
 import { setReplReadline, setReplLineHandler, clearReplReadline } from "./utils/prompt.js";
@@ -335,16 +335,10 @@ function addToHistory(history: string[], command: string): void {
   }
 }
 
-export interface ClientConfig {
-  instanceId: string;
-  sessionPath: string;
-  debug?: boolean;
-  proxy?: string;
-  /** Proxy list file from --proxy-file, so REPL `proxy` commands inherit it. */
-  proxyFile?: string;
-  /** Selection strategy from --proxy-strategy. */
-  proxyStrategy?: string;
-}
+// ClientConfig lives in ./utils/session.js - re-exported here because the CLI
+// entry point imports it from this module. A local duplicate used to drift from
+// the canonical one, which is how proxy fields went missing on instance switch.
+export type { ClientConfig };
 
 /**
  * Run the interactive REPL
