@@ -1083,6 +1083,51 @@ export type EphemeralDurationValue =
   (typeof EphemeralDuration)[keyof typeof EphemeralDuration];
 
 // ============================================
+// Group Invite Messages & Pinning (v1.12.0)
+// ============================================
+
+/**
+ * A group-invite message payload — the rich "join my group" card, as opposed to
+ * pasting a plain invite link.
+ *
+ * Note this is distinct from {@link GroupInviteInfo}, which is the *preview* you
+ * get back from {@link MiawClient.getGroupInviteInfo} before joining.
+ *
+ * Build one from an invite code you already hold, e.g. via
+ * {@link MiawClient.getGroupInviteLink}.
+ */
+export interface GroupInviteMessage {
+  /** Group JID being invited to */
+  groupJid: string;
+
+  /** Group name shown on the card */
+  groupName: string;
+
+  /** Invite code (the part after chat.whatsapp.com/) */
+  inviteCode: string;
+
+  /** Invite expiry as a Unix timestamp in seconds */
+  expiration: number;
+
+  /** Caption shown with the invite */
+  caption?: string;
+}
+
+/**
+ * How long a pinned message stays pinned.
+ * WhatsApp accepts only these three durations.
+ */
+export const PinDuration = {
+  TwentyFourHours: 86400,
+  SevenDays: 604800,
+  ThirtyDays: 2592000,
+} as const;
+
+/** One of the {@link PinDuration} values. */
+export type PinDurationValue =
+  (typeof PinDuration)[keyof typeof PinDuration];
+
+// ============================================
 // Privacy & Blocklist Types (v1.12.0)
 // ============================================
 

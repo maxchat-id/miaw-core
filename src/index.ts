@@ -45,6 +45,9 @@ export type {
   MemberAddMode,
   JoinRequest,
   EphemeralDurationValue,
+  // v1.12.0 Group invites & pinning
+  GroupInviteMessage,
+  PinDurationValue,
   // v1.12.0 Calls
   MiawCall,
   CallStatus,
@@ -142,8 +145,8 @@ export {
   isBaileysMessageUpsert,
 } from "./utils/type-guards.js";
 
-// v1.12.0 Group & Community Admin constants
-export { EphemeralDuration } from "./types/index.js";
+// v1.12.0 value exports (const objects, so they cannot ride the `export type` block)
+export { EphemeralDuration, PinDuration } from "./types/index.js";
 
 // Browser identity presets
 export { BrowserPresets } from "./utils/browser-presets.js";

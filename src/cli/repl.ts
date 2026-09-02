@@ -69,7 +69,7 @@ const commandTree: Record<string, CommandNode> = {
     flags: ["--limit", "--json", "--filter"],
   },
   send: {
-    subcommands: ["text", "image", "document", "video", "audio", "location", "contact", "poll", "sticker"],
+    subcommands: ["text", "image", "document", "video", "audio", "location", "contact", "poll", "sticker", "group-invite"],
     flags: ["--caption", "--gif", "--ptv", "--ptt", "--name", "--address", "--org", "--select"],
   },
   media: {
@@ -79,6 +79,7 @@ const commandTree: Record<string, CommandNode> = {
     subcommands: [
       "archive", "unarchive", "pin", "unpin", "mute", "unmute",
       "read", "unread", "clear", "delete", "ephemeral",
+      "pin-message", "unpin-message",
     ],
     flags: ["--duration"],
   },
@@ -819,7 +820,7 @@ COMMANDS (use "help <command>" for details):
   instance    Manage WhatsApp instances (create, connect, disconnect, etc.)
   get         Fetch data (profile, contacts, groups, chats, messages, labels)
   load        Load older messages from chat history
-  send        Send messages (text, image, document, video, audio, location, contact, poll, sticker)
+  send        Send messages (text, image, document, video, audio, location, contact, poll, sticker, group-invite)
   media       Media operations (download)
   chat        Chat management (archive, pin, mute, read, clear, delete, ephemeral)
   story       Post status/story (text, image, video)
@@ -955,6 +956,7 @@ COMMANDS:
   send document <phone> <path> [caption]      Send document
   send video <phone> <path> [options]         Send video
   send audio <phone> <path> [options]         Send audio
+  send group-invite <phone> <groupJid> [text] Send a group-invite card
 
 VIDEO OPTIONS:
   --caption <text>                            Add caption to video
@@ -969,9 +971,12 @@ EXAMPLES:
   send video 6281234567890 ./video.mp4 --caption "Check this"
   send video 6281234567890 ./short.mp4 --gif
   send audio 6281234567890 ./voice.ogg --ptt
+  send group-invite 6281234567890 120363xxx@g.us "Join us"
 
 NOTES:
   - Phone format: international without + (e.g., 6281234567890)
+  - send group-invite looks the invite code up from the group itself, so you
+    need admin rights on it; the card expires after 3 days
   - Supported images: JPEG, PNG, GIF, WebP
   - Supported video: MP4, MOV, AVI, WebM
   - Supported audio: MP3, OGG, AAC, M4A, WAV

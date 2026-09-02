@@ -15,7 +15,7 @@
  * with the shape we assume.
  *
  * Keep the lists below in sync with the two (and only two) places miaw-core
- * imports Baileys:
+ * imports Baileys (plus the wire constants it hardcodes rather than imports):
  *   - src/client/MiawClient.ts:1-17
  *   - src/handlers/AuthHandler.ts:1
  *
@@ -104,6 +104,19 @@ describe("Baileys export surface (real module, unmocked)", () => {
       for (const part of version) {
         expect(typeof part).toBe("number");
       }
+    });
+  });
+
+  describe("proto wire constants we hardcode", () => {
+    // MiawClient.setMessagePin() encodes proto.PinInChat.Type as named local
+    // constants instead of importing `proto` -- that import would be
+    // miaw-core's first protobuf coupling and would force a `proto` entry into
+    // all thirteen Baileys mock factories. Nothing else in the build would
+    // notice if those values drifted, so pin them against the real enum here.
+    it("PinInChat.Type still has PIN_FOR_ALL = 1 and UNPIN_FOR_ALL = 2", () => {
+      const pinType = baileys.proto.PinInChat.Type;
+      expect(pinType.PIN_FOR_ALL).toBe(1);
+      expect(pinType.UNPIN_FOR_ALL).toBe(2);
     });
   });
 

@@ -64,6 +64,10 @@ import {
   MemberAddMode,
   JoinRequest,
   EphemeralDurationValue,
+  // v1.12.0 Group invites & pinning
+  GroupInviteMessage,
+  PinDuration,
+  PinDurationValue,
   // v1.12.0 Calls
   MiawCall,
   CallStatus,
@@ -6243,6 +6247,140 @@ export class MiawClient extends EventEmitter {
     );
   }
 
+
+  // ============================================
+  // Group Invites & Message Pinning (v1.12.0)
+  // ============================================
+
+  /**
+   * Send a group-invite message — the rich "join my group" card, rather than a
+   * plain invite link pasted as text.
+   *
+   * Get the invite code from {@link getGroupInviteLink} (it is the part after
+   * `chat.whatsapp.com/`).
+   *
+   * @param to - Recipient phone number or JID
+   * @param invite - Invite payload
+   */
+  async sendGroupInvite(
+    to: string,
+    invite: GroupInviteMessage
+  ): Promise<SendMessageResult> {
+    try {
+      if (!this.socket) {
+        throw new Error("Not connected. Call connect() first.");
+      }
+
+      if (this.connectionState !== "connected") {
+        throw new Error(
+          `Cannot send group invite. Connection state: ${this.connectionState}`
+        );
+      }
+
+      if (!invite.groupJid?.endsWith("@g.us")) {
+        throw new Error("Invalid group JID. Must end with @g.us");
+      }
+
+      const jid = MessageHandler.formatPhoneToJid(to);
+
+      const result = await this.socket.sendMessage(jid, {
+        groupInvite: {
+          jid: invite.groupJid,
+          subject: invite.groupName,
+          inviteCode: invite.inviteCode,
+          inviteExpiration: invite.expiration,
+          text: invite.caption ?? "",
+        },
+      });
+
+      return {
+        success: true,
+        messageId: result?.key?.id || undefined,
+      };
+    } catch (error) {
+      this.logger.error("Failed to send group invite:", error);
+      return { success: false, error: (error as Error).message };
+    }
+  }
+
+  /**
+   * Pin a message in its chat (pin-in-chat).
+   *
+   * @param message - The MiawMessage to pin (must carry `raw`)
+   * @param duration - How long it stays pinned (default: 24 hours)
+   */
+  async pinMessage(
+    message: MiawMessage,
+    duration: PinDurationValue = PinDuration.TwentyFourHours
+  ): Promise<SendMessageResult> {
+    return this.setMessagePin(message, "pin", duration);
+  }
+
+  /**
+   * Unpin a previously pinned message.
+   * @param message - The MiawMessage to unpin (must carry `raw`)
+   */
+  async unpinMessage(message: MiawMessage): Promise<SendMessageResult> {
+    return this.setMessagePin(message, "unpin");
+  }
+
+  /**
+   * Pin or unpin a message via a PinInChat protocol message.
+   *
+   * `proto.PinInChat.Type` is the canonical source of these two values, but
+   * importing `proto` would be miaw-core's first protobuf coupling and would
+   * force every Baileys mock factory to grow a `proto` entry. The values are
+   * stable wire constants, so they are named here instead of imported.
+   * @see WAProto/index.d.ts — PinInChat.Type
+   */
+  private async setMessagePin(
+    message: MiawMessage,
+    action: "pin" | "unpin",
+    duration?: PinDurationValue
+  ): Promise<SendMessageResult> {
+    const PIN_IN_CHAT = { PIN_FOR_ALL: 1, UNPIN_FOR_ALL: 2 } as const;
+
+    try {
+      if (!this.socket) {
+        throw new Error("Not connected. Call connect() first.");
+      }
+
+      if (this.connectionState !== "connected") {
+        throw new Error(
+          `Cannot ${action} message. Connection state: ${this.connectionState}`
+        );
+      }
+
+      if (!message.raw?.key) {
+        throw new Error(
+          `Message does not contain raw Baileys key data. Cannot ${action}.`
+        );
+      }
+
+      const jid = message.raw.key.remoteJid;
+      if (!jid) {
+        throw new Error("Message does not have a valid chat JID.");
+      }
+
+      const result = await this.socket.sendMessage(jid, {
+        pin: message.raw.key,
+        type:
+          action === "pin"
+            ? PIN_IN_CHAT.PIN_FOR_ALL
+            : PIN_IN_CHAT.UNPIN_FOR_ALL,
+        // WhatsApp ignores `time` when unpinning.
+        ...(duration !== undefined ? { time: duration } : {}),
+      });
+
+      return {
+        success: true,
+        messageId: result?.key?.id || undefined,
+      };
+    } catch (error) {
+      this.logger.error(`Failed to ${action} message:`, error);
+      return { success: false, error: (error as Error).message };
+    }
+  }
 
   // ============================================
   // Privacy & Blocklist Methods (v1.12.0)

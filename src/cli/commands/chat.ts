@@ -7,6 +7,7 @@
 import { MiawClient } from "../../index.js";
 import { ensureConnected } from "../utils/session.js";
 import { formatMessage } from "../utils/formatter.js";
+import type { MiawMessage, PinDurationValue } from "../../types/index.js";
 
 /** Run a chat-management operation and report the result. */
 async function runChatOp(
@@ -74,3 +75,68 @@ export const cmdChatEphemeral = (
       : `Setting ${args.seconds}s disappearing messages for`,
     () => client.setChatEphemeral(args.jid, args.seconds)
   );
+
+/**
+ * Look up a message in a chat's store by id.
+ *
+ * Pinning needs the raw Baileys key, which only lives on messages miaw-core has
+ * actually seen — the same constraint `media download` works under.
+ */
+async function findMessage(
+  client: MiawClient,
+  jid: string,
+  messageId: string
+): Promise<MiawMessage | null> {
+  const fetched = await client.getChatMessages(jid);
+  if (!fetched.success || !fetched.messages) {
+    console.log(`❌ Failed to fetch messages from ${jid}`);
+    return null;
+  }
+
+  const message = fetched.messages.find((m) => m.id === messageId);
+  if (!message) {
+    console.log(`❌ Message not found: ${messageId}`);
+    console.log(`   Tip: Use 'get messages ${jid}' to see available messages`);
+    return null;
+  }
+
+  if (!message.raw) {
+    console.log("❌ Message does not contain the raw data needed to pin it");
+    console.log("   Note: only messages this session has seen carry it");
+    return null;
+  }
+
+  return message;
+}
+
+/**
+ * Pin or unpin a message in a chat
+ */
+export async function cmdChatPinMessage(
+  client: MiawClient,
+  args: { jid: string; messageId: string; pin: boolean; duration?: PinDurationValue }
+): Promise<boolean> {
+  const conn = await ensureConnected(client);
+  if (!conn.success) {
+    console.log(`❌ Not connected: ${conn.reason}`);
+    return false;
+  }
+
+  const message = await findMessage(client, args.jid, args.messageId);
+  if (!message) return false;
+
+  const result = args.pin
+    ? await client.pinMessage(message, args.duration)
+    : await client.unpinMessage(message);
+
+  console.log(
+    formatMessage(
+      result.success,
+      result.success
+        ? `Message ${args.pin ? "pinned" : "unpinned"}`
+        : `Failed to ${args.pin ? "pin" : "unpin"} message`,
+      result.error
+    )
+  );
+  return result.success;
+}

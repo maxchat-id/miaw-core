@@ -6,11 +6,20 @@
 
 import { getOrCreateClient } from "../utils/client-cache.js";
 import { defaultCLIContext } from "../context.js";
+import { PinDuration } from "../../types/index.js";
+import type { PinDurationValue } from "../../types/index.js";
 import {
   parseToggle,
   parseEphemeral,
   parseMemberAddMode,
 } from "../utils/parse-args.js";
+
+/** The three pin-in-chat durations WhatsApp accepts, by CLI alias. */
+const PIN_DURATIONS: Record<string, PinDurationValue> = {
+  "24h": PinDuration.TwentyFourHours,
+  "7d": PinDuration.SevenDays,
+  "30d": PinDuration.ThirtyDays,
+};
 
 /** Subcommand list printed by `group` with no/unknown subcommand. */
 const GROUP_COMMANDS =
@@ -50,12 +59,14 @@ import {
   cmdSendContact,
   cmdSendPoll,
   cmdSendSticker,
+  cmdSendGroupInvite,
   // Chat management commands
   cmdChatArchive,
   cmdChatUnarchive,
   cmdChatPin,
   cmdChatUnpin,
   cmdChatEphemeral,
+  cmdChatPinMessage,
   // Privacy & blocklist (v1.12.0)
   cmdPrivacyShow,
   cmdPrivacySet,
@@ -532,6 +543,17 @@ export async function runCommand(
           options: parsedArgs._.slice(3),
           selectableCount: parsedArgs.select ? parseInt(parsedArgs.select, 10) : undefined,
         });
+      case "group-invite":
+        if (parsedArgs._.length < 3) {
+          console.log("❌ Usage: miaw-cli send group-invite <phone> <groupJid> [caption]");
+          return false;
+        }
+        return await cmdSendGroupInvite(client, {
+          phone: parsedArgs._[1],
+          groupJid: parsedArgs._[2],
+          caption: parsedArgs._.slice(3).join(" ") || undefined,
+        });
+
       case "sticker":
         if (parsedArgs._.length < 3) {
           console.log("❌ Usage: miaw-cli send sticker <phone> <path-or-url>");
@@ -707,6 +729,29 @@ export async function runCommand(
         }
         return await cmdChatEphemeral(client, { jid, seconds });
       }
+      case "pin-message":
+      case "unpin-message": {
+        const pin = subCommand === "pin-message";
+        if (!parsedArgs._[2]) {
+          console.log(`❌ Usage: miaw-cli chat ${subCommand} <jid|phone> <messageId>${pin ? " [24h|7d|30d]" : ""}`);
+          return false;
+        }
+        let duration: PinDurationValue | undefined;
+        if (pin && parsedArgs._[3]) {
+          const parsed = PIN_DURATIONS[parsedArgs._[3].toLowerCase()];
+          if (parsed === undefined) {
+            console.log("❌ Usage: miaw-cli chat pin-message <jid|phone> <messageId> [24h|7d|30d]");
+            return false;
+          }
+          duration = parsed;
+        }
+        return await cmdChatPinMessage(client, {
+          jid,
+          messageId: parsedArgs._[2],
+          pin,
+          duration,
+        });
+      }
       default:
         if (subCommand) {
           console.log(`❌ Unknown chat command: ${subCommand}`);
@@ -714,7 +759,7 @@ export async function runCommand(
           console.log("Usage: chat <command> <jid|phone> [--duration <ms> for mute]");
         }
         console.log(
-          "Commands: archive, unarchive, pin, unpin, mute, unmute, read, unread, clear, delete, ephemeral"
+          "Commands: archive, unarchive, pin, unpin, mute, unmute, read, unread, clear, delete, ephemeral, pin-message, unpin-message"
         );
         return false;
     }

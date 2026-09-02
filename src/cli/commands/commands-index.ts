@@ -36,6 +36,7 @@ export {
   cmdSendContact,
   cmdSendPoll,
   cmdSendSticker,
+  cmdSendGroupInvite,
 } from "./send.js";
 
 export {
@@ -44,6 +45,7 @@ export {
   cmdChatPin,
   cmdChatUnpin,
   cmdChatEphemeral,
+  cmdChatPinMessage,
   cmdChatMute,
   cmdChatUnmute,
   cmdChatRead,

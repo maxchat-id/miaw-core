@@ -533,6 +533,65 @@ describe("CLI Command Router", () => {
     }
   });
 
+  // ============================================
+  // Group invites & pinning (v1.12.0)
+  // ============================================
+
+  test("send group-invite with missing args shows usage", async () => {
+    const capture = captureConsole();
+    try {
+      const result = await runCmd("send", ["group-invite", "6281234567890"]);
+      expect(result).toBe(false);
+      expect(capture.getFullOutput()).toContain("Usage:");
+    } finally {
+      capture.stop();
+    }
+  });
+
+  test.each(["pin-message", "unpin-message"])(
+    "chat %s without a message id shows usage",
+    async (sub) => {
+      const capture = captureConsole();
+      try {
+        const result = await runCmd("chat", [sub, "6281234567890"]);
+        expect(result).toBe(false);
+        expect(capture.getFullOutput()).toContain("Usage:");
+      } finally {
+        capture.stop();
+      }
+    }
+  );
+
+  test("chat pin-message rejects a duration WhatsApp does not accept", async () => {
+    const capture = captureConsole();
+    try {
+      // WhatsApp allows only 24h / 7d / 30d here -- 90d is valid for
+      // disappearing messages, which is exactly the confusion to catch.
+      const result = await runCmd("chat", [
+        "pin-message",
+        "6281234567890",
+        "MSG1",
+        "90d",
+      ]);
+      expect(result).toBe(false);
+      expect(capture.getFullOutput()).toContain("Usage:");
+    } finally {
+      capture.stop();
+    }
+  });
+
+  test("chat usage line advertises the pin-message subcommands", async () => {
+    const capture = captureConsole();
+    try {
+      await runCmd("chat", []);
+      const output = capture.getFullOutput();
+      expect(output).toContain("pin-message");
+      expect(output).toContain("ephemeral");
+    } finally {
+      capture.stop();
+    }
+  });
+
   test("community usage line advertises the new admin subcommands", async () => {
     const capture = captureConsole();
     try {
