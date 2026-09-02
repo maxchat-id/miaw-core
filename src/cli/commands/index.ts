@@ -161,133 +161,141 @@ export async function runCommand(
   // Must stay ABOVE getOrCreateClient() so no client is built for the STARTUP
   // instance when the command targets a different one.
   if (command === "instance") {
-    const subCommand = parsedArgs._[0] || "";
-    const subArgs = parsedArgs._.slice(1);
-    const targetId = subArgs[0] || clientConfig.instanceId;
-
-    // Flags arrive from two places: one-shot mode strips every --flag in
-    // bin/miaw-cli.ts before calling runCommand (so they land in context.flags),
-    // while the REPL passes the raw tokenized line (so they land in parsedArgs).
-    // Both must be read or the flag silently no-ops.
-    const flag = (name: string): string | boolean | undefined =>
-      parsedArgs[name] ?? context.flags?.[name];
-    const strFlag = (name: string): string | undefined => {
-      const value = flag(name);
-      return typeof value === "string" ? value : undefined;
-    };
-
-    const proxyFile = resolveProxyFile(parsedArgs, context.flags, context.proxyFile);
-    let proxyStrategy: ProxyRotationStrategy;
+    // Wrapped because the pin store throws on a corrupt instances.json rather
+    // than treating it as empty - treating it as empty would connect direct and
+    // leak the real IP. That refusal must read as a CLI error, not a stack trace.
     try {
-      proxyStrategy = parseProxyStrategy(context.proxyStrategy ?? strFlag("proxy-strategy"));
+      const subCommand = parsedArgs._[0] || "";
+      const subArgs = parsedArgs._.slice(1);
+      const targetId = subArgs[0] || clientConfig.instanceId;
+
+      // Flags arrive from two places: one-shot mode strips every --flag in
+      // bin/miaw-cli.ts before calling runCommand (so they land in context.flags),
+      // while the REPL passes the raw tokenized line (so they land in parsedArgs).
+      // Both must be read or the flag silently no-ops.
+      const flag = (name: string): string | boolean | undefined =>
+        parsedArgs[name] ?? context.flags?.[name];
+      const strFlag = (name: string): string | undefined => {
+        const value = flag(name);
+        return typeof value === "string" ? value : undefined;
+      };
+
+      const proxyFile = resolveProxyFile(parsedArgs, context.flags, context.proxyFile);
+      let proxyStrategy: ProxyRotationStrategy;
+      try {
+        proxyStrategy = parseProxyStrategy(context.proxyStrategy ?? strFlag("proxy-strategy"));
+      } catch (error) {
+        console.log(`❌ ${getErrorMessage(error)}`);
+        return false;
+      }
+
+      // These need no proxy resolution at all - handle them before paying for it.
+      switch (subCommand) {
+        case "ls":
+        case "list":
+          return await cmdInstanceList(clientConfig.sessionPath);
+        case "set-proxy":
+          if (!subArgs[0]) {
+            console.log(
+              "❌ Usage: miaw-cli instance set-proxy <id> <url|--label L|--from-file|--from-env VAR>"
+            );
+            return false;
+          }
+          return await cmdInstanceSetProxy(
+            clientConfig.sessionPath,
+            subArgs[0],
+            {
+              // A positional url, else --proxy (bin/miaw-cli.ts swallows it as a
+              // global flag, so it would otherwise never reach this command).
+              ...(subArgs[1] ? { url: subArgs[1] } : {}),
+              ...(strFlag("label") ? { label: strFlag("label") } : {}),
+              ...(flag("from-file") === true ? { fromFile: true } : {}),
+              ...(strFlag("from-env") ? { fromEnv: strFlag("from-env") } : {}),
+              ...(!subArgs[1] &&
+              !strFlag("label") &&
+              flag("from-file") !== true &&
+              !strFlag("from-env") &&
+              strFlag("proxy")
+                ? { url: strFlag("proxy") }
+                : {}),
+            },
+            { ...(proxyFile ? { proxyFile } : {}), proxyStrategy }
+          );
+        case "unset-proxy":
+          if (!subArgs[0]) {
+            console.log("❌ Usage: miaw-cli instance unset-proxy <id>");
+            return false;
+          }
+          return await cmdInstanceUnsetProxy(clientConfig.sessionPath, subArgs[0]);
+      }
+
+      // The rest construct or inspect a client, so resolve the proxy for the
+      // TARGET instance rather than reusing whatever the process started with.
+      const base: ProxyResolutionBase = {
+        sessionPath: clientConfig.sessionPath,
+        ...(clientConfig.debug !== undefined ? { debug: clientConfig.debug } : {}),
+        ...(strFlag("proxy") ?? clientConfig.explicitProxy
+          ? { explicitProxy: strFlag("proxy") ?? clientConfig.explicitProxy }
+          : {}),
+        ...(proxyFile ? { proxyFile } : {}),
+        proxyStrategy,
+      };
+
+      let targetConfig: ClientConfig;
+      try {
+        targetConfig = await buildClientConfig(base, targetId);
+      } catch (error) {
+        console.log(`❌ Proxy resolution failed: ${getErrorMessage(error)}`);
+        return false;
+      }
+
+      switch (subCommand) {
+        case "status":
+          return await cmdInstanceStatus(targetConfig, targetId, defaultCLIContext);
+        case "create":
+          if (!subArgs[0]) {
+            console.log("❌ Usage: miaw-cli instance create <id>");
+            return false;
+          }
+          return await cmdInstanceCreate(targetConfig);
+        case "delete":
+          if (!subArgs[0]) {
+            console.log("❌ Usage: miaw-cli instance delete <id>");
+            return false;
+          }
+          return await cmdInstanceDelete(targetConfig);
+        case "connect":
+          if (!subArgs[0]) {
+            console.log("❌ Usage: miaw-cli instance connect <id>");
+            return false;
+          }
+          return await cmdInstanceConnect(targetConfig);
+        case "disconnect":
+          if (!subArgs[0]) {
+            console.log("❌ Usage: miaw-cli instance disconnect <id>");
+            return false;
+          }
+          return await cmdInstanceDisconnect(targetConfig, clientConfig.instanceId);
+        case "logout":
+          if (!subArgs[0]) {
+            console.log("❌ Usage: miaw-cli instance logout <id>");
+            return false;
+          }
+          return await cmdInstanceLogout(targetConfig, clientConfig.instanceId);
+        default:
+          if (!subCommand) {
+            console.log("Usage: instance <command>");
+          } else {
+            console.log(`❌ Unknown instance command: ${subCommand}`);
+          }
+          console.log(
+            "Commands: ls, status, create, delete, connect, disconnect, logout, set-proxy, unset-proxy"
+          );
+          return false;
+      }
     } catch (error) {
       console.log(`❌ ${getErrorMessage(error)}`);
       return false;
-    }
-
-    // These need no proxy resolution at all - handle them before paying for it.
-    switch (subCommand) {
-      case "ls":
-      case "list":
-        return await cmdInstanceList(clientConfig.sessionPath);
-      case "set-proxy":
-        if (!subArgs[0]) {
-          console.log(
-            "❌ Usage: miaw-cli instance set-proxy <id> <url|--label L|--from-file|--from-env VAR>"
-          );
-          return false;
-        }
-        return await cmdInstanceSetProxy(
-          clientConfig.sessionPath,
-          subArgs[0],
-          {
-            // A positional url, else --proxy (bin/miaw-cli.ts swallows it as a
-            // global flag, so it would otherwise never reach this command).
-            ...(subArgs[1] ? { url: subArgs[1] } : {}),
-            ...(strFlag("label") ? { label: strFlag("label") } : {}),
-            ...(flag("from-file") === true ? { fromFile: true } : {}),
-            ...(strFlag("from-env") ? { fromEnv: strFlag("from-env") } : {}),
-            ...(!subArgs[1] &&
-            !strFlag("label") &&
-            flag("from-file") !== true &&
-            !strFlag("from-env") &&
-            strFlag("proxy")
-              ? { url: strFlag("proxy") }
-              : {}),
-          },
-          { ...(proxyFile ? { proxyFile } : {}), proxyStrategy }
-        );
-      case "unset-proxy":
-        if (!subArgs[0]) {
-          console.log("❌ Usage: miaw-cli instance unset-proxy <id>");
-          return false;
-        }
-        return await cmdInstanceUnsetProxy(clientConfig.sessionPath, subArgs[0]);
-    }
-
-    // The rest construct or inspect a client, so resolve the proxy for the
-    // TARGET instance rather than reusing whatever the process started with.
-    const base: ProxyResolutionBase = {
-      sessionPath: clientConfig.sessionPath,
-      ...(clientConfig.debug !== undefined ? { debug: clientConfig.debug } : {}),
-      ...(strFlag("proxy") ?? clientConfig.explicitProxy
-        ? { explicitProxy: strFlag("proxy") ?? clientConfig.explicitProxy }
-        : {}),
-      ...(proxyFile ? { proxyFile } : {}),
-      proxyStrategy,
-    };
-
-    let targetConfig: ClientConfig;
-    try {
-      targetConfig = await buildClientConfig(base, targetId);
-    } catch (error) {
-      console.log(`❌ Proxy resolution failed: ${getErrorMessage(error)}`);
-      return false;
-    }
-
-    switch (subCommand) {
-      case "status":
-        return await cmdInstanceStatus(targetConfig, targetId, defaultCLIContext);
-      case "create":
-        if (!subArgs[0]) {
-          console.log("❌ Usage: miaw-cli instance create <id>");
-          return false;
-        }
-        return await cmdInstanceCreate(targetConfig);
-      case "delete":
-        if (!subArgs[0]) {
-          console.log("❌ Usage: miaw-cli instance delete <id>");
-          return false;
-        }
-        return await cmdInstanceDelete(targetConfig);
-      case "connect":
-        if (!subArgs[0]) {
-          console.log("❌ Usage: miaw-cli instance connect <id>");
-          return false;
-        }
-        return await cmdInstanceConnect(targetConfig);
-      case "disconnect":
-        if (!subArgs[0]) {
-          console.log("❌ Usage: miaw-cli instance disconnect <id>");
-          return false;
-        }
-        return await cmdInstanceDisconnect(targetConfig, clientConfig.instanceId);
-      case "logout":
-        if (!subArgs[0]) {
-          console.log("❌ Usage: miaw-cli instance logout <id>");
-          return false;
-        }
-        return await cmdInstanceLogout(targetConfig, clientConfig.instanceId);
-      default:
-        if (!subCommand) {
-          console.log("Usage: instance <command>");
-        } else {
-          console.log(`❌ Unknown instance command: ${subCommand}`);
-        }
-        console.log(
-          "Commands: ls, status, create, delete, connect, disconnect, logout, set-proxy, unset-proxy"
-        );
-        return false;
     }
   }
 
