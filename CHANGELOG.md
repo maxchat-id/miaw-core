@@ -36,12 +36,16 @@ no breaking changes.
 - **`BrowserPresets`** — `macOS`, `windows`, `ubuntu` and `android` browser
   identities for the `browser` option, which was previously undocumented outside
   its JSDoc. The default is unchanged (`macOS("Chrome")`).
-- **View-once receipt.** `BrowserPresets.android()` negotiates the connection as
-  an Android client, which is the only way to **receive view-once media** — a web
-  session is never sent it. miaw-core already normalizes view-once messages, so
-  `message.media.viewOnce` and `downloadMedia()` start working with no further
-  change. Baileys marks this identity experimental; prefer a dedicated
-  `instanceId` over switching an established session.
+- **Android connection identity.** `BrowserPresets.android()` negotiates as an
+  Android client rather than a web one. Baileys reports this is required to
+  **receive view-once media**, which a web session is never sent
+  ([#2201](https://github.com/WhiskeySockets/Baileys/pull/2201)); miaw-core
+  already normalizes view-once messages, so if that holds,
+  `message.media.viewOnce` and `downloadMedia()` work with no further change.
+  The handshake is verified here; the view-once receipt itself is upstream's
+  claim and is **not** confirmed end-to-end — see `tests/verify-viewonce.ts` to
+  check it on your own account. Baileys marks the identity experimental; prefer
+  a dedicated `instanceId` over switching an established session.
 - **Group & community administration.** `setGroupAnnounceOnly`,
   `setGroupRestrictInfo`, `setGroupMemberAddMode`, `setGroupJoinApproval`,
   `setGroupEphemeral`, `getGroupJoinRequests`, `approveGroupJoinRequests`,

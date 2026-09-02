@@ -211,7 +211,7 @@ Built on **Baileys v7.0.0-rc14** - the latest WhatsApp Web protocol implementati
 ### Connection Identity
 
 - ✅ Configurable browser identity via `BrowserPresets` (macOS / Windows / Ubuntu / Android)
-- ✅ Android identity — the only way to **receive view-once media** ([details](./docs/USAGE.md#receiving-view-once-messages-android-identity))
+- ✅ Android identity — Baileys reports this is required to **receive view-once media** ([details](./docs/USAGE.md#receiving-view-once-messages-android-identity))
 - ✅ Live WhatsApp Web version negotiation (avoids stale-version 428 rejections)
 
 ### Advanced Messaging

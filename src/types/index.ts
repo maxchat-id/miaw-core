@@ -123,9 +123,11 @@ export interface MiawClientOptions {
    * sync than the old Desktop identity.
    *
    * `BrowserPresets.android()` is the exception to "browser identity": it
-   * negotiates as an Android client, which is the only way to **receive
-   * view-once media**. Baileys marks it experimental. Prefer it on a dedicated
-   * instance over switching an established session.
+   * negotiates as an Android client. Baileys reports that this is required to
+   * **receive view-once media**, which a web session is never sent; that claim
+   * is upstream's and is not verified in this repo. Baileys marks the identity
+   * experimental. Prefer it on a dedicated instance over switching an
+   * established session.
    *
    * @see https://github.com/WhiskeySockets/Baileys/issues/2671
    * @example

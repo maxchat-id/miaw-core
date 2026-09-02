@@ -153,7 +153,7 @@ const client = new MiawClient({
 | `BrowserPresets.macOS(browser?)`   | `["Mac OS", "Chrome", "14.4.1"]`   | **Default.** |
 | `BrowserPresets.windows(browser?)` | `["Windows", "Chrome", "10.0.22631"]` | |
 | `BrowserPresets.ubuntu(browser?)`  | `["Ubuntu", "Chrome", "22.04.4"]`  | |
-| `BrowserPresets.android(version?)` | `["13", "Android", ""]`            | Experimental. Receives view-once media. |
+| `BrowserPresets.android(version?)` | `["13", "Android", ""]`            | Experimental. Reportedly required to receive view-once media. |
 
 > **Never use a `"Desktop"` browser name.** Since ~2026-06-29 WhatsApp rejects the
 > legacy Desktop identity (webSubPlatform `DARWIN`/`WIN32`) with a **428 before
@@ -162,9 +162,11 @@ const client = new MiawClient({
 
 #### Receiving view-once messages (Android identity)
 
-A web-identity session **cannot receive view-once media** — WhatsApp simply does
-not deliver it. An Android-identity session can. Since Baileys 7.0.0-rc14 the
-handshake negotiates as `Platform.ANDROID` when the browser tuple names Android:
+Baileys reports that a web-identity session is **not delivered view-once media**
+by WhatsApp at all, and that an Android-identity session is
+([WhiskeySockets/Baileys#2201](https://github.com/WhiskeySockets/Baileys/pull/2201)).
+Since 7.0.0-rc14 the handshake negotiates as `Platform.ANDROID` when the browser
+tuple names Android:
 
 ```typescript
 const client = new MiawClient({
@@ -183,6 +185,14 @@ client.on("message", async (message) => {
 miaw-core already normalizes view-once messages (all three envelope variants), so
 `message.media.viewOnce` and `downloadMedia()` work with no further change once
 the identity is in place.
+
+> **What we verified, and what we didn't.** The Android handshake is confirmed
+> working: pairing with this identity is accepted by WhatsApp and the session
+> connects and reconnects normally. The *receipt* of view-once media is
+> upstream's claim, not something miaw-core has confirmed end-to-end — it needs
+> a second device to send from. If you depend on it, verify it yourself first:
+> `npx tsx tests/verify-viewonce.ts` pairs a throwaway instance and reports
+> whether a view-once image actually arrives and downloads.
 
 **Trade-offs.** Baileys marks this identity experimental and logs a warning on
 connect. The linked device is labelled differently on the phone, and history sync

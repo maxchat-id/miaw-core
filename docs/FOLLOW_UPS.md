@@ -175,10 +175,14 @@ Two live findings became fixes, both invisible to unit tests because a mocked
 socket never rejects: `sendGroupInvite` failing on any pictureless group, and
 `parseEphemeral` treating a missing argument as "off".
 
-Still **not** verified end-to-end: **view-once receipt** over the Android
-identity. The handshake is proven; actually receiving view-once media needs the
-spare instance paired (scanning its QR links it as an additional device on the
-same account) and then a view-once image sent to it from a phone.
+**Deliberately not verified: view-once receipt** over the Android identity. The
+handshake is proven — pairing with the identity is accepted and the session
+connects and reconnects — but whether WhatsApp then delivers view-once media is
+Baileys' claim, and confirming it needs a second physical device to send from on
+every run. That is a poor trade for an opt-in feature whose default is unchanged,
+so it was left unverified **and the docs were changed to say so** rather than
+assert an unconfirmed benefit (README, USAGE, CHANGELOG and both JSDoc sites now
+attribute it upstream).
 
 `tests/verify-viewonce.ts` does the whole thing in one pass — run
 `npx tsx tests/verify-viewonce.ts`, scan the QR it prints, then send the account

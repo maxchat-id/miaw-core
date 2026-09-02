@@ -36,9 +36,12 @@ export const BrowserPresets = {
   /**
    * Experimental Android identity (Baileys 7.0.0-rc14 and later).
    *
-   * An Android-linked session can **receive view-once media**, which a web
-   * session cannot — miaw-core already normalizes those, so `message.media.viewOnce`
-   * and `downloadMedia()` start working with no further change.
+   * Baileys reports that an Android-linked session **receives view-once media**
+   * where a web session is never sent it (WhiskeySockets/Baileys#2201). miaw-core
+   * already normalizes those, so if that holds, `message.media.viewOnce` and
+   * `downloadMedia()` work with no further change. The handshake is verified
+   * here; the receipt itself is upstream's claim — see tests/verify-viewonce.ts
+   * to confirm it on a real account.
    *
    * The cost: Baileys itself logs "experimental ... use at your own risk" for
    * this identity, the linked device is labelled differently on the phone, and
