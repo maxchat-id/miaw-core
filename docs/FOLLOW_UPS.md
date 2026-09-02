@@ -116,6 +116,32 @@ dead credentials.
 To close this, re-pair a device (`miaw-cli instance create <id>`, scan the QR)
 and re-run `npm run test:cli`. Worth doing before releasing 1.11.0.
 
+**Update (2026-09-02, v1.12.0):** still open, and now confirmed for *every*
+session on disk, not just `sessions-cli/default`. A direct connection probe
+against `test-sessions/paired-via-proxy` (the freshest, last written
+2026-07-29) also returned `401 loggedOut`, and `test-sessions/miaw-test-bot`
+had already been wiped by `AuthHandler.clearSession()`. So the v1.12.0 upgrade
+to Baileys rc14 and the whole feature backlog it shipped are verified by
+`tsc`, 548 unit tests and 66 offline CLI router tests, but **not** against live
+WhatsApp.
+
+The rc14 changes that specifically want a live run:
+
+- `profilePictureUrl` against a contact **with profile-picture privacy enabled**
+  — that is the only path the upstream tctoken-nesting fix touches. A contact
+  without privacy set will pass either way and proves nothing.
+- Pairing with `BrowserPresets.android()` on a spare `instanceId`, then sending
+  it a view-once image: `message.media.viewOnce` should be `true` and
+  `downloadMedia()` should return bytes. This cannot be checked any other way —
+  a web-identity session is never sent view-once media at all.
+- The v1.12.0 methods that mutate real state: the group/community settings, the
+  join-request flow (needs a group with approval turned on), and the blocklist.
+  `npm run test:manual privacy` / `calls` / `group` cover these with
+  read-then-restore entries.
+
+Also worth noting while re-pairing: `TEST_GROUP_JID` in `.env.test` is empty, so
+every group-dependent test skips even on a healthy connection.
+
 ---
 
 ## 8. `--json` is not supported by most `instance`/`group`/`chat` commands

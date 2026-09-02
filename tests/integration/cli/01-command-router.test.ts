@@ -378,6 +378,20 @@ describe("CLI Command Router", () => {
         capture.stop();
       }
     });
+
+    test("an omitted duration shows usage instead of disabling", async () => {
+      // Regression: Number("") is 0, and 0 is a valid duration meaning "off",
+      // so a missing argument used to parse as a successful request to turn
+      // disappearing messages OFF for the whole group.
+      const capture = captureConsole();
+      try {
+        const result = await runCmd(command, ["ephemeral", "123@g.us"]);
+        expect(result).toBe(false);
+        expect(capture.getFullOutput()).toContain("Usage:");
+      } finally {
+        capture.stop();
+      }
+    });
   });
 
   describe.each(["group", "community"])("%s requests", (command) => {
@@ -497,6 +511,17 @@ describe("CLI Command Router", () => {
     }
   });
 
+  test("privacy disappearing with no duration shows usage instead of disabling", async () => {
+    const capture = captureConsole();
+    try {
+      const result = await runCmd("privacy", ["disappearing"]);
+      expect(result).toBe(false);
+      expect(capture.getFullOutput()).toContain("Usage:");
+    } finally {
+      capture.stop();
+    }
+  });
+
   test("privacy link-previews with a bad toggle shows usage", async () => {
     const capture = captureConsole();
     try {
@@ -541,6 +566,17 @@ describe("CLI Command Router", () => {
     const capture = captureConsole();
     try {
       const result = await runCmd("send", ["group-invite", "6281234567890"]);
+      expect(result).toBe(false);
+      expect(capture.getFullOutput()).toContain("Usage:");
+    } finally {
+      capture.stop();
+    }
+  });
+
+  test("chat ephemeral with no duration shows usage instead of disabling", async () => {
+    const capture = captureConsole();
+    try {
+      const result = await runCmd("chat", ["ephemeral", "6281234567890"]);
       expect(result).toBe(false);
       expect(capture.getFullOutput()).toContain("Usage:");
     } finally {

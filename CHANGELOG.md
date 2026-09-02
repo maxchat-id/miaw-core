@@ -80,6 +80,13 @@ no breaking changes.
 
 ### Fixed
 
+- **Omitting a disappearing-message duration silently disabled it.**
+  `miaw-cli group ephemeral <jid>` with no duration turned disappearing messages
+  **off** for the whole group instead of printing a usage line — `Number("")` is
+  `0`, and `0` is a valid duration meaning "off", so the missing argument parsed
+  as a successful request to disable. Same for `community ephemeral`,
+  `chat ephemeral`, and `privacy disappearing` (which changed an account-wide
+  default). Found in review of this release, before any of it shipped.
 - **`--force` could swallow the following token.** It was missing from
   `BOOLEAN_FLAGS` in `bin/miaw-cli.ts`, the same class of bug that `--json` hit
   previously.
@@ -95,7 +102,8 @@ no breaking changes.
   `13-privacy-call-commands.test.ts`. Files run in name order and 13 is now the
   last one needing a connection (11 and 12 are deliberately offline), so
   disconnecting at 10 would pull the socket out from under it.
-- 548 unit tests (up from 417), 66 CLI router tests (up from 26).
+- 597 unit tests (up from 417), 70 CLI router tests (up from 26), 234 CLI
+  integration tests across 13 files.
 
 ## [1.11.0] - 2026-09-02
 

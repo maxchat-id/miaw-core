@@ -6,6 +6,14 @@
 - `src/client/MiawClient.ts` - Main client implementation
 - `tests/interactive-test.ts` - Interactive manual test suite
 
+> **⚠️ Stale as of v1.12.0 (2026-09-02).** The API surface is now ~200 public
+> methods; the figures below cover 92 of them. Everything the note beneath used
+> to list as "not yet implemented" has since shipped (chat management v1.7.0,
+> rich messages v1.6.0, communities v1.9.0, and group/community admin, privacy,
+> blocklist, calls, invite cards and pinning in v1.12.0), and none of it is
+> counted here. Treat the percentages as historical. `npm run test:manual` gained
+> `privacy` and `calls` groups in v1.12.0.
+>
 > **Note:** The figures below reflect the 92-method API surface as of v1.4.1. The not-yet-implemented Baileys features tracked in [ROADMAP.md → Not-Yet-Implemented Baileys Features](./ROADMAP.md#not-yet-implemented-baileys-features-prioritized) (chat management, rich messages, privacy/blocklist, etc.) are **not** counted here and will need coverage as they land. A full regeneration of this table is out of scope for the rc13 docs refresh.
 
 ## Summary

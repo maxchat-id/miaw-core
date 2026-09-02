@@ -46,10 +46,21 @@ export const EPHEMERAL_ALIASES: Record<string, number> = {
 
 /**
  * Parse a disappearing-message duration: a named alias or a raw second count.
- * @returns the duration in seconds, or `null` when unparseable
+ *
+ * @returns the duration in seconds, or `null` when missing or unparseable
+ *
+ * The empty-value guard is load-bearing, not defensive: `Number("")` is `0`,
+ * and `0` is a *valid* duration meaning "off". Without it, omitting the
+ * argument entirely would parse as a successful request to disable
+ * disappearing messages, so `miaw-cli group ephemeral <jid>` would silently
+ * turn them off for the whole group instead of printing a usage line.
  */
 export function parseEphemeral(value: string | undefined): number | null {
-  const key = (value || "").toLowerCase();
+  const key = value?.trim().toLowerCase();
+  if (!key) {
+    return null;
+  }
+
   if (key in EPHEMERAL_ALIASES) {
     return EPHEMERAL_ALIASES[key];
   }
