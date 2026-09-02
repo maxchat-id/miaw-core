@@ -20,8 +20,18 @@ const client = new MiawClient({
   instanceId: INSTANCE,
   sessionPath: SESSION,
   browser: BrowserPresets.android("13"),
-  autoReconnect: false,
+  // Must stay ON. WhatsApp closes the socket with `restartRequired` (515)
+  // immediately after a fresh QR pairing and expects the client to reconnect
+  // on the credentials it just issued. With autoReconnect off, that normal
+  // handshake step looks like a failure even though pairing succeeded.
+  autoReconnect: true,
 });
+
+const sessionDir = `${SESSION}/${INSTANCE}`;
+if (fs.existsSync(`${sessionDir}/creds.json`)) {
+  console.log(`📂 Reusing the existing ${INSTANCE} session (no QR needed).`);
+  console.log(`   Delete ${sessionDir} to force a fresh pairing.\n`);
+}
 
 console.log("browser identity:", JSON.stringify(BrowserPresets.android("13")));
 console.log("(os slot = Android version, browser slot = 'Android' — the slot the handshake sniffs)\n");
@@ -35,11 +45,26 @@ client.on("qr", (qr) => {
 
 const ready = new Promise<boolean>((resolve) => {
   client.on("ready", () => resolve(true));
-  client.on("disconnected", (r, s) => {
-    console.log(`\n❌ disconnected: reason=${r} status=${s}`);
-    resolve(false);
+
+  client.on("disconnected", (reason, statusCode) => {
+    // 515 right after pairing is the expected post-QR restart, not a failure —
+    // the credentials are already valid and autoReconnect will come straight
+    // back. Anything else that is not a logout is also worth riding out.
+    if (reason === "restartRequired" || statusCode === 515) {
+      console.log("\n🔄 restartRequired (515) — expected after pairing, reconnecting...");
+      return;
+    }
+    if (reason === "loggedOut") {
+      console.log(`\n❌ logged out (${statusCode}) — pairing rejected`);
+      resolve(false);
+      return;
+    }
+    console.log(`\n… disconnected: reason=${reason} status=${statusCode} (waiting for reconnect)`);
   });
-  setTimeout(() => resolve(false), 180000);
+
+  client.on("reconnecting", (attempt) => console.log(`   reconnect attempt ${attempt}...`));
+
+  setTimeout(() => resolve(false), 240000);
 });
 
 await client.connect();
@@ -52,7 +77,7 @@ console.log("\n✅ Paired with the Android identity.");
 console.log("   Baileys should have logged an 'experimental' warning above.\n");
 console.log("📸 Now send a VIEW-ONCE IMAGE to this account from another phone.");
 console.log("   (attach an image → tap the ⓵ 'view once' icon → send)\n");
-console.log("Waiting up to 3 minutes...\n");
+console.log("Waiting up to 6 minutes...\n");
 
 const got = await new Promise<any>((resolve) => {
   const onMsg = (m: any) => {
@@ -65,7 +90,7 @@ const got = await new Promise<any>((resolve) => {
     }
   };
   client.on("message", onMsg);
-  setTimeout(() => resolve(null), 180000);
+  setTimeout(() => resolve(null), 360000);
 });
 
 if (!got) {
