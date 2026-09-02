@@ -290,7 +290,7 @@ Implementation notes that affect you:
 - A reload that yields zero valid entries is treated as a failure and the **previous pool is kept**, which closes the truncate-then-write race.
 - Call `rotator.close()` when you're done.
 
-**What hot reload does not do:** it will not re-proxy an already-connected client. A `MiawClient` binds its agent at `connect()`. Reloading changes which proxy *future* connections get; to move a live session you must disconnect and reconnect it — and read [Rotation Strategies](#rotation-strategies) before you decide to.
+**What hot reload does not do:** it will not re-proxy an already-connected client. A `MiawClient` binds its agent at `connect()`. Reloading changes which proxy *future* connections get; to move a live session, call [`setProxy()`](#handling-a-dead-proxy) then `disconnect()` and `connect()` explicitly — and read [Rotation Strategies](#rotation-strategies) before you decide to.
 
 ---
 
@@ -390,33 +390,115 @@ for (const [instanceId, proxy] of Object.entries(assignments)) {
 }
 ```
 
+On the CLI, that same map is what a **pin** persists — see below.
+
+### Pinning a proxy to an instance (CLI)
+
+`instance set-proxy` writes the assignment to `<session-path>/instances.json`, so every later invocation for that instance uses it with no flags:
+
+```bash
+# Pin by label - stores NO credentials, only the name of a `label=` entry
+# in your proxy file. Rotating a proxy password then touches only that file.
+miaw-cli instance set-proxy bot-eu --label eu --proxy-file ./proxies.txt
+
+# Or from an environment variable, to keep the URL out of shell history
+MIAW_EU_PROXY='socks5://user:pass@eu1.example.com:1080' \
+  miaw-cli instance set-proxy bot-eu --from-env MIAW_EU_PROXY
+
+# Thereafter, no proxy flags needed:
+miaw-cli --instance-id bot-eu get groups
+miaw-cli --instance-id bot-eu proxy test     # tests bot-eu's pinned proxy
+
+miaw-cli instance ls            # shows each instance's proxy, masked
+miaw-cli instance unset-proxy bot-eu
+```
+
+**Precedence**, highest first:
+
+1. `--proxy` / `MIAW_PROXY` — always wins, and warns when it shadows a pin
+2. the pin in `instances.json`
+3. `--proxy-file` + `--proxy-strategy`, hashed on the **target** instance id
+4. direct
+
+A pin applies on the instance's **next** connect. Changing a live session's egress IP is read by WhatsApp as account takeover, so `set-proxy` says so and the client cache refuses to rebuild a connected client.
+
+`instances.json` is written `0600` and lives inside your (gitignored) session directory. A `url` pin contains credentials; a `label` pin does not — prefer labels. `instance delete` drops the pin; `instance logout` keeps it, so you re-pair from the same egress IP.
+
 ### Handling a dead proxy
 
-A proxy that stops responding looks like a network failure, and miaw-core's auto-reconnect will keep retrying through it. To fail over, drop it from the pool and reconnect:
+A proxy that stops responding looks like a network failure, and miaw-core's auto-reconnect will keep retrying through it. To fail over, drop it from the pool and reconnect the **same** client through a replacement:
 
 ```typescript
-const rotator = await ProxyRotator.fromFile("./proxies.txt");
-let pool = (await loadProxyList("./proxies.txt")).map((p) => p.url);
+import { MiawClient, ProxyRotator, loadProxyList, maskProxyUrl } from "miaw-core";
 
-client.on("connection", async (state) => {
-  if (state !== "disconnected") return;
+const instanceId = "failover-bot";
+let pool = (await loadProxyList("./proxies.txt")).map((p) => p.url);
+const rotator = new ProxyRotator({ proxies: pool, strategy: "deterministic" });
+
+// ONE client for the lifetime of the process. Its auth state, instanceId,
+// stores and your event handlers all survive disconnect() -> connect().
+const client = new MiawClient({
+  instanceId,
+  sessionPath: "./sessions",
+  proxy: rotator.forInstance(instanceId),
+});
+
+let consecutiveFailures = 0;
+let failingOver = false;
+
+client.on("ready", () => {
+  consecutiveFailures = 0;
+});
+
+client.on("disconnected", async (reason) => {
+  if (reason === "intentional") return;   // our own disconnect(), below
+  if (failingOver) return;                // don't re-enter mid-failover
+  if (++consecutiveFailures < 3) return;  // a blip is not a dead proxy
 
   const current = client.getProxyInfo();
-  if (!current) return;
+  if (!current) return;                   // direct, or a custom agent
 
-  // Drop the failing proxy and re-select from what's left.
-  pool = pool.filter((url) => !url.includes(new URL(current.url).host));
-  if (pool.length === 0) {
-    console.error("No proxies left in the pool");
-    return;
+  failingOver = true;
+  try {
+    // Masking never touches the host, so this is safe to parse.
+    const deadHost = new URL(current.url).host;
+    const remaining = pool.filter((url) => new URL(url).host !== deadHost);
+    if (remaining.length === 0) {
+      console.error("No proxies left in the pool");
+      return;
+    }
+
+    pool = remaining;
+    rotator.setProxies(pool);             // rendezvous: only THIS bot moves
+    const replacement = rotator.forInstance(instanceId);
+
+    // Tear the old egress down BEFORE staging, so no in-flight reconnect can
+    // pick the replacement up on a socket that is still half-alive.
+    await client.disconnect();
+
+    const res = client.setProxy(replacement);
+    if (!res.success) {
+      console.error("Proxy switch rejected:", res.error);
+      return;
+    }
+    console.warn(`${current.url} failed; switching to ${maskProxyUrl(replacement)}`);
+
+    await client.connect();               // same session, no QR
+    consecutiveFailures = 0;
+  } finally {
+    failingOver = false;
   }
-
-  rotator.setProxies(pool);
-  console.warn(`Proxy ${current.url} failed; re-selecting`);
-  // Rebuild the client with the new proxy - an existing client keeps the
-  // agent it was constructed with.
 });
+
+await client.connect();
 ```
+
+Four things this gets right that a naive version does not:
+
+- **Listen on `disconnected`, not `connection`, and filter `reason === "intentional"`** — otherwise your own `disconnect()` re-enters the handler.
+- **Require several consecutive failures.** Reacting to a single blip permanently drops a healthy proxy from the pool.
+- **`await disconnect()` before `setProxy()`.** `setProxy()` only ever stages for the next connect; it never touches a live socket, because changing a connected session's egress IP is read by WhatsApp as account takeover.
+- **Reuse the client.** Constructing a second `MiawClient` on the same `sessionPath`/`instanceId` while the first is alive gives you two writers on one auth state. Reuse is safe: `disconnect()` does not remove your event listeners (only the terminal `dispose()` does), and `connect()` re-reads `creds.json`, so the session survives and no QR is needed.
 
 Because `deterministic` uses rendezvous hashing, removing the dead proxy moves only the instances that were on it. Your other bots do not budge.
 
@@ -580,6 +662,8 @@ Confirm: it connects; latency is acceptable from where you actually run; the exi
 
 | Export | Signature | Purpose |
 |--------|-----------|---------|
+| `client.setProxy` | `(proxy \| null) => SetProxyResult` | Stages a proxy for the **next** `connect()`. Never touches a live socket. Refused when the client was built with a custom `agent`/`fetchAgent`. |
+| `client.getProxyInfo` | `() => ProxyInfo \| null` | Masked `url`, `protocol`, plus `active` (is the open socket using this config?) and `pending` (what the socket is using instead). `null` means no miaw-core-managed proxy. |
 | `createProxyAgents` | `(config) => Promise<{ wsAgent, fetchAgent, downloadDispatcher? }>` | `wsAgent` and `fetchAgent` are the **same** `http.Agent`. `downloadDispatcher` is the undici Dispatcher for downloads, and is `undefined` for SOCKS. |
 | `validateProxyConfig` | `(config) => boolean` | URL parseable and protocol supported. |
 | `maskProxyUrl` | `(config) => string` | Password-masked URL, safe to print. Never throws. |
@@ -619,3 +703,4 @@ Utilities **throw** on bad input rather than returning `{ success, error }` — 
 |---------|--------|
 | v1.3.0 | `proxy` option, `createProxyAgents()`, `validateProxyConfig()`, `getProxyInfo()`, CLI `--proxy` |
 | v1.10.0 | Proxy list files, `ProxyRotator`, `maskProxyUrl()`, CLI `proxy` commands, `--proxy-file` / `--proxy-strategy`, this guide |
+| v1.11.0 | Per-instance pins (`instance set-proxy`), `setProxy()`, `getProxyInfo().active` / `.pending`, per-target CLI proxy resolution |

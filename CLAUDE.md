@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Key abstraction**: miaw-core handles all Baileys boilerplate so developers can focus on bot logic instead of connection lifecycle, auth state management, and message parsing.
 
-**Current Version**: 1.10.0
+**Current Version**: 1.11.0
 **Baileys Version**: 7.0.0-rc13
 **Module System**: ESM-only (`"type": "module"`)
 **Node.js Required**: >= 18.0.0
@@ -234,6 +234,23 @@ Sessions are stored at `{sessionPath}/{instanceId}/` using Baileys' multi-file a
   `getProxyInfo()` and dropping the `fetchAgent`.
 - The default strategy is `deterministic` (rendezvous hashing on `instanceId`). **Do not
   rotate a live session's IP** — WhatsApp reads that as account takeover.
+- `setProxy()` stages a proxy for the **next** `connect()` and never touches a live
+  socket; it is refused outright when the client was built with a custom
+  `agent`/`fetchAgent`, since those take precedence and would make it a silent no-op.
+  `getProxyInfo()` returns `null` for such a client by design — that means "no
+  miaw-core-managed proxy", not "no proxy".
+- **CLI per-instance pins** live in `<sessionPath>/instances.json` (mode 0600), written
+  only by [src/cli/utils/instance-config.ts](src/cli/utils/instance-config.ts). Precedence
+  is resolved in one place,
+  [src/cli/utils/proxy-resolver.ts](src/cli/utils/proxy-resolver.ts): `--proxy` >
+  pin > `--proxy-file` > direct. Resolution happens at async boundaries and is keyed on
+  the **target** instance — never reuse the startup instance's config for another
+  instance.
+- Every `instance` command handler takes a whole `ClientConfig`, never a
+  `(sessionPath, instanceId)` pair: the pair silently dropped `proxy` and `debug`.
+- The client cache key stays `instanceId:sessionPath` — adding the proxy would let one
+  instance hold two entries, i.e. two sockets for one account. A proxy mismatch instead
+  warns, and rebuilds **only** when the instance is disconnected.
 - See [docs/PROXY.md](docs/PROXY.md).
 
 ### Adding New Client Methods
