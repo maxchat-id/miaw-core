@@ -29,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New exported types `SetProxyResult` and `ProxyInfo`.
 - A complete, runnable dead-proxy failover recipe in docs/PROXY.md and
   examples/10-proxy-rotation.ts, reusing a single client.
+- `docs/DEPLOYMENT_INSTANCE_PROXY.md` — operational notes for the new
+  persistent pin store, and `docs/FOLLOW_UPS.md` for deferred findings.
 
 ### Behavior changes
 
@@ -40,7 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   account takeover. Code changed rather than docs, so the default fails safe.
   `next()` with no `instanceId` on a defaulted rotator now throws a message
   naming the fix; pass `{ strategy: "round-robin" }` explicitly to restore the
-  old behavior.
+  old behavior. Checked against the sibling `miaw-api`, which constructs with an
+  explicit strategy and always calls `next(instanceId)`: unaffected.
 
 ### Fixed
 
@@ -68,6 +71,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.cli_history` was written 0644 with every line verbatim, so an
   `instance set-proxy` command turned it into a plaintext credential store. Now
   redacted at entry and written 0600.
+- **Global boolean flags swallowed the command name.** The arg parser assumed
+  every `--flag` took a value, so `miaw-cli --json instance ls` parsed as
+  `json="instance"` and failed with "Unknown command: ls" — even though
+  `--json` is documented as a global option. Value-less flags (`--json`,
+  `--debug`, `--ip`, `--from-file`, `--help`, `--version`) are now recognised
+  as booleans in any position.
+- **`src/utils/proxy-rotator.ts` contained a literal NUL byte**, which made
+  `file(1)` classify the source as binary and caused `grep` to skip it in any
+  repo-wide search. Replaced with the equivalent escape sequence; verified
+  runtime-identical, so no instance is remapped to a different proxy.
 - **Docs: `fetchAgent` is an `http.Agent`, not an undici Dispatcher.** The JSDoc
   and three doc sites claimed otherwise; the PROXY.md "Custom agents" snippet was
   copy-pasteable and would silently break every media upload through the proxy.
