@@ -376,6 +376,72 @@ export interface MessageReceiptUpdate {
 }
 
 /**
+ * Stage of an incoming or outgoing call (v1.12.0).
+ *
+ * `offer` is the one that matters for most bots — it is the first event of a
+ * new call and the point at which {@link MiawClient.rejectCall} still works.
+ */
+export type CallStatus =
+  | "offer"
+  | "ringing"
+  | "preaccept"
+  | "transport"
+  | "relaylatency"
+  | "timeout"
+  | "reject"
+  | "accept"
+  | "terminate";
+
+/**
+ * A call event (v1.12.0). Emitted on the `call` event.
+ */
+export interface MiawCall {
+  /** Call ID — pass to rejectCall() together with `from` */
+  id: string;
+
+  /** JID of the caller */
+  from: string;
+
+  /** Caller's phone JID, when the caller is addressed by @lid */
+  callerPhone?: string;
+
+  /** Chat JID the call belongs to */
+  chatId: string;
+
+  /** Whether this is a group call */
+  isGroup: boolean;
+
+  /** Group JID for a group call */
+  groupJid?: string;
+
+  /** Whether this is a video call (audio call otherwise) */
+  isVideo: boolean;
+
+  /** Stage of the call */
+  status: CallStatus;
+
+  /** When the event occurred */
+  date: Date;
+
+  /** Whether the event was delivered from WhatsApp's offline queue */
+  offline: boolean;
+
+  /** Original raw Baileys call event for advanced use */
+  raw?: any;
+}
+
+/**
+ * Result of a call operation (v1.12.0).
+ */
+export interface CallOperationResult {
+  /** Whether the operation was successful */
+  success: boolean;
+
+  /** Error message if failed */
+  error?: string;
+}
+
+/**
  * Events emitted by MiawClient
  */
 export interface MiawClientEvents {
@@ -402,6 +468,9 @@ export interface MiawClientEvents {
 
   /** Emitted when someone votes on a poll (carries the aggregated tally) */
   poll_vote: (vote: PollVoteUpdate) => void;
+
+  /** Emitted when a call is offered, accepted, rejected or terminated */
+  call: (call: MiawCall) => void;
 
   /** Emitted when a pairing code is generated (pairing-code auth) */
   pairing_code: (code: string) => void;

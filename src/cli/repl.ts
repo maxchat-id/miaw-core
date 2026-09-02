@@ -37,7 +37,7 @@ interface CommandNode {
 const commandTree: Record<string, CommandNode> = {
   // REPL-specific commands
   help: {
-    subcommands: ["instance", "get", "load", "send", "media", "chat", "story", "group", "community", "check", "contact", "profile", "privacy", "block", "label", "business", "catalog", "proxy"],
+    subcommands: ["instance", "get", "load", "send", "media", "chat", "story", "group", "community", "check", "contact", "profile", "privacy", "block", "call", "label", "business", "catalog", "proxy"],
   },
   status: {},
   exit: { aliases: ["quit"] },
@@ -135,6 +135,11 @@ const commandTree: Record<string, CommandNode> = {
   block: {
     subcommands: ["list", "ls", "add", "remove", "rm"],
     flags: ["--json"],
+  },
+  call: {
+    subcommands: ["link"],
+    nestedSubcommands: { link: ["audio", "video"] },
+    flags: ["--start"],
   },
   load: {
     subcommands: ["messages"],
@@ -825,6 +830,7 @@ COMMANDS (use "help <command>" for details):
   profile     Profile management (picture, name, status)
   privacy     Privacy settings (last-seen, online, read receipts, calls, ...)
   block       Blocklist management (list, add, remove)
+  call        Create shareable call links
   label       Label management (WhatsApp Business)
   business    Business profile & cover photo (WhatsApp Business)
   catalog     Catalog management (WhatsApp Business)

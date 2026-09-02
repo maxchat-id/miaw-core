@@ -169,3 +169,5 @@ export {
   cmdBlockSet,
   PRIVACY_SETTINGS,
 } from "./privacy.js";
+
+export { cmdCallLink } from "./call.js";

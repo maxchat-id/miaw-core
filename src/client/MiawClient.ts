@@ -64,6 +64,10 @@ import {
   MemberAddMode,
   JoinRequest,
   EphemeralDurationValue,
+  // v1.12.0 Calls
+  MiawCall,
+  CallStatus,
+  CallOperationResult,
   // v1.12.0 Privacy & Blocklist
   PrivacyValue,
   PrivacyOnlineValue,
@@ -1028,6 +1032,14 @@ export class MiawClient extends EventEmitter {
       }
     });
 
+    // Calls (v1.12.0). Baileys batches these, and the same call produces several
+    // events as it progresses (offer -> ringing -> accept/reject/terminate).
+    this.socket.ev.on("call", (calls) => {
+      for (const call of calls) {
+        this.handleCallEvent(call);
+      }
+    });
+
     // Poll votes (messages.update carries pollUpdates when someone votes)
     this.socket.ev.on("messages.update", (updates) => {
       for (const { key, update } of updates) {
@@ -1140,6 +1152,7 @@ export class MiawClient extends EventEmitter {
     this.socket.ev.removeAllListeners("message-receipt.update");
     this.socket.ev.removeAllListeners("messages.update");
     this.socket.ev.removeAllListeners("presence.update");
+    this.socket.ev.removeAllListeners("call");
     this.socket.ev.removeAllListeners("labels.edit");
     this.socket.ev.removeAllListeners("labels.association");
   }
@@ -2493,6 +2506,116 @@ export class MiawClient extends EventEmitter {
     }
 
     this.emit("message_receipt", update);
+  }
+
+  /**
+   * Normalize a Baileys call event and emit it as `call` (v1.12.0).
+   *
+   * The same call produces several of these as it progresses, so consumers
+   * should switch on `status` — `offer` is the first, and the only stage at
+   * which {@link rejectCall} still does anything.
+   */
+  private handleCallEvent(call: any): void {
+    if (!call) {
+      return;
+    }
+
+    const normalized: MiawCall = {
+      id: call.id || "",
+      // A caller reached over @lid gets its phone JID in `callerPn`; fall back
+      // to the LID resolver so `from` is a phone JID whenever we can manage it.
+      from: this.resolveLidToJid(call.callerPn || call.from || ""),
+      callerPhone: call.callerPn || undefined,
+      chatId: call.chatId || "",
+      isGroup: Boolean(call.isGroup),
+      groupJid: call.groupJid || undefined,
+      isVideo: Boolean(call.isVideo),
+      status: call.status as CallStatus,
+      // Baileys hands us a Date; guard anyway since this crosses a protocol
+      // boundary and a malformed event should not take the listener down.
+      date: call.date instanceof Date ? call.date : new Date(),
+      offline: Boolean(call.offline),
+      raw: call,
+    };
+
+    if (this.options.debug) {
+      this.logger.debug("\n========== CALL ==========");
+      this.logger.debug(JSON.stringify(normalized, null, 2));
+      this.logger.debug("==========================\n");
+    }
+
+    this.emit("call", normalized);
+  }
+
+  // ============================================
+  // Call Methods (v1.12.0)
+  // ============================================
+
+  /**
+   * Reject an incoming call.
+   *
+   * Only meaningful while the call is still ringing — listen for the `call`
+   * event with `status === "offer"` and reject from there.
+   *
+   * @param callId - `id` from the call event
+   * @param callFrom - `from` from the call event
+   */
+  async rejectCall(
+    callId: string,
+    callFrom: string
+  ): Promise<CallOperationResult> {
+    try {
+      if (!this.socket) {
+        throw new Error("Not connected. Call connect() first.");
+      }
+
+      if (this.connectionState !== "connected") {
+        throw new Error(
+          `Cannot reject call. Connection state: ${this.connectionState}`
+        );
+      }
+
+      await this.socket.rejectCall(callId, callFrom);
+
+      return { success: true };
+    } catch (error) {
+      this.logger.error("Failed to reject call:", error);
+      return { success: false, error: (error as Error).message };
+    }
+  }
+
+  /**
+   * Create a shareable call link.
+   *
+   * @param type - 'audio' or 'video'
+   * @param startTime - Optional scheduled start (Unix seconds)
+   * @returns the call link URL, or null on failure
+   */
+  async createCallLink(
+    type: "audio" | "video" = "video",
+    startTime?: number
+  ): Promise<string | null> {
+    try {
+      if (!this.socket) {
+        throw new Error("Not connected. Call connect() first.");
+      }
+
+      if (this.connectionState !== "connected") {
+        throw new Error(
+          `Cannot create call link. Connection state: ${this.connectionState}`
+        );
+      }
+
+      const link = await this.socket.createCallLink(
+        type,
+        startTime !== undefined ? { startTime } : undefined
+      );
+
+      return link || null;
+    } catch (error) {
+      this.logger.error("Failed to create call link:", error);
+      return null;
+    }
   }
 
   // ============================================

@@ -1363,6 +1363,17 @@ client.on("message_receipt", (receipt) => {
   console.log(`Message ${receipt.messageId} ${receipt.type} by ${receipt.recipientId}`);
   // receipt.type: 'delivery' | 'read' | 'played'
 });
+
+// Incoming or outgoing call (v1.12.0)
+client.on("call", async (call) => {
+  // The same call fires several times as it progresses:
+  //   offer -> ringing -> accept | reject | timeout | terminate
+  // `offer` is the first, and the only stage where rejectCall() still works.
+  if (call.status !== "offer") return;
+
+  console.log(`${call.isVideo ? "Video" : "Voice"} call from ${call.from}`);
+  await client.rejectCall(call.id, call.from);
+});
 ```
 
 ### Filter Messages
@@ -1604,6 +1615,7 @@ const client = new MiawClient({
 | `message_delete`  | `(deletion: MessageDelete)`| Message was deleted                  |
 | `message_reaction`| `(reaction: MessageReaction)` | Message received reaction         |
 | `message_receipt` | `(receipt: MessageReceiptUpdate)` | Sent message delivered/read/played |
+| `call`            | `(call: MiawCall)`         | Call offered, accepted, rejected or terminated |
 | `presence`        | `(update: PresenceUpdate)` | Contact's presence changed           |
 | `connection`      | `(state: ConnectionState)` | Connection state changed             |
 | `disconnected`    | `(reason?: string, statusCode?: number)` | Client disconnected. `reason` is `"intentional"` for an explicit `disconnect()`, otherwise the Baileys `DisconnectReason` name |

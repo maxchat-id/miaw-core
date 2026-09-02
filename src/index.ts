@@ -45,6 +45,10 @@ export type {
   MemberAddMode,
   JoinRequest,
   EphemeralDurationValue,
+  // v1.12.0 Calls
+  MiawCall,
+  CallStatus,
+  CallOperationResult,
   // v1.12.0 Privacy & Blocklist
   PrivacyValue,
   PrivacyOnlineValue,

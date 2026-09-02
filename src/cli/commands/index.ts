@@ -64,6 +64,8 @@ import {
   cmdBlockList,
   cmdBlockSet,
   PRIVACY_SETTINGS,
+  // Calls (v1.12.0)
+  cmdCallLink,
   cmdChatMute,
   cmdChatUnmute,
   cmdChatRead,
@@ -552,14 +554,42 @@ export async function runCommand(
   }
 
   // Chat management commands
+  // Calls (v1.12.0)
+  if (command === "call") {
+    const subCommand = parsedArgs._[0] || "";
+
+    switch (subCommand) {
+      case "link": {
+        const type = (parsedArgs._[1] || "video").toLowerCase();
+        if (type !== "audio" && type !== "video") {
+          console.log("❌ Usage: miaw-cli call link [audio|video] [--start <unix-seconds>]");
+          return false;
+        }
+        const start = parsedArgs.start ?? context.flags?.start;
+        if (start !== undefined && typeof start !== "number") {
+          console.log("❌ --start must be a Unix timestamp in seconds");
+          return false;
+        }
+        return await cmdCallLink(client, { type, startTime: start });
+      }
+
+      default:
+        console.log(`❌ Unknown call command: ${subCommand}`);
+        console.log("Commands: link");
+        return false;
+    }
+  }
+
   // Privacy settings (v1.12.0)
   if (command === "privacy") {
     const subCommand = parsedArgs._[0] || "";
 
     switch (subCommand) {
       case "show":
-      case "":
-        return await cmdPrivacyShow(client, { force: parsedArgs.force }, jsonOutput);
+      case "": {
+        const force = Boolean(parsedArgs.force ?? context.flags?.force);
+        return await cmdPrivacyShow(client, { force }, jsonOutput);
+      }
 
       case "set":
         if (parsedArgs._.length < 3) {
@@ -1590,7 +1620,7 @@ export async function runCommand(
  * Parse command arguments.
  * Only auto-converts known numeric flags to numbers; all others stay as strings.
  */
-const NUMERIC_FLAGS = new Set(["limit", "count", "cursor", "timeout"]);
+const NUMERIC_FLAGS = new Set(["limit", "count", "cursor", "timeout", "start"]);
 
 function parseCommandArgs(args: string[]): any {
   const parsed: any = { _: [] };
