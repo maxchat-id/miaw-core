@@ -223,6 +223,9 @@ export class MiawClient extends EventEmitter {
   /** undici Dispatcher used to route media downloads through the proxy. */
   private downloadDispatcher: unknown;
 
+  /** The ws/upload agent of the current connection, kept so it can be closed. */
+  private proxyWsAgent: unknown;
+
   /**
    * The proxy the CURRENTLY OPEN socket was built from, masked. Distinct from
    * options.proxy, which setProxy() can change while a socket is still live.
@@ -231,6 +234,21 @@ export class MiawClient extends EventEmitter {
   // Cached WA Web version (resolved once, reused across reconnects)
   private cachedVersion: WAVersion | null = null;
   private loggingOut = false;
+
+  /**
+   * Set for the duration of an explicit disconnect(), so handleDisconnect()
+   * can tell a deliberate teardown from a dropped connection. Baileys' end()
+   * emits connection.update{close}, which would otherwise be read as an
+   * involuntary drop and schedule a reconnect the caller never asked for.
+   */
+  private intentionalDisconnect = false;
+
+  /**
+   * Whether THIS client currently holds a reference on the global console
+   * filter. The filter is reference-counted, so an unbalanced acquire/release
+   * across a reconnect cycle would steal a reference from another live client.
+   */
+  private consoleFilterActive = false;
   private logger: MiawLogger;
   private lidToJidMap: LruCache = new LruCache();
   // Custom stores for contacts, chats, messages (Baileys v7 removed makeInMemoryStore)
@@ -287,9 +305,7 @@ export class MiawClient extends EventEmitter {
 
     // Enable console filter to suppress libsignal logs when debug is off
     // libsignal logs directly to console.info/warn, bypassing our logger
-    if (!this.options.debug) {
-      enableConsoleFilter();
-    }
+    this.acquireConsoleFilter();
 
     // Initialize handlers
     this.authHandler = new AuthHandler(
@@ -345,10 +361,21 @@ export class MiawClient extends EventEmitter {
       const proxyAgents = await this.resolveProxyAgents();
       // Kept for downloadMedia(): Baileys never plumbs a proxy into its
       // download path, so we have to supply the dispatcher ourselves.
+      // Release the previous connection's pools before replacing them.
+      this.disposeProxyTransport();
       this.downloadDispatcher = proxyAgents?.downloadDispatcher;
-    // Remember what this socket is actually dialling through, so a later
-    // setProxy() can report the divergence instead of pretending it took.
-    this.activeProxy = proxyAgents?.wsAgent ? this.describeConfiguredProxy() : undefined;
+      this.proxyWsAgent = proxyAgents?.wsAgent;
+
+      // A disconnect() released this client's console-filter reference; take
+      // it back rather than leaving the refcount short for other clients.
+      this.acquireConsoleFilter();
+      this.intentionalDisconnect = false;
+
+      // Remember what this socket is actually dialling through, so a later
+      // setProxy() can report the divergence instead of pretending it took.
+      this.activeProxy = proxyAgents?.wsAgent
+        ? this.describeConfiguredProxy()
+        : undefined;
 
       // Create socket
       const debugMode = this.options.debug;
@@ -515,6 +542,42 @@ export class MiawClient extends EventEmitter {
     }
 
     return undefined;
+  }
+
+  /** Take a reference on the console filter, at most once per client. */
+  private acquireConsoleFilter(): void {
+    if (!this.options.debug && !this.consoleFilterActive) {
+      enableConsoleFilter();
+      this.consoleFilterActive = true;
+    }
+  }
+
+  /** Release this client's console-filter reference, if it holds one. */
+  private releaseConsoleFilter(): void {
+    if (this.consoleFilterActive) {
+      disableConsoleFilter();
+      this.consoleFilterActive = false;
+    }
+  }
+
+  /**
+   * Best-effort teardown of the previous connection's proxy transports.
+   *
+   * connect() builds fresh agents on every call, auto-reconnects included, so
+   * without this a long reconnect loop leaks socket pools.
+   */
+  private disposeProxyTransport(): void {
+    const closable = [this.downloadDispatcher, this.proxyWsAgent];
+    for (const item of closable) {
+      try {
+        (item as { close?: () => void })?.close?.();
+        (item as { destroy?: () => void })?.destroy?.();
+      } catch {
+        // A transport that refuses to close is not worth failing over.
+      }
+    }
+    this.downloadDispatcher = undefined;
+    this.proxyWsAgent = undefined;
   }
 
   /** Masked description of the configured proxy, or undefined when direct. */
@@ -1565,6 +1628,10 @@ export class MiawClient extends EventEmitter {
    * Dispose client and clean up resources
    */
   async dispose(): Promise<void> {
+    // Terminal teardown, so it counts as intentional: nothing here should
+    // trigger a reconnect.
+    this.intentionalDisconnect = true;
+
     // Clear reconnect timer
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
@@ -1587,6 +1654,10 @@ export class MiawClient extends EventEmitter {
       this.socket = null;
     }
 
+    this.disposeProxyTransport();
+    this.activeProxy = undefined;
+    this.releaseConsoleFilter();
+
     this.updateConnectionState("disconnected");
   }
 
@@ -1595,6 +1666,17 @@ export class MiawClient extends EventEmitter {
    * @returns true if should reconnect
    */
   private handleDisconnect(lastDisconnect: any): boolean {
+    // An explicit disconnect() already emitted `disconnected` with reason
+    // "intentional" and cleared the reconnect timer. Baileys' end() then emits
+    // connection.update{close}, landing us here: without this guard we would
+    // emit a duplicate event and schedule a reconnect the caller never asked
+    // for - on the old proxy, racing whatever they do next.
+    if (this.intentionalDisconnect) {
+      this.logger.debug("Intentional disconnect, skipping auto-reconnect");
+      this.intentionalDisconnect = false;
+      return false;
+    }
+
     const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
     const reason = DisconnectReason[statusCode] || "unknown";
 
@@ -7072,22 +7154,34 @@ export class MiawClient extends EventEmitter {
    * Use logout() if you want to fully log out and require a new QR code.
    */
   async disconnect(): Promise<void> {
+    // Baileys' end() emits connection.update{connection:"close"}, which our
+    // handler reads as an involuntary drop: it would emit a second
+    // `disconnected` event and schedule a reconnect AFTER the timer below was
+    // cleared - silently reconnecting on the old proxy moments later. This
+    // flag lets handleDisconnect() tell the two apart.
+    this.intentionalDisconnect = true;
+
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
 
     if (this.socket) {
+      // Drop our handlers before ending, so nothing fires on a socket we are
+      // discarding. Must run while this.socket is still set.
+      this.removeSocketEvents();
+
       // Use end() instead of logout() to preserve session
       // logout() would clear credentials and require new QR scan
       this.socket.end(undefined);
       this.socket = null;
     }
 
+    this.disposeProxyTransport();
+    this.activeProxy = undefined;
+
     // Cleanup console filter if it was enabled (reference counted)
-    if (!this.options.debug) {
-      disableConsoleFilter();
-    }
+    this.releaseConsoleFilter();
 
     this.updateConnectionState("disconnected");
     this.logger.info("Disconnected (session preserved)");
@@ -7214,9 +7308,7 @@ export class MiawClient extends EventEmitter {
     this.loggingOut = false;
 
     // Cleanup console filter if it was enabled (reference counted)
-    if (!this.options.debug) {
-      disableConsoleFilter();
-    }
+    this.releaseConsoleFilter();
 
     this.updateConnectionState("disconnected");
     this.logger.info("Logged out (session cleared)");
@@ -7291,8 +7383,8 @@ export class MiawClient extends EventEmitter {
       (this.socket as any).logger = this.logger;
     }
 
-    // Disable console filter to show libsignal logs in debug mode
-    disableConsoleFilter();
+    // Show libsignal logs in debug mode by dropping our filter reference.
+    this.releaseConsoleFilter();
 
     this.logger.info("Debug mode enabled");
   }
@@ -7314,8 +7406,8 @@ export class MiawClient extends EventEmitter {
       (this.socket as any).logger = this.logger;
     }
 
-    // Enable console filter to suppress libsignal session logs
-    enableConsoleFilter();
+    // Suppress libsignal session logs again.
+    this.acquireConsoleFilter();
   }
 
   /**
