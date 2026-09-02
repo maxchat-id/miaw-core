@@ -1,22 +1,38 @@
 # MiawClient Test Coverage Analysis
 
-**Generated:** January 2, 2026 · **Last reviewed:** June 26, 2026 (Baileys 7.0.0-rc13, miaw-core v1.4.1)  
+> ## ⚠️ Historical snapshot — do not quote these numbers
+>
+> This analysis was generated against **miaw-core v1.4.1 / Baileys 7.0.0-rc13**
+> (January 2026, last reviewed June 2026). It measured a **92-method** API
+> surface. That surface is now **~200 methods**, and everything the original
+> version listed as "not yet implemented" has since shipped — chat management
+> (v1.6.0/v1.7.0), rich messages (v1.6.0), status/stories and business extras
+> (v1.8.0), communities (v1.9.0), and group/community admin, privacy, blocklist,
+> calls, invite cards and message pinning (v1.12.0).
+>
+> Every percentage below is therefore computed against a denominator that no
+> longer exists. The table has **not** been regenerated: a hand-maintained
+> coverage table is exactly the artifact that rotted here, and re-freezing it
+> would only restart the clock.
+>
+> **Where to get the real numbers instead:**
+>
+> | Question | Command |
+> |---|---|
+> | What does the manual runner cover, per group? | `npm run test:manual` (counts are generated from the code) |
+> | How many unit tests, and do they pass? | `npm run test:unit` |
+> | How many CLI integration tests? | `npm run test:cli` |
+> | What is knowingly *not* covered? | [FOLLOW_UPS.md §10](./FOLLOW_UPS.md) |
+>
+> _Marked historical 2026-09-02 (miaw-core v1.12.0, Baileys 7.0.0-rc14)._
+
+**Generated:** January 2, 2026 · **Snapshot of:** Baileys 7.0.0-rc13, miaw-core v1.4.1  
 **Source Files Analyzed:**
 
 - `src/client/MiawClient.ts` - Main client implementation
 - `tests/interactive-test.ts` - Interactive manual test suite
 
-> **⚠️ Stale as of v1.12.0 (2026-09-02).** The API surface is now ~200 public
-> methods; the figures below cover 92 of them. Everything the note beneath used
-> to list as "not yet implemented" has since shipped (chat management v1.7.0,
-> rich messages v1.6.0, communities v1.9.0, and group/community admin, privacy,
-> blocklist, calls, invite cards and pinning in v1.12.0), and none of it is
-> counted here. Treat the percentages as historical. `npm run test:manual` gained
-> `privacy` and `calls` groups in v1.12.0.
->
-> **Note:** The figures below reflect the 92-method API surface as of v1.4.1. The not-yet-implemented Baileys features tracked in [ROADMAP.md → Not-Yet-Implemented Baileys Features](./ROADMAP.md#not-yet-implemented-baileys-features-prioritized) (chat management, rich messages, privacy/blocklist, etc.) are **not** counted here and will need coverage as they land. A full regeneration of this table is out of scope for the rc13 docs refresh.
-
-## Summary
+## Summary (as of v1.4.1 — historical)
 
 | Category           | Total Methods | Covered | Coverage |
 | ------------------ | ------------- | ------- | -------- |
@@ -257,7 +273,7 @@
 
 ## Conclusion
 
-The interactive test suite provides **72% coverage** of MiawClient's public API. The main gap is in **Newsletter/Channel features** (29% coverage), with 15 methods lacking tests. Core functionality (messaging, contacts, groups, profile) has excellent coverage at 80-100%.
+As of v1.4.1, the interactive test suite provided **72% coverage** of MiawClient's public API. The main gap was in **Newsletter/Channel features** (29% coverage), with 15 methods lacking tests. Core functionality (messaging, contacts, groups, profile) had 80-100% coverage. None of these figures has been recomputed since; see the banner at the top.
 
 For production readiness, consider:
 

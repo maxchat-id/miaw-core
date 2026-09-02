@@ -195,7 +195,7 @@ When prompted:
 
 ---
 
-### Group Management (11-group-management.test.ts)
+### Group Management (10-group-management.test.ts)
 
 | Test | Description | Manual? |
 |------|-------------|---------|
@@ -211,7 +211,7 @@ When prompted:
 
 ---
 
-### Profile Management (12-profile-management.test.ts)
+### Profile Management (11-profile-management.test.ts)
 
 | Test | Description | Manual? |
 |------|-------------|---------|
@@ -223,7 +223,7 @@ When prompted:
 
 ---
 
-### Business Features (13-business-features.test.ts)
+### Business Features (12-business-features.test.ts)
 
 | Test | Description | Requires |
 |------|-------------|----------|
@@ -237,7 +237,7 @@ When prompted:
 
 ---
 
-### Newsletter (14-newsletter-features.test.ts)
+### Newsletter (13-newsletter-features.test.ts)
 
 | Test | Description | Manual? |
 |------|-------------|---------|
@@ -274,8 +274,17 @@ npm test -- 12-profile-management # Profile operations
 ### Run Unit Tests Only (Fast, No WhatsApp)
 
 ```bash
-npm test -- --testPathIgnorePatterns=integration
+npm run test:unit
 ```
+
+### Type-check src/ and tests/ together
+
+```bash
+npm run typecheck
+```
+
+`npm run build` excludes `tests/`, so this is the only command that
+type-checks the test tree.
 
 ### Run with Verbose Output
 
@@ -377,24 +386,30 @@ npm run test:cli
 ### How It Works
 
 - **Shared setup** (`tests/integration/cli/cli-setup.ts`): Pre-warms the client cache so `runCommand()` finds the connected client. Idempotent — first call connects, subsequent calls return immediately.
-- **Sequential execution** (`--runInBand`): All 10 test files share one WhatsApp connection via the module-level client cache singleton.
-- **Skip logic**: Each connection-dependent test checks `isConnected()` and returns early if not paired.
-- **Teardown**: Only the last test file (`10-business-commands.test.ts`) calls `teardownCLITests()`.
+- **Sequential execution** (`--runInBand`): All 13 test files share one WhatsApp connection via the module-level client cache singleton. Jest is also configured with `maxWorkers: 1`, so this holds even for `npm test`. **Never run two test commands at once** — they would fight over the same session.
+- **Skip logic**: Each connection-dependent test checks `isConnected()` and returns early if not paired. Note this means a disconnected run reports all-green while exercising almost nothing — trust the `=== CLI TEST CLIENT CONNECTED ===` banner, not the pass count.
+- **Teardown**: Only the last connection-using file calls `teardownCLITests()`. That is currently **`13-privacy-call-commands.test.ts`**. Files run in name order, and 11 and 12 are deliberately offline, so a new connection-using file sorting after 13 must take teardown over from it.
 
-### Test Files (77 tests)
+### Test Files
 
-| File | Tests | Connection Required | Description |
-|------|-------|-------------------|-------------|
-| `01-command-router` | 15 | No | Routing, unknown commands, missing args |
-| `02-get-commands` | 14 | Yes | profile, contacts, groups, chats, messages, labels |
-| `03-check-command` | 4 | Yes | Phone number validation, JSON output |
-| `04-contact-commands` | 8 | Yes | list, info, picture, business profile |
-| `05-group-commands` | 9 | Yes | list, info, participants, invite-link |
-| `06-send-commands` | 6 | Yes | text, image, document + error cases |
-| `07-load-commands` | 4 | Yes | Message history loading |
-| `08-profile-commands` | 6 | Yes | name/status set with restore |
-| `09-instance-commands` | 5 | Partial | list, status |
-| `10-business-commands` | 6 | Yes | labels, catalog |
+Per-file test counts are deliberately not listed: they were wrong for three
+releases running. Run `npm run test:cli` for the current numbers.
+
+| File | Connection | Description |
+|------|-----------|-------------|
+| `01-command-router` | Mostly no | Routing, unknown commands, missing args, and that every advertised group/community subcommand reaches a handler |
+| `02-get-commands` | Yes | profile, contacts, groups, chats, messages, labels |
+| `03-check-command` | Yes | Phone number validation, JSON output |
+| `04-contact-commands` | Yes | list, info, picture, business profile |
+| `05-group-commands` | Yes | list, info, participants, invite-link |
+| `06-send-commands` | Yes | text, image, document, video, audio + error cases |
+| `07-load-commands` | Yes | Message history loading |
+| `08-profile-commands` | Yes | name/status set with restore |
+| `09-instance-commands` | Partial | list, status |
+| `10-business-commands` | Yes | labels, catalog (**not** `business` — the name is historical) |
+| `11-proxy-commands` | **No** | Proxy list/test/test-all — fully offline, runs unconditionally |
+| `12-instance-proxy-commands` | **No** | Per-instance proxy pins — fully offline |
+| `13-privacy-call-commands` | Yes | Privacy, blocklist, call links, join-request listings. **Owns teardown.** |
 
 ### Environment Variables
 
@@ -419,6 +434,62 @@ See [CLI Integration Test Plan](../docs/CLI_INTEGRATION_TEST_PLAN.md) for the fu
 
 ---
 
+## Manual / Interactive Runner
+
+`npm run test:manual` drives a curated subset of the API against a live
+connection, one entry at a time.
+
+```bash
+npm run test:manual                   # list the groups, with a live count each
+npm run test:manual all               # every group, prompting before each entry
+npm run test:manual privacy           # one group
+
+npm run test:manual:auto              # unattended: no prompts, non-zero exit on failure
+npm run test:manual group -- --auto   # unattended, one group
+```
+
+The group list is generated from the runner's own `CATEGORY_MAP`, so it cannot
+drift from the code — read it from the command, not from here.
+
+### Unattended mode
+
+Under `--auto` (or `AUTO=1`) every prompt resolves to its default, which the
+helpers already treat as "use the `.env.test` value". Two flags on each entry
+decide what runs:
+
+| Flag | Meaning | Under `--auto` |
+|------|---------|----------------|
+| `manual: true` | Needs a human to act out-of-band — send the bot a message, place a call | Always skipped; env config cannot substitute |
+| `destructive: true` | Irreversibly changes real state, **or** changes a setting WhatsApp will not read back so it cannot be restored | Skipped unless `--destructive` / `AUTO_DESTRUCTIVE=1` |
+
+Tag new entries accordingly, or an unattended run will either hang on a prompt
+or damage the test account.
+
+> ⚠️ `AUTO_DESTRUCTIVE=1` acts on a **real WhatsApp account**: leaving groups,
+> deleting catalog products, deleting newsletters, removing contacts. Only set
+> it against an account you are willing to break.
+
+### Config that silently invalidates results
+
+On connect the runner warns if `.env.test` sets both contact numbers to the
+same value, or to the connected account's own number. That combination makes
+`checkNumbers`, `addParticipants`, `promoteToAdmin`, `demoteFromAdmin` and
+`blockContact` fail for reasons unrelated to the code — WhatsApp deduplicates a
+batch check, refuses a self-block, and will not add you to a group you are
+already in.
+
+### Android identity / view-once
+
+```bash
+npm run test:viewonce
+```
+
+Pairs a **separate** instance using the Android browser identity and waits for a
+view-once image. Needs a second phone. Set `VIEWONCE_TIMEOUT_MS` to bound the
+wait; unset means wait indefinitely.
+
+---
+
 ## Test Coverage
 
 | Category | Status | Test File |
@@ -430,13 +501,13 @@ See [CLI Integration Test Plan](../docs/CLI_INTEGRATION_TEST_PLAN.md) for the fu
 | Media Sending | ✅ Complete | `05-media-send.test.ts` |
 | Media Download | ✅ Complete | `06-media-download.test.ts` |
 | Message Context | ✅ Complete | `07-message-context.test.ts` |
-| Contact Info | ✅ Complete | `08-validation-social.test.ts` |
+| Contact Info | ✅ Complete | `08-contact-validation.test.ts` |
 | UX Polish | ✅ Complete | `09-ux-polish.test.ts` |
-| Advanced Messaging | ✅ Complete | `10-advanced-messaging.test.ts` |
-| Group Management | ✅ Complete | `11-group-management.test.ts` |
-| Profile Management | ✅ Complete | `12-profile-management.test.ts` |
-| Business Features | ✅ Complete | `13-business-features.test.ts` |
-| Newsletter | ✅ Complete | `14-newsletter-features.test.ts` |
+| Advanced Messaging | ✅ Complete | `07-message-context.test.ts` |
+| Group Management | ✅ Complete | `10-group-management.test.ts` |
+| Profile Management | ✅ Complete | `11-profile-management.test.ts` |
+| Business Features | ✅ Complete | `12-business-features.test.ts` |
+| Newsletter | ✅ Complete | `13-newsletter-features.test.ts` |
 
 ---
 
@@ -448,8 +519,11 @@ See [CLI Integration Test Plan](../docs/CLI_INTEGRATION_TEST_PLAN.md) for the fu
 | `npm test -- 02-message-receive` | Test receiving messages (interactive) |
 | `npm test -- 03-message-send` | Test sending messages |
 | `npm test -- 05-media-send` | Test sending media |
-| `npm test -- 11-group-management` | Test group operations |
-| `npm test -- --testPathIgnorePatterns=integration` | Run unit tests only |
+| `npm test -- 10-group-management` | Test group operations |
+| `npm run test:unit` | Run unit tests only (fast, no WhatsApp) |
+| `npm run test:cli` | Run the CLI integration suites |
+| `npm run test:manual:auto` | Unattended manual runner |
+| `npm run typecheck` | Type-check src/ and tests/ |
 | `rm -rf test-sessions/` | Reset pairing (delete session) |
 
 ---
@@ -467,12 +541,12 @@ See [CLI Integration Test Plan](../docs/CLI_INTEGRATION_TEST_PLAN.md) for the fu
 
 ## Related Documentation
 
-- [TESTS.md](./TESTS.md) - Detailed test plan for v1.0.0
-- [MANUAL_TEST_CHECKLIST.md](./MANUAL_TEST_CHECKLIST.md) - Interactive testing checklist
+- [TESTS.md](./TESTS.md) - The v1.0.0 test plan (superseded; see its banner)
+- [../docs/CLI_INTEGRATION_TEST_PLAN.md](../docs/CLI_INTEGRATION_TEST_PLAN.md) - CLI suite layout and teardown ownership
 - [../docs/USAGE.md](../docs/USAGE.md) - Complete usage guide
 - [../docs/MIGRATION.md](../docs/MIGRATION.md) - Migration guide between versions
 
 ---
 
-**Last Updated:** 2025-12-24
-**Version:** 1.0.0
+**Last Updated:** 2026-09-02
+**Version:** 1.12.0

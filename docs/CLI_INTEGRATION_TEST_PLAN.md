@@ -1,5 +1,14 @@
 # CLI Integration Test Plan
 
+> **How to read this.** The numbered phases are the original implementation
+> plan, completed. The counts they once carried have been removed rather than
+> re-guessed — run `npm run test:cli` for current numbers. The
+> **Test Execution Order**, **Teardown ownership**, **What's Explicitly NOT
+> Tested** and **File Structure** sections below *are* kept current, because
+> they describe invariants a contributor has to respect.
+>
+> _Reviewed 2026-09-02 (miaw-core v1.12.0)._
+
 ## Overview
 
 End-to-end integration tests for the miaw-core CLI tool. All tests run against a real WhatsApp connection — no mocks. If the account is not paired/connected, the entire suite is skipped.
@@ -32,12 +41,12 @@ End-to-end integration tests for the miaw-core CLI tool. All tests run against a
 
 ### Phase 2: Read-Only Command Tests (safe, no side effects)
 
-- [x] **2.1** Create `tests/integration/cli/01-command-router.test.ts` (15 tests)
+- [x] **2.1** Create `tests/integration/cli/01-command-router.test.ts`
   - [x] Unknown command returns `false`
-  - [x] Empty subcommand shows help for all 10 command categories
+  - [x] Empty subcommand shows help for all 19 command categories
   - [x] Missing args validation (`get messages`, `check`, `send text`)
 
-- [x] **2.2** Create `tests/integration/cli/02-get-commands.test.ts` (14 tests)
+- [x] **2.2** Create `tests/integration/cli/02-get-commands.test.ts`
   - [x] `get profile` — own profile, returns `true`
   - [x] `get profile <contactJid>` — contact profile, returns `true`
   - [x] `get contacts` — no filter, returns `true`
@@ -53,13 +62,13 @@ End-to-end integration tests for the miaw-core CLI tool. All tests run against a
   - [x] `get labels` — returns `true` (or graceful empty)
   - [x] `get contacts --json` — validates JSON output
 
-- [x] **2.3** Create `tests/integration/cli/03-check-command.test.ts` (4 tests)
+- [x] **2.3** Create `tests/integration/cli/03-check-command.test.ts`
   - [x] `check <validPhone>` — returns `true`
   - [x] `check <phone1> <phone2>` — batch check, returns `true`
   - [x] `check --json` — validates JSON output
   - [x] `check` (no args) — returns `false`
 
-- [x] **2.4** Create `tests/integration/cli/04-contact-commands.test.ts` (8 tests)
+- [x] **2.4** Create `tests/integration/cli/04-contact-commands.test.ts`
   - [x] `contact list` — returns `true`
   - [x] `contact ls` (alias) — returns `true`
   - [x] `contact list --filter <name>` — returns `true`
@@ -69,7 +78,7 @@ End-to-end integration tests for the miaw-core CLI tool. All tests run against a
   - [x] `contact business <phone>` — returns `true` or `false` (non-biz OK)
   - [x] `contact info` (missing phone) — returns `false`
 
-- [x] **2.5** Create `tests/integration/cli/05-group-commands.test.ts` (9 tests)
+- [x] **2.5** Create `tests/integration/cli/05-group-commands.test.ts`
   - [x] `group list` — returns `true`
   - [x] `group ls` (alias) — returns `true`
   - [x] `group list --filter <name>` — returns `true`
@@ -82,7 +91,7 @@ End-to-end integration tests for the miaw-core CLI tool. All tests run against a
 
 ### Phase 3: Write Command Tests (controlled side effects)
 
-- [x] **3.1** Create `tests/integration/cli/06-send-commands.test.ts` (6 tests)
+- [x] **3.1** Create `tests/integration/cli/06-send-commands.test.ts`
   - [x] `send text <phone> "CLI integration test"` — returns `true`
   - [x] `send text` (missing args) — returns `false`
   - [x] `send image <phone> <testImagePath>` — returns `true`
@@ -90,13 +99,13 @@ End-to-end integration tests for the miaw-core CLI tool. All tests run against a
   - [x] `send image <phone> /nonexistent.jpg` — returns `false`
   - [x] `send document <phone> <testDocPath>` — returns `true`
 
-- [x] **3.2** Create `tests/integration/cli/07-load-commands.test.ts` (4 tests)
+- [x] **3.2** Create `tests/integration/cli/07-load-commands.test.ts`
   - [x] `load messages <jid>` — returns `true`
   - [x] `load messages <jid> --count 10` — returns `true`
   - [x] `load messages` (missing JID) — returns `false`
   - [x] `load foobar` (unknown subcommand) — returns `false`
 
-- [x] **3.3** Create `tests/integration/cli/08-profile-commands.test.ts` (6 tests)
+- [x] **3.3** Create `tests/integration/cli/08-profile-commands.test.ts`
   - [x] `profile name set "Test Bot"` — returns `true`
   - [x] `profile name set` restores original name
   - [x] `profile status set "CLI integration test"` — returns `true`
@@ -106,14 +115,14 @@ End-to-end integration tests for the miaw-core CLI tool. All tests run against a
 
 ### Phase 4: Instance & Business Tests
 
-- [x] **4.1** Create `tests/integration/cli/09-instance-commands.test.ts` (5 tests)
+- [x] **4.1** Create `tests/integration/cli/09-instance-commands.test.ts`
   - [x] `instance list` — returns `true`
   - [x] `instance ls` (alias) — returns `true`
   - [x] `instance status <instanceId>` — returns `true` (skips if not connected)
   - [x] `instance status nonexistent-xxx` — returns `false`
   - [x] `instance foobar` (unknown sub) — returns `false`
 
-- [x] **4.2** Create `tests/integration/cli/10-business-commands.test.ts` (6 tests)
+- [x] **4.2** Create `tests/integration/cli/10-business-commands.test.ts`
   - [x] `label list` — returns `true`
   - [x] `label ls` (alias) — returns `true`
   - [x] `catalog list` — returns boolean (may fail on non-biz)
@@ -123,7 +132,7 @@ End-to-end integration tests for the miaw-core CLI tool. All tests run against a
 
 ### Phase 5: Finalize
 
-- [x] **5.1** Run full suite, verify all pass (77/77 tests, 10/10 suites)
+- [x] **5.1** Run full suite (originally 77 tests across 10 suites; now 13 suites — see the current counts by running `npm run test:cli`)
 - [x] **5.2** Verify suite skips gracefully when no session exists
 - [x] **5.3** Update `CLAUDE.md` with CLI test documentation
 - [x] **5.4** Update `tests/README.md` with CLI test setup instructions
@@ -186,17 +195,32 @@ const shouldSkip = !isConnected();
 ## Test Execution Order
 
 ```
-01-command-router     →  Fast validation of infrastructure
-02-get-commands       →  Read-only data access (profile, contacts, groups, chats)
-03-check-command      →  Lightweight WhatsApp query
-04-contact-commands   →  Read-only contact queries
-05-group-commands     →  Read-only group queries
-06-send-commands      →  Sends messages to test contact (write)
-07-load-commands      →  Loads message history (safe)
-08-profile-commands   →  Profile name/status updates (reversible write)
-09-instance-commands  →  Instance list/status (read-only subset)
-10-business-commands  →  Labels & catalog (conditional on Business account)
+01-command-router            →  Fast validation of infrastructure; also asserts every
+                                advertised group/community subcommand is dispatchable
+02-get-commands              →  Read-only data access (profile, contacts, groups, chats)
+03-check-command             →  Lightweight WhatsApp query
+04-contact-commands          →  Read-only contact queries
+05-group-commands            →  Read-only group queries
+06-send-commands             →  Sends messages to test contact (write)
+07-load-commands             →  Loads message history (safe)
+08-profile-commands          →  Profile name/status updates (reversible write)
+09-instance-commands         →  Instance list/status (read-only subset)
+10-business-commands         →  Labels & catalog (conditional on Business account)
+11-proxy-commands            →  OFFLINE. Proxy list/test/test-all, no connection at all
+12-instance-proxy-commands   →  OFFLINE. Per-instance proxy pins
+13-privacy-call-commands     →  Privacy, blocklist, call links, join requests.
+                                LAST connection-using file — OWNS TEARDOWN.
 ```
+
+### Teardown ownership
+
+`teardownCLITests()` is called from exactly one place:
+`13-privacy-call-commands.test.ts`. Files execute in name order, and 11 and 12
+are deliberately offline, so 13 is the last file that still holds the shared
+connection. **If you add a connection-using file that sorts after 13, move the
+`afterAll(teardownCLITests)` into it and remove it from 13** — otherwise the
+socket is pulled out from under the new file. Teardown previously lived in
+`10-business-commands.test.ts` for the same reason, and moved when 13 landed.
 
 ---
 
@@ -213,8 +237,15 @@ const shouldSkip = !isConnected();
 | `contact add/remove` | Modifies real contact list |
 | `catalog product create/update/delete` | Modifies real product catalog |
 | `media download` | Requires message with raw media in store |
-| `group name/description/picture set` | Modifies real group settings |
 | `profile picture set/remove` | Modifies real profile picture |
+| `block add/remove` | Blocking a real contact is visible to them, and a failed restore leaves them blocked. Argument handling is covered offline in `01`; the client methods have unit coverage. |
+| `call link` (default) | Mints a real shareable link. Opt in with `TEST_CALL_LINK=1`. |
+| `story`, `business` | No integration coverage at all — see FOLLOW_UPS §10 |
+
+Since v1.12.0, the following are **now tested** and have been removed from this
+list: `group name/description/picture set`, the group and community settings
+write paths (announce, restrict, add-mode, approval, ephemeral), and the
+join-request listings.
 
 These should be tested with `npm run test:manual` or in a throwaway-account environment.
 
@@ -254,7 +285,10 @@ tests/
 │   │   ├── 07-load-commands.test.ts
 │   │   ├── 08-profile-commands.test.ts
 │   │   ├── 09-instance-commands.test.ts
-│   │   └── 10-business-commands.test.ts
+│   │   ├── 10-business-commands.test.ts
+│   │   ├── 11-proxy-commands.test.ts
+│   │   ├── 12-instance-proxy-commands.test.ts
+│   │   └── 13-privacy-call-commands.test.ts
 │   ├── 01-connection.test.ts
 │   ├── ... (existing tests)
 │   └── 13-newsletter-features.test.ts
