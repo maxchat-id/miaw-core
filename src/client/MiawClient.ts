@@ -6465,6 +6465,11 @@ export class MiawClient extends EventEmitter {
 
   /**
    * List the JIDs you have blocked.
+   * Entries arrive in whatever addressing mode WhatsApp holds for each
+   * contact: on a privacy-enabled account these are `@lid` values, not phone
+   * JIDs, so do not compare them against a phone number directly. Use
+   * {@link isBlocked}, which resolves both forms.
+   *
    * @returns Blocked JIDs, or [] when disconnected or on failure
    */
   async getBlocklist(): Promise<string[]> {
@@ -6498,7 +6503,40 @@ export class MiawClient extends EventEmitter {
   async isBlocked(jidOrPhone: string): Promise<boolean> {
     const jid = MessageHandler.formatPhoneToJid(jidOrPhone);
     const blocklist = await this.getBlocklist();
-    return blocklist.includes(jid);
+
+    if (blocklist.includes(jid)) {
+      return true;
+    }
+
+    // WhatsApp returns the blocklist in whatever addressing mode it holds for
+    // each contact, and for a privacy-enabled account that is a `@lid`, not a
+    // phone JID. A plain includes() therefore reports "not blocked" for a
+    // contact that IS blocked -- confirmed live: blocking 628... produced a
+    // blocklist of ["2708...@lid"].
+    //
+    // Compare in both directions, cheapest first, and only when there is
+    // actually a LID in the list.
+    const lids = blocklist.filter((entry) => entry.endsWith("@lid"));
+    if (lids.length === 0) {
+      return false;
+    }
+
+    // Forward: the LID this account knows for the target number.
+    const ownLid = await this.getLidForPhone(jid);
+    if (ownLid && lids.includes(ownLid)) {
+      return true;
+    }
+
+    // Reverse: resolve each blocked LID back to a phone JID. Done last because
+    // it may hit the native store once per entry.
+    for (const lid of lids) {
+      const resolved = await this.resolveLidToJidAsync(lid);
+      if (resolved === jid) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   // ---------- Privacy settings ----------

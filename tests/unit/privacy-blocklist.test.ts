@@ -129,6 +129,69 @@ describe("v1.12.0 privacy & blocklist", () => {
       await expect(client.isBlocked("6289999999999")).resolves.toBe(false);
     });
 
+    /**
+     * Found by live testing, not by these mocks: WhatsApp returns the blocklist
+     * in whatever addressing mode it holds per contact, and on a
+     * privacy-enabled account that is a `@lid`. Blocking 6285... produced a
+     * blocklist of ["270819297075205@lid"], so the original plain
+     * `includes(phoneJid)` reported a genuinely-blocked contact as NOT blocked.
+     */
+    describe("isBlocked with a LID-addressed blocklist", () => {
+      const LID = "270819297075205@lid";
+
+      it("matches via the LID this account knows for the number", async () => {
+        socketMocks.fetchBlocklist.mockResolvedValue([LID]);
+        const client = makeConnectedClient();
+        client.getLidForPhone = jest
+          .fn<() => Promise<string | null>>()
+          .mockResolvedValue(LID);
+
+        await expect(client.isBlocked(PHONE)).resolves.toBe(true);
+      });
+
+      it("falls back to resolving each blocked LID back to a phone JID", async () => {
+        socketMocks.fetchBlocklist.mockResolvedValue([LID]);
+        const client = makeConnectedClient();
+        // Forward lookup unavailable (no native store entry yet)...
+        client.getLidForPhone = jest
+          .fn<() => Promise<string | null>>()
+          .mockResolvedValue(null);
+        // ...so the reverse direction has to carry it.
+        client.resolveLidToJidAsync = jest
+          .fn<() => Promise<string>>()
+          .mockResolvedValue(JID);
+
+        await expect(client.isBlocked(PHONE)).resolves.toBe(true);
+      });
+
+      it("stays false when the LID belongs to somebody else", async () => {
+        socketMocks.fetchBlocklist.mockResolvedValue([LID]);
+        const client = makeConnectedClient();
+        client.getLidForPhone = jest
+          .fn<() => Promise<string | null>>()
+          .mockResolvedValue("999999@lid");
+        client.resolveLidToJidAsync = jest
+          .fn<() => Promise<string>>()
+          .mockResolvedValue("6280000000000@s.whatsapp.net");
+
+        await expect(client.isBlocked(PHONE)).resolves.toBe(false);
+      });
+
+      it("does no LID resolution when the blocklist holds none", async () => {
+        socketMocks.fetchBlocklist.mockResolvedValue([JID]);
+        const client = makeConnectedClient();
+        const forward = jest.fn<() => Promise<string | null>>();
+        const reverse = jest.fn<() => Promise<string>>();
+        client.getLidForPhone = forward;
+        client.resolveLidToJidAsync = reverse;
+
+        await expect(client.isBlocked(PHONE)).resolves.toBe(true);
+        // The direct hit must short-circuit; resolution is the expensive path.
+        expect(forward).not.toHaveBeenCalled();
+        expect(reverse).not.toHaveBeenCalled();
+      });
+    });
+
     it("surfaces a block failure as an error result", async () => {
       socketMocks.updateBlockStatus.mockRejectedValue(new Error("nope"));
       const client = makeConnectedClient();

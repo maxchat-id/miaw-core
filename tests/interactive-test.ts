@@ -1057,14 +1057,28 @@ const tests: TestItem[] = [
     name: "addParticipants() - Add members to group",
     action: async (client: MiawClient) => {
       const groupJid = await getTestGroup("Enter group JID:");
-      const phone = await getTestPhone("Enter phone number to add:");
+      const phone = await getOtherPartyPhone("Enter phone number to add:");
 
       console.log(`\n👤 Adding ${phone} to group...`);
       const results = await client.addParticipants(groupJid, [phone]);
 
-      console.log("Results:", results.length);
+      // Print the status code. WhatsApp's per-participant codes are the whole
+      // story here and a bare pass/fail hides it: '409' means the number is
+      // already a member, which is the normal state on a reused test group and
+      // is not a failure of addParticipants().
+      for (const r of results) {
+        console.log(`  ${r.success ? "✅" : "❌"} ${r.jid} status=${r.status}`);
+      }
       const successCount = results.filter((r) => r.success).length;
       console.log(`Success: ${successCount}/${results.length}`);
+
+      if (successCount === 0 && results.every((r) => r.status === "409")) {
+        console.log(
+          "\n⏭️  Already a participant (409) — nothing to add. Remove them from"
+        );
+        console.log("   the group first if you want to exercise the add path.");
+        return "skipped";
+      }
 
       return successCount > 0;
     },
@@ -1074,7 +1088,7 @@ const tests: TestItem[] = [
     name: "promoteToAdmin() - Promote member to admin",
     action: async (client: MiawClient) => {
       const groupJid = await getTestGroup("Enter group JID:");
-      const phone = await getTestPhone("Enter phone number to promote:");
+      const phone = await getOtherPartyPhone("Enter phone number to promote:");
 
       console.log(`\n⬆️  Promoting ${phone} to admin...`);
       console.log("⚠️  You must be admin to do this");
@@ -1092,7 +1106,7 @@ const tests: TestItem[] = [
     name: "demoteFromAdmin() - Demote admin",
     action: async (client: MiawClient) => {
       const groupJid = await getTestGroup("Enter group JID:");
-      const phone = await getTestPhone("Enter admin phone number to demote:");
+      const phone = await getOtherPartyPhone("Enter admin phone number to demote:");
 
       console.log(`\n⬇️  Demoting ${phone} from admin...`);
       console.log("⚠️  You must be admin to do this");
@@ -1156,7 +1170,7 @@ const tests: TestItem[] = [
     destructive: true,
     action: async (client: MiawClient) => {
       const groupJid = await getTestGroup("Enter group JID:");
-      const phone = await getTestPhone("Enter phone number to remove:");
+      const phone = await getOtherPartyPhone("Enter phone number to remove:");
 
       console.log(`\n👤 Removing ${phone} from group...`);
       console.log("⚠️  You must be admin to do this");
@@ -2089,7 +2103,7 @@ const tests: TestItem[] = [
     category: "Privacy & Blocklist",
     name: "blockContact() / unblockContact() - Block then restore",
     action: async (client: MiawClient) => {
-      const phone = await getTestPhone(
+      const phone = await getOtherPartyPhone(
         "Enter a phone number to block and then immediately unblock:"
       );
 
@@ -2823,6 +2837,35 @@ async function getTestPhone2(prompt: string): Promise<string> {
   const phone = await waitForInput();
   TEST_CONFIG.testPhone2 = phone;
   return phone;
+}
+
+/**
+ * A phone number that is NOT this account's own.
+ *
+ * Some entries need a genuine second party: WhatsApp refuses to add you to a
+ * group you are already in, to promote/demote yourself, or to block yourself,
+ * so pointing them at your own number produces failures that look like defects
+ * but are config. When PHONE_A is the account's own number and PHONE_B is not,
+ * this returns B; otherwise it falls back to the normal PHONE_A prompt.
+ *
+ * Deliberately does NOT change which number the send/media entries use — those
+ * stay on PHONE_A, so a self-configured A keeps test traffic off a real phone.
+ */
+async function getOtherPartyPhone(prompt: string): Promise<string> {
+  const own = TEST_CONFIG.accountPhone;
+  const a = TEST_CONFIG.testPhone;
+  const b = TEST_CONFIG.testPhone2;
+
+  if (own && a === own && b && b !== own) {
+    console.log(
+      `${prompt} [using TEST_CONTACT_PHONE_B: ${b}]`
+    );
+    console.log(
+      "   (PHONE_A is this account's own number, which WhatsApp would refuse)"
+    );
+    return b;
+  }
+  return getTestPhone(prompt);
 }
 
 async function getTestGroup(prompt: string): Promise<string> {

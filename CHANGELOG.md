@@ -86,6 +86,14 @@ no breaking changes.
 
 ### Fixed
 
+- **`isBlocked()` reported a blocked contact as not blocked.** WhatsApp
+  returns the blocklist in whatever addressing mode it holds per contact, and
+  on a privacy-enabled account that is a `@lid` rather than a phone JID —
+  blocking `628…` produced a blocklist of `["270819297075205@lid"]`. The
+  original plain `includes(phoneJid)` therefore always missed. It now compares
+  both directions, using the LID this account knows for the number and, failing
+  that, resolving each blocked LID back to a phone JID. Found only by live
+  testing; every mock in the unit suite returned phone JIDs.
 - **`npx miaw-cli` was broken for every consumer, published or local.**
   `bin.miaw-cli` pointed at `bin/miaw-cli.ts` — a TypeScript file carrying a
   `#!/usr/bin/env node` shebang and importing from `../src/**`. A bin runs
