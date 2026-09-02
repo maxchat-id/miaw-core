@@ -630,7 +630,7 @@ await client.updateProfileStatus("Available for chats");
 If you encounter issues during migration:
 
 1. Check the [USAGE.md](./USAGE.md) for detailed documentation
-2. Review [examples/](./examples/) for sample implementations
+2. Review [examples/](../examples/) for sample implementations
 3. Open an issue on GitHub with:
    - Your current version
    - Target version
