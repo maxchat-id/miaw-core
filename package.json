@@ -44,7 +44,7 @@
   },
   "dependencies": {
     "@hapi/boom": "^10.0.1",
-    "@whiskeysockets/baileys": "7.0.0-rc13",
+    "@whiskeysockets/baileys": "7.0.0-rc14",
     "cli-table3": "^0.6.5",
     "https-proxy-agent": "^8.0.0",
     "pino": "^8.19.0",
