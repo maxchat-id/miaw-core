@@ -146,8 +146,12 @@ Against a real WhatsApp connection (Baileys rc14):
   `13-privacy-call-commands.test.ts`. Files run in name order and 13 is now the
   last one needing a connection (11 and 12 are deliberately offline), so
   disconnecting at 10 would pull the socket out from under it.
-- 597 unit tests (up from 417), 70 CLI router tests (up from 26), 234 CLI
-  integration tests across 13 files.
+- 615 unit tests across 29 suites (up from 417), 105 CLI router tests (up from
+  26), 278 CLI integration tests across 13 files (up from 238).
+- New `tests/unit/cli-help-consistency.test.ts` and a dispatchability sweep in
+  `01-command-router.test.ts`, both verified to fail against the previous code.
+- The manual runner grew from 82 to 96 entries, and gained a `community` group:
+  all 19 community methods, v1.9.0's included, had been unreachable from it.
 
 ## [1.11.0] - 2026-09-02
 
