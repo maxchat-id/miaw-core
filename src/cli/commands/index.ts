@@ -22,13 +22,13 @@ const PIN_DURATIONS: Record<string, PinDurationValue> = {
 };
 
 /** Subcommand list printed by `group` with no/unknown subcommand. */
-const GROUP_COMMANDS =
+export const GROUP_COMMANDS =
   "Commands: list, info, create, leave, participants, invite, invite-link, " +
   "name, description, picture, announce, restrict, add-mode, approval, " +
   "ephemeral, requests";
 
 /** Subcommand list printed by `community` with no/unknown subcommand. */
-const COMMUNITY_COMMANDS =
+export const COMMUNITY_COMMANDS =
   "Commands: list, info, create, leave, name, description, linked, link, " +
   "unlink, group, members, invite, invite-link, announce, restrict, " +
   "add-mode, approval, ephemeral, requests";
@@ -1402,6 +1402,17 @@ export async function runCommand(
             console.log("❌ Usage: miaw-cli community invite link|accept|revoke|info ...");
             return false;
         }
+
+      // Backward compatibility: invite-link (mirrors `group invite-link`).
+      // COMMUNITY_COMMANDS has advertised this since v1.9.0; without the case it
+      // fell through to the unknown-command branch.
+      case "invite-link":
+        if (!parsedArgs._[1]) {
+          console.log("❌ Usage: miaw-cli community invite-link <jid>");
+          return false;
+        }
+        return await cmdCommunityInviteLink(client, { jid: parsedArgs._[1] });
+
       // Settings (v1.12.0)
       case "announce": {
         const on = parseToggle(parsedArgs._[2]);

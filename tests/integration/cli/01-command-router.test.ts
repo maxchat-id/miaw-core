@@ -9,8 +9,22 @@ import {
   setupCLITests,
   runCmd,
   captureConsole,
+  isConnected,
   CLI_TEST_CONFIG,
 } from "./cli-setup.js";
+import {
+  GROUP_COMMANDS,
+  COMMUNITY_COMMANDS,
+} from "../../../src/cli/commands/index.js";
+
+/** Pull the advertised subcommand words out of a "Commands: a, b, c" string. */
+function advertised(list: string): string[] {
+  return list
+    .replace(/^Commands:\s*/, "")
+    .split(",")
+    .map((word) => word.trim())
+    .filter(Boolean);
+}
 
 beforeAll(async () => {
   await setupCLITests();
@@ -636,6 +650,45 @@ describe("CLI Command Router", () => {
       for (const sub of ["announce", "restrict", "add-mode", "approval", "ephemeral", "requests"]) {
         expect(output).toContain(sub);
       }
+    } finally {
+      capture.stop();
+    }
+  });
+});
+
+/**
+ * Every subcommand the `group` / `community` usage lines advertise must reach a
+ * handler. `community invite-link` was advertised from v1.9.0 but had no case,
+ * so it fell through to the unknown-command branch and always errored — no test
+ * covered it because the existing tests only assert that the usage *text*
+ * contains the word, not that the word works.
+ */
+describe("advertised subcommands reach a handler", () => {
+  /**
+   * These subcommands need no arguments, so dispatching them actually performs
+   * the fetch instead of stopping at an argument guard. Without a connection
+   * they block until the 60s test timeout, so they are gated — their real
+   * coverage lives in 05-group-commands.test.ts.
+   */
+  const FETCHES_IMMEDIATELY = new Set(["list", "ls"]);
+
+  test.each(advertised(GROUP_COMMANDS))("group %s is dispatchable", async (sub) => {
+    if (FETCHES_IMMEDIATELY.has(sub) && !isConnected()) return;
+    const capture = captureConsole();
+    try {
+      await runCmd("group", [sub]);
+      expect(capture.getFullOutput()).not.toContain(`Unknown group command: ${sub}`);
+    } finally {
+      capture.stop();
+    }
+  });
+
+  test.each(advertised(COMMUNITY_COMMANDS))("community %s is dispatchable", async (sub) => {
+    if (FETCHES_IMMEDIATELY.has(sub) && !isConnected()) return;
+    const capture = captureConsole();
+    try {
+      await runCmd("community", [sub]);
+      expect(capture.getFullOutput()).not.toContain(`Unknown community command: ${sub}`);
     } finally {
       capture.stop();
     }
