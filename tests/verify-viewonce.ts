@@ -59,6 +59,7 @@ const ready = new Promise<boolean>((resolve) => {
       resolve(false);
       return;
     }
+    if (reason === "intentional") return;
     console.log(`\n… disconnected: reason=${reason} status=${statusCode} (waiting for reconnect)`);
   });
 
@@ -77,12 +78,21 @@ console.log("\n✅ Paired with the Android identity.");
 console.log("   Baileys should have logged an 'experimental' warning above.\n");
 console.log("📸 Now send a VIEW-ONCE IMAGE to this account from another phone.");
 console.log("   (attach an image → tap the ⓵ 'view once' icon → send)\n");
-console.log("Waiting up to 6 minutes...\n");
+const WAIT_MS = Number(process.env.VIEWONCE_TIMEOUT_MS || 0);
+console.log(
+  WAIT_MS > 0
+    ? `Waiting up to ${Math.round(WAIT_MS / 60000)} minutes...\n`
+    : "Waiting indefinitely — press Ctrl+C when you are done.\n"
+);
 
 const got = await new Promise<any>((resolve) => {
   const onMsg = (m: any) => {
+    // Log every inbound message, not just view-once ones: seeing an ordinary
+    // image arrive proves the socket is live and narrows the problem to
+    // view-once delivery specifically.
     console.log(
-      `  message: type=${m.type} fromMe=${m.fromMe} viewOnce=${m.media?.viewOnce ?? "n/a"}`
+      `  [${new Date().toLocaleTimeString()}] message: type=${m.type} ` +
+        `fromMe=${m.fromMe} viewOnce=${m.media?.viewOnce ?? "n/a"} from=${m.senderPhone ?? m.from}`
     );
     if (!m.fromMe && m.media?.viewOnce) {
       client.off("message", onMsg);
@@ -90,7 +100,7 @@ const got = await new Promise<any>((resolve) => {
     }
   };
   client.on("message", onMsg);
-  setTimeout(() => resolve(null), 360000);
+  if (WAIT_MS > 0) setTimeout(() => resolve(null), WAIT_MS);
 });
 
 if (!got) {
