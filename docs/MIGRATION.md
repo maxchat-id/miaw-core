@@ -4,6 +4,7 @@ This guide helps you migrate between versions of Miaw Core.
 
 ## Table of Contents
 
+- [v1.11.x to v1.12.0](#v111x-to-v1120)
 - [v1.10.x to v1.11.0](#v110x-to-v1110)
 - [v1.4.0 to v1.4.1](#v140-to-v141)
 - [v1.1.x to v1.2.0](#v11x-to-v120)
@@ -12,6 +13,73 @@ This guide helps you migrate between versions of Miaw Core.
 - [v0.8.x to v0.9.0](#v08x-to-v090)
 - [v0.7.x to v0.8.0](#v07x-to-v080)
 - [Breaking Changes Summary](#breaking-changes-summary)
+
+---
+
+## v1.11.x to v1.12.0
+
+**Status:** Released — 2026-09-02
+**Breaking Changes:** None ✅
+
+Purely additive: Baileys moves 7.0.0-rc13 → 7.0.0-rc14, and ~37 methods plus a
+matching CLI surface are added. Nothing existing changed shape, so upgrading is
+a version bump.
+
+### Baileys 7.0.0-rc13 → rc14
+
+No public API change. Three things worth knowing:
+
+- The bundled WhatsApp Web version constant moved forward. miaw-core already
+  prefers the live `fetchLatestWaWebVersion()` result, so this only improves the
+  fallback.
+- A fix to how the profile-picture `tctoken` is nested, which affects
+  `getProfilePicture()` for contacts with a privacy token.
+- A new Android browser identity — see below.
+
+### New: connection identity
+
+```typescript
+import { MiawClient, BrowserPresets } from "miaw-core";
+
+const client = new MiawClient({
+  instanceId: "bot",
+  browser: BrowserPresets.android("13"), // default stays macOS/Chrome
+});
+```
+
+Baileys reports the Android identity is required to **receive view-once media**,
+and flags it experimental. miaw-core has verified the handshake, not the receipt
+— see [USAGE.md](./USAGE.md#receiving-view-once-messages-android-identity)
+before depending on it. The default is unchanged, so existing sessions are
+unaffected.
+
+### New methods, no migration required
+
+| Area | Methods |
+| --- | --- |
+| Group admin | `setGroupAnnounceOnly`, `setGroupRestrictInfo`, `setGroupMemberAddMode`, `setGroupJoinApproval`, `setGroupEphemeral`, `getGroupJoinRequests`, `approveGroupJoinRequests`, `rejectGroupJoinRequests` |
+| Community admin | The same eight, as `setCommunity*` / `*CommunityJoinRequests` |
+| Privacy | `getPrivacySettings`, and setters for last seen, online, profile picture, status, read receipts, group add, messages, calls, default disappearing mode, link previews |
+| Blocklist | `blockContact`, `unblockContact`, `getBlocklist`, `isBlocked` |
+| Calls | `call` event, `rejectCall`, `createCallLink` |
+| Messaging | `sendGroupInvite`, `pinMessage`, `unpinMessage`, `setChatEphemeral` |
+
+### Two things to know if you read the results
+
+- `getPrivacySettings()` returns typed fields for the eight categories Baileys
+  has setters for, and preserves **everything else** under `raw`. WhatsApp
+  currently returns 16 categories, so half the response would be lost if you
+  read only the typed fields.
+- `setChatEphemeral(jid, 0)` turns disappearing messages off. Baileys does not
+  treat `0` as "off" on the `sendMessage` path, so miaw-core maps it to `false`
+  for you — but `setDefaultDisappearingMode(0)` passes `0` straight through.
+
+### Tooling changes
+
+- `npm run test:manual:build` was **removed**; it never worked, because
+  `tsconfig.json` excludes `tests/` so `dist/tests/` is never emitted. Use
+  `npm run test:manual`.
+- New scripts: `test:unit`, `typecheck`, `test:viewonce`.
 
 ---
 
@@ -534,6 +602,7 @@ await client.updateProfileStatus("Available for chats");
 
 | Version | Change                                           | Migration Required |
 | ------- | ------------------------------------------------ | ------------------ |
+| v1.12.0 | None — additive only (rc14 + ~37 methods)        | No                 |
 | v1.11.0 | `ProxyRotator` defaults to `deterministic`       | Yes, if calling `next()` with no instanceId |
 | v1.0.0  | New `dispose()` method                           | Recommended        |
 | v1.0.0  | `getLidMappings()` returns object instead of Map | Yes, if using      |
@@ -574,6 +643,8 @@ If you encounter issues during migration:
 
 | Miaw Core | Node.js  | Baileys    | Status               |
 | --------- | -------- | ---------- | -------------------- |
+| 1.12.0    | >=18.0.0 | 7.0.0-rc14 | Stable (current)     |
+| 1.5.0 – 1.11.0 | >=18.0.0 | 7.0.0-rc13 | Stable          |
 | 1.4.1     | >=18.0.0 | 7.0.0-rc13 | Stable               |
 | 1.0.0     | >=18.0.0 | 6.7.21+    | Stable (Coming Soon) |
 | 0.9.x     | >=18.0.0 | 6.7.21+ | Stable               |
@@ -583,4 +654,4 @@ If you encounter issues during migration:
 
 ---
 
-**Last Updated:** 2025-12-24
+**Last Updated:** 2026-09-02

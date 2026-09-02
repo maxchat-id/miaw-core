@@ -16,8 +16,11 @@ This document covers all current capabilities of Miaw Core. It will be updated a
 - [Sending Messages](#sending-messages)
 - [Media Messages](#media-messages)
 - [Advanced Messaging](#advanced-messaging)
+- [Chat Management (v1.7.0)](#chat-management-v170)
 - [Contact & Validation](#contact--validation)
+- [Status / Stories (v1.8.0)](#status--stories-v180)
 - [Group Management](#group-management)
+- [Communities (v1.9.0)](#communities-v190)
 - [Privacy & Blocklist](#privacy--blocklist)
 - [Calls](#calls)
 - [Profile Management](#profile-management)
@@ -35,6 +38,7 @@ This document covers all current capabilities of Miaw Core. It will be updated a
 - [TypeScript Usage](#typescript-usage)
 - [LID Privacy Support](#lid-privacy-support)
 - [Debugging](#debugging)
+- [Complete Example](#complete-example)
 
 ## Installation
 
@@ -1826,6 +1830,8 @@ const client = new MiawClient({
 | `disconnected`    | `(reason?: string, statusCode?: number)` | Client disconnected. `reason` is `"intentional"` for an explicit `disconnect()`, otherwise the Baileys `DisconnectReason` name |
 | `reconnecting`    | `(attempt: number)`        | Attempting to reconnect              |
 | `error`           | `(error: Error)`           | Error occurred                       |
+| `poll_vote`       | `(vote: PollVoteUpdate)`   | Someone voted on a poll you sent     |
+| `pairing_code`    | `(code: string)`           | Pairing code issued (phone-number pairing) |
 | `session_saved`   | `()`                       | Session credentials saved            |
 
 ## Error Handling

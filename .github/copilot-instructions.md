@@ -9,18 +9,25 @@ Miaw Core is a TypeScript wrapper for [@whiskeysockets/baileys](https://github.c
 ## Architecture
 
 ```
+bin/miaw-cli.ts           # CLI entry point (one-shot + REPL)
 src/
 ├── index.ts              # Public exports - add new types/classes here
-├── client/MiawClient.ts  # Main client (~4100 lines) - all WhatsApp operations
+├── client/MiawClient.ts  # Main client (~8500 lines) - all WhatsApp operations
 ├── handlers/
 │   ├── AuthHandler.ts    # Session persistence via useMultiFileAuthState
 │   └── MessageHandler.ts # Message normalization & JID formatting
-└── types/index.ts        # All TypeScript interfaces (~900 lines)
+├── cli/                  # CLI subsystem - the largest by file count
+│   ├── repl.ts           # Interactive shell, completion, help topics
+│   ├── commands/         # ~20 command modules, routed by commands/index.ts
+│   └── utils/            # Registry, client cache, proxy resolution, arg parsing
+├── utils/                # Proxy agents/rotation, browser presets, type guards
+├── constants/            # Shared constant tables
+└── types/index.ts        # All TypeScript interfaces (~1600 lines)
 ```
 
 **Key Design:**
 
-- `MiawClient` extends `EventEmitter` - emits: `qr`, `ready`, `message`, `message_edit`, `message_delete`, `message_reaction`, `presence`
+- `MiawClient` extends `EventEmitter` - emits: `qr`, `pairing_code`, `ready`, `message`, `message_edit`, `message_delete`, `message_reaction`, `message_receipt`, `poll_vote`, `call`, `presence`, `connection`, `disconnected`, `reconnecting`, `error`, `session_saved`
 - `MiawMessage` is the normalized format - always use instead of raw Baileys structures
 - JID formats: `@s.whatsapp.net` (phone), `@lid` (privacy-enhanced), `@g.us` (groups)
 
@@ -80,15 +87,24 @@ Then add private static extractor method following existing patterns (e.g., `ext
 ```bash
 npm run build        # TypeScript → dist/
 npm run dev          # Watch mode
-npm test             # Jest (requires NODE_OPTIONS='--experimental-vm-modules')
-npm run test:manual  # Interactive CLI with live WhatsApp - 92 tests
+npm test             # Jest, everything (scripts set NODE_OPTIONS for you)
+npm run test:unit    # Unit suites only - the fast gate
+npm run typecheck    # tsc --noEmit over src/ AND tests/
+npm run test:cli     # CLI integration suites against a live connection
+npm run test:manual  # Interactive CLI with live WhatsApp
+
+Jest runs serially (maxWorkers: 1) - the live suites share one WhatsApp
+session. Never run two test commands at once.
 ```
 
 ## Testing
 
 - **Unit** (`tests/unit/`): MessageHandler transformations, JID formatting
 - **Integration** (`tests/integration/`): Requires live session - configure `.env.test`
-- **Manual** (`npm run test:manual`): Interactive verification of all 92 methods
+- **CLI integration** (`tests/integration/cli/`): 13 files driving `runCommand()`
+- **Manual** (`npm run test:manual`): interactive verification of a curated
+  subset of the ~200 public methods. Run with no argument to list the groups.
+  `npm run test:manual:auto` runs it unattended and exits non-zero on failure.
 
 First-time setup: Run tests, scan QR code, session saves to `test-sessions/`.
 
@@ -117,5 +133,5 @@ import { MessageHandler } from "./handlers/MessageHandler";
 ## File Conventions
 
 - Sessions: `{sessionPath}/{instanceId}/` (e.g., `sessions/my-bot/creds.json`)
-- Examples: Numbered `01-basic` through `09-business-social`
+- Examples: numbered `01-basic` onward, plus `simple-bot.ts` and `realworld/`
 - Test assets: `tests/test-assets/`

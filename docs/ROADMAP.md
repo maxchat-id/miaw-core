@@ -439,7 +439,7 @@ Every item below is a thin wrapper over a method that **exists in Baileys 7.0.0-
 - **Metrics & Monitoring** - Built-in metrics collection
 - **Health Check Endpoint** - Status monitoring
 
-> Already shipped (no longer "future"): **CLI Tools** (v1.4.x, 63 commands), **Add/Edit/Remove Contacts** (v0.9.0), **Catalog/Labels** (v0.9.0), **Voice Notes / PTT** (v0.2.0).
+> Already shipped (no longer "future"): **CLI Tools** (v1.4.x, since grown to 111 command handlers across 19 top-level groups), **Add/Edit/Remove Contacts** (v0.9.0), **Catalog/Labels** (v0.9.0), **Voice Notes / PTT** (v0.2.0).
 
 ### Business (Advanced)
 

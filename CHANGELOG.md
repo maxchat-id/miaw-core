@@ -77,13 +77,26 @@ no breaking changes.
   `chat ephemeral|pin-message|unpin-message`, and `send group-invite`. All with
   tab completion and `help` topics.
 - **`tests/unit/baileys-export-surface.test.ts`** — imports Baileys unmocked and
-  asserts every symbol the two import sites destructure still exists. Thirteen
+  asserts every symbol the two import sites destructure still exists. Seventeen
   unit suites replace the module wholesale with hand-written factories, so
   without this a renamed or removed upstream export stays invisible until
   runtime.
 
 ### Fixed
 
+- **`community invite-link` was advertised but never worked.** The subcommand
+  list printed by `community` has named it since v1.9.0, but the dispatch
+  switch had no `case` for it, so it fell through to the unknown-command
+  branch and always errored. `group invite-link` has existed since v1.4.
+- **Five `help` topics tab-completed and then failed.** `help chat|story|
+  community|call|business` were offered by completion but had no case in
+  `showReplHelp()`, printing "Unknown help topic". The completion tree, the
+  dispatch and two "available topics" lines were four hand-maintained copies
+  of the same list; they are now all derived from one `HELP_TOPIC_HANDLERS`
+  map, and the five missing help screens were written.
+- **`test:manual:build` never worked and has been removed.** It ran
+  `node dist/tests/interactive-test.js`, but `tsconfig.json` sets
+  `rootDir: ./src` and excludes `tests/`, so `dist/tests/` is never emitted.
 - **`sendGroupInvite()` failed for any group without a profile picture.** Baileys
   embeds a thumbnail on the invite card by calling `getProfilePicUrl(groupJid)`
   and does not guard it; WhatsApp answers `item-not-found` for a pictureless

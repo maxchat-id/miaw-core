@@ -34,7 +34,9 @@ Do not run two test commands concurrently.
 
 ```bash
 # Unit and integration tests (Jest)
-npm test                    # Run all tests
+npm test                    # Run everything, incl. live-connection suites
+npm run test:unit           # Unit suites only - the fast gate
+npm run typecheck           # tsc --noEmit over src/ AND tests/
 npm run test:watch          # Watch mode
 npm run test:coverage       # Generate coverage report
 
@@ -49,18 +51,29 @@ npm run test:manual business    # Test business features
 npm run test:manual newsletter  # Test newsletter/channels
 npm run test:manual privacy     # Test privacy + blocklist
 npm run test:manual calls       # Test call event / reject / links
+npm run test:manual community   # Test communities + community admin
+
+# Android-identity / view-once verification (needs a second phone)
+npm run test:viewonce
 
 # Unattended: no prompts, exits non-zero on failure
 npm run test:manual:auto              # all groups
 npm run test:manual group -- --auto   # one group
 ```
 
-The interactive test suite (`npm run test:manual`) drives a curated subset of the API against a live connection, organized into 11 groups: core, get, messaging, contacts, group, profile, business, newsletter, ux, privacy, and calls. See [Test Coverage Analysis](./docs/TEST_COVERAGE_ANALYSIS.md).
+The interactive test suite (`npm run test:manual`) drives a curated subset of the
+API against a live connection. Run it with no argument to list the groups with a
+live count per group — the list is generated from `CATEGORY_MAP`, so it cannot
+drift from the code the way the old hand-written list did.
+
+> `docs/TEST_COVERAGE_ANALYSIS.md` is the historical coverage report. Its
+> percentages predate v1.5.0 and are badly stale; read its banner before
+> quoting any number from it.
 
 **`--auto` (v1.12.0) makes it a real gate.** Every prompt resolves to its default — which the helpers already treat as "use the `.env.test` value" — so the same entries run without a human, and the process exits non-zero if any failed. Two flags on `TestItem` control what runs:
 
 - `manual: true` — needs a human to act out-of-band (send the bot a message, place a call). Always skipped under `--auto`; env config cannot substitute.
-- `destructive: true` — irreversibly changes real state (leaves a group, deletes a product). Skipped unless `--destructive` / `AUTO_DESTRUCTIVE=1`.
+- `destructive: true` — irreversibly changes real state (leaves a group, deletes a product), **or** changes a setting WhatsApp will not read back, so the entry cannot restore what you had. Skipped unless `--destructive` / `AUTO_DESTRUCTIVE=1`.
 
 Tag new entries accordingly, or an unattended run will hang on a prompt or wreck the test account.
 
@@ -95,7 +108,7 @@ The main entry point that extends EventEmitter for event-driven architecture.
 - Manages Baileys socket lifecycle
 - Coordinates AuthHandler and MessageHandler
 - Implements auto-reconnection with exponential backoff
-- Exposes ~200 public API methods across 12 categories
+- Exposes ~200 public API methods
 - Tracks connection states: `disconnected`, `connecting`, `connected`, `reconnecting`, `qr_required`
 
 **Key Patterns:**
@@ -278,7 +291,7 @@ Sessions are stored at `{sessionPath}/{instanceId}/` using Baileys' multi-file a
   **`BrowserPresets`** ([src/utils/browser-presets.ts](src/utils/browser-presets.ts)),
   not Baileys' `Browsers`.
 - **Never re-export Baileys' `Browsers` from `src/index.ts`, and never call it
-  from `MiawClient`.** All thirteen unit mock factories stub it as `{ macOS }`
+  from `MiawClient`.** Every unit mock factory stubs it as `{ macOS }`
   alone, and `tests/unit/types.test.ts` imports `src/index.js` *without* mocking
   Baileys — either route drags the native bridge into the unit run. The presets
   duplicate Baileys' tuples deliberately; `tests/unit/browser-presets.test.ts`
@@ -304,7 +317,7 @@ Community JIDs are group JIDs, so the `@g.us` check applies to both.
 
 ### Wire Constants and the Mock Blind Spot
 
-- **13 unit files replace `@whiskeysockets/baileys` wholesale** with hand-written
+- **17 unit files replace `@whiskeysockets/baileys` wholesale** with hand-written
   `jest.unstable_mockModule` factories that snapshot the rc-era export surface.
   A green unit suite therefore proves nothing about a Baileys upgrade.
   `tests/unit/baileys-export-surface.test.ts` is the counterweight: it imports
@@ -313,11 +326,11 @@ Community JIDs are group JIDs, so the `@g.us` check applies to both.
 - `MiawClient` deliberately does **not** import `proto`. Where a protobuf enum
   value is needed (`PinInChat.Type`), it is a *named* local constant, and the
   export-surface suite pins it against the real enum. Importing `proto` would
-  force a `proto` entry into all thirteen mock factories.
+  force a `proto` entry into every mock factory.
 
 ### Duration Constants
 
-Three different duration sets exist and are easy to confuse:
+Two different duration sets exist and are easy to confuse:
 
 | Constant | Values | Used by |
 |---|---|---|
@@ -413,26 +426,43 @@ See [tests/README.md](tests/README.md) for detailed testing guide.
 ## Project Structure
 
 ```
+bin/
+└── miaw-cli.ts         # CLI entry point (one-shot + REPL)
+
 src/
 ├── client/             # MiawClient - main entry point
 ├── handlers/           # AuthHandler, MessageHandler
 ├── types/              # TypeScript type definitions
+├── constants/          # Shared constant tables
+├── utils/              # proxy-agent, proxy-rotator, proxy-loader,
+│                       #   browser-presets, type-guards
 ├── cli/                # CLI tool implementation
-│   ├── commands/       # Command handlers
-│   └── utils/          # CLI utilities (registry, cache, session)
+│   ├── commands/       # Command handlers (incl. privacy.ts, call.ts)
+│   └── utils/          # CLI utilities (registry, cache, session,
+│                       #   parse-args, proxy-resolver, instance-config)
 └── index.ts            # Public API exports
 
 docs/                   # Documentation
+│   # Current
 ├── CLI.md             # CLI usage guide
 ├── USAGE.md           # Complete API usage guide
 ├── PROXY.md           # Proxy guide (files, rotation, troubleshooting)
-├── DEPLOYMENT_PROXY.md # Operational notes for deploying with proxies
+├── DEPLOYMENT_PROXY.md          # Deploying with proxies (v1.10.0)
+├── DEPLOYMENT_INSTANCE_PROXY.md # Per-instance proxy pins (v1.11.0)
 ├── LID_RESOLUTION.md  # Privacy-masked (@lid) JID resolution guide
 ├── ROADMAP.md         # Feature roadmap
-├── DEFERRED_FEATURES.md  # Backlog of deliberately deferred Baileys features
+├── DEFERRED_FEATURES.md  # Backlog of deferred Baileys features (empty)
+├── FOLLOW_UPS.md      # Open defects and debt
 ├── MIGRATION.md       # Version migration guide
-├── TEST_COVERAGE_ANALYSIS.md  # API coverage report
-└── BAILEYS_VS_MIAW_COMPARISON.md  # Comparison with raw Baileys
+├── CLI_INTEGRATION_TEST_PLAN.md  # CLI suite layout and ownership
+├── BAILEYS_VS_MIAW_COMPARISON.md # Comparison with raw Baileys
+├── TEST_COVERAGE_ANALYSIS.md     # API coverage report - PARTLY STALE,
+│                                 #   see its own banner before trusting it
+│   # Superseded, each carries a banner
+├── API_STABILITY_REVIEW.md       # v1.0.0 release review
+├── CLI-ANALYSIS.md               # v1.1.1 CLI gap analysis
+├── CODE_REVIEW_REPORT.md         # v1.1.1 -> v1.2.0 review
+└── BAILEYS_MIGRATION_v7.md       # rc.9 migration history
 
 tests/
 ├── fixtures/           # Test assets (images, documents)

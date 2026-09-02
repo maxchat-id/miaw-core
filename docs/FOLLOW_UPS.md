@@ -1,8 +1,9 @@
 # Follow-ups
 
-Deliberately deferred items found while building per-instance proxy support
-(v1.11.0). Each is a real finding with a reason it was **not** fixed in that
-branch. Ordered by severity.
+Deliberately deferred items found while building recent releases — §1–§8 during
+per-instance proxy support (v1.11.0), §9–§10 during the Baileys rc14 upgrade and
+the v1.12.0 backlog. Each is a real finding with a reason it was **not** fixed in
+the branch that found it. Ordered by severity.
 
 For the standing backlog of Baileys features we chose not to wrap, see
 [DEFERRED_FEATURES.md](./DEFERRED_FEATURES.md). This file is for defects and
@@ -122,7 +123,7 @@ against `test-sessions/paired-via-proxy` (the freshest, last written
 2026-07-29) also returned `401 loggedOut`, and `test-sessions/miaw-test-bot`
 had already been wiped by `AuthHandler.clearSession()`. So the v1.12.0 upgrade
 to Baileys rc14 and the whole feature backlog it shipped are verified by
-`tsc`, 548 unit tests and 66 offline CLI router tests, but **not** against live
+`tsc`, the unit suite and the offline CLI router tests, but **not** against live
 WhatsApp.
 
 The rc14 changes that specifically want a live run:
@@ -274,3 +275,46 @@ The router deliberately allows an empty status (`// Status can be empty to clear
 it`), but `updateProfileStatus("")` returns failure — WhatsApp appears not to
 accept an empty about-text this way. Either the comment and dispatch are wrong,
 or clearing needs a different call. The test asserts success.
+
+
+---
+
+## 10. Large pre-v1.12.0 unit-test gaps, unaddressed by design
+
+Found while auditing test coverage for v1.12.0. Recorded rather than fixed: the
+v1.12.0 branch closed its *own* gaps, and closing these would have doubled the
+branch. None is a defect — they are untested surface, which is different, but
+they are the places a regression would go unnoticed longest.
+
+Roughly 108 of ~200 public `MiawClient` methods have no unit test. The gaps
+cluster, and the clusters are the useful unit of work:
+
+| Cluster | Methods | Notes |
+| --- | --- | --- |
+| Newsletter / channels | 21 — the entire surface | `sendNewsletterMessage` through `deleteNewsletter`. Zero unit tests. |
+| Presence | 6 | `sendTyping`, `sendRecording`, `stopTyping`, `setPresence`, `subscribePresence`, `markAsRead` |
+| Media sends | 4 | `sendImage`, `sendVideo`, `sendAudio`, `sendDocument`. Only the *rich* senders (location, contact, poll, sticker) are unit-tested. |
+| Own-profile setters | 4 | `updateProfilePicture`, `removeProfilePicture`, `updateProfileName`, `updateProfileStatus` |
+| Community (v1.9.0) | 4 | `removeCommunityMembers`, `demoteCommunityMembers`, `revokeCommunityInvite`, `getCommunityParticipants` — the add/promote halves are tested, the remove/demote halves are not |
+
+Two CLI command groups have **no integration test at all**:
+
+- **`story`** (`text` / `image` / `video`)
+- **`business`** (`profile`, `cover set`, `cover remove`) — note
+  `10-business-commands.test.ts` is misnamed; it tests `label` and `catalog`.
+
+Also untested at the handler level, though their argument validation is covered:
+`send location|contact|poll|sticker`, the ten non-ephemeral `chat` subcommands,
+`group create|leave|name set|description set|picture set|invite *|participants *`,
+almost every `community` subcommand, `contact add|remove`, `profile picture *`,
+`label chats|add|chat *`, `catalog product *`, and `instance create|delete|
+connect|disconnect|logout`.
+
+**Why this matters more than the raw count suggests:** the v1.12.0 group/community
+admin methods were caught by unit tests, but the two defects that actually
+shipped broken — `sendGroupInvite` against a pictureless group, and
+`community invite-link` — were both invisible to unit tests. The first needs a
+socket that can reject; the second needs the dispatch to be exercised. Adding
+mock-backed unit tests for the clusters above would raise the number without
+catching that class of bug. Prefer the CLI integration and manual suites for
+anything whose failure mode is "the real socket says no".
