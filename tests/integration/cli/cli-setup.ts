@@ -6,7 +6,9 @@
  *
  * Usage in test files:
  *   beforeAll(async () => { await setupCLITests(); }, CLI_TEST_CONFIG.connectTimeout + 10000);
- *   // In last test file only:
+ *   // In the last CONNECTION-USING test file only (currently 13-*), since
+ *   // files run in name order and later offline files must not be disconnected
+ *   // out from under an earlier one:
  *   afterAll(async () => { await teardownCLITests(); });
  */
 

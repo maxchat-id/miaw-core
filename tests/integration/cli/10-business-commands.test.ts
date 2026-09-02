@@ -3,12 +3,15 @@
  *
  * Tests label list and catalog list/collections.
  * These may fail on non-business accounts — tests are lenient.
- * This is the LAST test file — calls teardownCLITests() in afterAll.
+ *
+ * Teardown moved to 13-privacy-call-commands.test.ts in v1.12.0: files run in
+ * name order, and 13 is now the last one that needs a connection (11 and 12 are
+ * deliberately offline). Disconnecting here would pull the socket out from
+ * under it.
  */
 
 import {
   setupCLITests,
-  teardownCLITests,
   isConnected,
   runCmd,
   captureConsole,
@@ -18,10 +21,6 @@ import {
 beforeAll(async () => {
   await setupCLITests();
 }, CLI_TEST_CONFIG.connectTimeout + 10000);
-
-afterAll(async () => {
-  await teardownCLITests();
-});
 
 describe("CLI Business Commands", () => {
   test("label list returns true", async () => {
