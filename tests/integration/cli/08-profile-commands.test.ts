@@ -61,15 +61,19 @@ describe("CLI Profile Commands", () => {
     expect(result).toBe(true);
   });
 
-  test("profile status set empty clears status", async () => {
-    if (!isConnected()) {
-      console.log("⏭️  Skipping: not connected");
-      return;
+  test("profile status set with no text is refused, not attempted", async () => {
+    // Previously this asserted success on the theory that an empty status
+    // clears it. WhatsApp rejects an empty about-text, so the command always
+    // failed. The router now refuses it up front with an explanation; no
+    // connection is needed to reach that branch.
+    const capture = captureConsole();
+    try {
+      const result = await runCmd("profile", ["status", "set"]);
+      expect(result).toBe(false);
+      expect(capture.getFullOutput()).toContain("does not accept an empty status");
+    } finally {
+      capture.stop();
     }
-    await sleep(1000);
-    // "profile status set" with no text sets empty status
-    const result = await runCmd("profile", ["status", "set"]);
-    expect(result).toBe(true);
   });
 
   test("profile name set missing arg returns false", async () => {

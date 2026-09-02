@@ -91,7 +91,9 @@ export async function cmdGroupInfo(
     return false;
   }
 
-  console.log(`👥 Getting group info for ${args.jid}...`);
+  if (!jsonOutput) {
+    console.log(`👥 Getting group info for ${args.jid}...`);
+  }
 
   const info = await client.getGroupInfo(args.jid);
   if (!info) {
@@ -122,7 +124,9 @@ export async function cmdGroupParticipants(
     return false;
   }
 
-  console.log(`👥 Getting participants for ${args.jid}...`);
+  if (!jsonOutput) {
+    console.log(`👥 Getting participants for ${args.jid}...`);
+  }
 
   const participantsResult = await client.getGroupParticipants(args.jid);
   if (!participantsResult) {
@@ -365,7 +369,9 @@ export async function cmdGroupInviteInfo(
     return false;
   }
 
-  console.log(`🔍 Getting group info for invite code: ${args.code}...`);
+  if (!jsonOutput) {
+    console.log(`🔍 Getting group info for invite code: ${args.code}...`);
+  }
 
   const info = await client.getGroupInviteInfo(args.code);
 

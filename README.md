@@ -210,7 +210,7 @@ npm run test:coverage
 > session, so a parallel run would have them fighting over it. For the same
 > reason, never run two test commands at once.
 
-## Current Capabilities (v1.12.0)
+## Current Capabilities (v1.12.1)
 
 Built on **Baileys v7.0.0-rc14** - the latest WhatsApp Web protocol implementation.
 
@@ -372,4 +372,4 @@ Built on top of [@whiskeysockets/baileys](https://github.com/WhiskeySockets/Bail
 
 ---
 
-**Version:** 1.12.0 | **Baileys:** 7.0.0-rc14 | **Status:** Stable | **Updated:** 2026-09-02
+**Version:** 1.12.1 | **Baileys:** 7.0.0-rc14 | **Status:** Stable | **Updated:** 2026-09-02

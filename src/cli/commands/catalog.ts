@@ -14,6 +14,34 @@ import { formatTable } from "../utils/formatter.js";
  *
  * Usage: catalog list [--phone <phone>] [--limit <n>] [--cursor <cursor>]
  */
+/**
+ * Catalog and collection queries are WhatsApp **Business** APIs. Asked about a
+ * personal account's own catalog, WhatsApp simply never answers, so the call
+ * sits until Baileys' 60s default query timeout and then fails — a full minute
+ * to learn something knowable up front.
+ *
+ * Only guards the *own-account* case: `--phone` may legitimately point at
+ * somebody else's business catalog from a personal account.
+ *
+ * @returns an error string when the query is certain to be pointless
+ */
+async function ownAccountCannotHaveCatalog(
+  client: MiawClient,
+  phone: string | undefined
+): Promise<string | null> {
+  if (phone) {
+    return null;
+  }
+  const profile = await client.getOwnProfile();
+  if (profile && profile.isBusiness === false) {
+    return (
+      "This is not a WhatsApp Business account, so it has no catalog. " +
+      "Pass --phone <number> to read another business's catalog."
+    );
+  }
+  return null;
+}
+
 export async function cmdCatalogList(
   client: MiawClient,
   args: { phone?: string; limit?: number; cursor?: string },
@@ -22,6 +50,16 @@ export async function cmdCatalogList(
   const result = await ensureConnected(client);
   if (!result.success) {
     console.log(`❌ Not connected: ${result.reason}`);
+    return false;
+  }
+
+  const cannot = await ownAccountCannotHaveCatalog(client, args.phone);
+  if (cannot) {
+    if (jsonOutput) {
+      console.log(JSON.stringify({ success: false, error: cannot }, null, 2));
+    } else {
+      console.log(`❌ ${cannot}`);
+    }
     return false;
   }
 
@@ -82,6 +120,16 @@ export async function cmdCatalogCollections(
   const result = await ensureConnected(client);
   if (!result.success) {
     console.log(`❌ Not connected: ${result.reason}`);
+    return false;
+  }
+
+  const cannot = await ownAccountCannotHaveCatalog(client, args.phone);
+  if (cannot) {
+    if (jsonOutput) {
+      console.log(JSON.stringify({ success: false, error: cannot }, null, 2));
+    } else {
+      console.log(`❌ ${cannot}`);
+    }
     return false;
   }
 

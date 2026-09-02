@@ -549,4 +549,4 @@ wait; unset means wait indefinitely.
 ---
 
 **Last Updated:** 2026-09-02
-**Version:** 1.12.0
+**Version:** 1.12.1

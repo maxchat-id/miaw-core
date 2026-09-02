@@ -22,7 +22,11 @@ export async function cmdCheck(
     return false;
   }
 
-  console.log(`🔍 Checking ${args.phones.length} phone number(s)...\n`);
+  // Progress text on stdout corrupts --json: the consumer gets
+  // "🔍 Checking 1 phone number(s)...{...}" and JSON.parse throws.
+  if (!jsonOutput) {
+    console.log(`🔍 Checking ${args.phones.length} phone number(s)...\n`);
+  }
 
   const results = await client.checkNumbers(args.phones);
 

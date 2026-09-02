@@ -4,7 +4,7 @@ This roadmap focuses on **essential bot features** (< 1.0.0) that 90% of WhatsAp
 
 ## Version Status
 
-**Current Version:** 1.12.0
+**Current Version:** 1.12.1
 **Baileys Version:** 7.0.0-rc14
 **Node.js Required:** >= 18.0.0
 **Module System:** ESM-only

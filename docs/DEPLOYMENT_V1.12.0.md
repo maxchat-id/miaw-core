@@ -1,4 +1,4 @@
-# Deploying v1.12.0 (Baileys rc14)
+# Deploying v1.12.x (Baileys rc14)
 
 **Audience:** whoever operates miaw-core deployments.
 
@@ -73,9 +73,9 @@ npm ls @whiskeysockets/baileys
 
 ## 3. Not on the npm registry
 
-At time of writing, the newest miaw-core on npm is **1.10.0**. Both 1.11.0 and
-1.12.0 exist only in git and are **not published**, and the repository carries
-no version tags.
+At time of writing, the newest miaw-core on npm is **1.10.0**. Everything since
+— 1.11.0, 1.12.0 and 1.12.1 — exists only in git and is **not published**, and
+the repository carries no version tags.
 
 This matters if you deploy from the registry: `npm install miaw-core` will give
 you 1.10.0 and none of this. Deploy from git (or publish first). Consumers
@@ -148,11 +148,10 @@ rollback — that is the only thing to check before reverting.
 
 Stated plainly so it is not discovered later:
 
-- The full CLI integration suite was last run **without a live WhatsApp
-  session**, so it confirms test counts, not live behaviour. Fifteen known
-  pre-existing failures are catalogued in [FOLLOW_UPS.md](./FOLLOW_UPS.md) §9;
-  they were proven pre-existing by re-running against rc13 and getting a
-  byte-identical failure set.
+- The full CLI integration suite **has now been run against a live session**
+  (2026-09-02): 13/13 suites, 276 passed, 2 skipped, **0 failed**. The fifteen
+  failures previously catalogued in [FOLLOW_UPS.md](./FOLLOW_UPS.md) §9 were
+  all fixed in v1.12.1.
 - View-once **receipt** under the Android identity is unverified — see §4.
 - Live verification needs a QR pairing. `npm run test:cli` reports all-green
   when disconnected because connection-dependent tests return early; trust the
@@ -160,4 +159,4 @@ Stated plainly so it is not discovered later:
 
 ---
 
-_Last updated: 2026-09-02 (miaw-core v1.12.0, Baileys 7.0.0-rc14)._
+_Last updated: 2026-09-02 (miaw-core v1.12.1, Baileys 7.0.0-rc14)._

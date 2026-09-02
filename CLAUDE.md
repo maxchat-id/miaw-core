@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Key abstraction**: miaw-core handles all Baileys boilerplate so developers can focus on bot logic instead of connection lifecycle, auth state management, and message parsing.
 
-**Current Version**: 1.12.0
+**Current Version**: 1.12.1
 **Baileys Version**: 7.0.0-rc14
 **Module System**: ESM-only (`"type": "module"`)
 **Node.js Required**: >= 18.0.0

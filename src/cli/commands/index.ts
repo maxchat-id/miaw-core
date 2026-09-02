@@ -1206,8 +1206,18 @@ export async function runCommand(
 
       case "status":
         if (subSubCommand === "set") {
-          // Status can be empty to clear it
-          return await cmdProfileStatusSet(client, { status: parsedArgs._.slice(2).join(" ") });
+          const status = parsedArgs._.slice(2).join(" ");
+          // This used to be allowed through with the comment "status can be
+          // empty to clear it". WhatsApp rejects an empty about-text, so the
+          // call always failed and reported failure for a documented feature.
+          // Refuse it here with an explanation rather than round-tripping to a
+          // guaranteed error.
+          if (!status) {
+            console.log("❌ WhatsApp does not accept an empty status.");
+            console.log("   Usage: miaw-cli profile status set <status>");
+            return false;
+          }
+          return await cmdProfileStatusSet(client, { status });
         }
         console.log("❌ Usage: miaw-cli profile status set <status>");
         return false;

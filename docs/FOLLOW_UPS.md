@@ -214,9 +214,24 @@ output. Worth a sweep for consistency rather than one-off additions.
 
 ---
 
-## 9. Fifteen pre-existing CLI integration failures, surfaced by the first live run
+## 9. Fifteen pre-existing CLI integration failures, surfaced by the first live run — RESOLVED
 
-**Severity:** medium (they are real defects; none is new).
+**Severity:** medium (they were real defects; none was new).
+
+> **Closed 2026-09-02 (v1.12.1).** All fifteen are fixed. A live run now
+> reports **13/13 suites, 276 passed, 2 skipped, 0 failed**, and the suite time
+> fell from 745s to 189s because the catalog commands no longer wait out a 60s
+> query timeout. See CHANGELOG v1.12.1. The analysis below is kept because it
+> explains *why* each one happened, and three of the four causes are patterns
+> worth not repeating:
+>
+> - `--json` was broken on seven commands and nobody noticed, because the
+>   corruption is invisible unless you pipe the output to a parser.
+> - `label list --json` was never broken at all — its failure was console
+>   output from the timing-out catalog tests bleeding into an active capture.
+>   Two of the fifteen were one bug wearing two hats.
+> - The `load messages` tests asserted `true` unconditionally, so they could
+>   not tell "no history" from "broken".
 
 Until 2026-09-02 no session on disk authenticated, so every connection-dependent
 CLI test short-circuited via `if (!isConnected()) return;` and reported as

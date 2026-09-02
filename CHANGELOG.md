@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.1] - 2026-09-02
+
+### Fixed
+
+Everything here was found by running the CLI integration suite against a
+**live** WhatsApp connection for the first time. All four predate v1.12.0;
+none is an rc14 regression. The suite goes from 15 failures to 0.
+
+- **`--json` emitted unparseable output on seven commands.** `check`,
+  `contact info`, `contact business`, `group info`, `group participants`,
+  `group invite info` and `load messages` printed a progress line to stdout
+  even under `--json`, so a consumer got
+  `SyntaxError: Unexpected token '🔍'`. `--json` exists only for machines, and
+  it was broken for every one of these — invisible interactively, which is why
+  it survived. `load messages` was worse: on failure it printed a human error
+  instead of JSON, so `--json` never produced parseable output there at all.
+  It now emits the result object on both paths.
+- **Catalog commands took 60s to fail on a personal account.** `getCatalog()`
+  and `getCollections()` are Business APIs; asked about a personal account's
+  own catalog, WhatsApp never answers and the call sat until Baileys' 60s
+  default query timeout. They now check the account type first and fail
+  immediately with a message that names the fix (`--phone` to read another
+  business's catalog). Only the own-account case is guarded — `--phone` may
+  legitimately target a business from a personal account. **The CLI suite
+  dropped from 745s to 189s as a result.**
+- **`profile status set` with no text always failed.** The router passed an
+  empty string through with the comment "status can be empty to clear it";
+  WhatsApp rejects an empty about-text, so the documented behaviour never
+  worked. It is now refused up front with an explanation.
+- **`isBlocked()` reported a blocked contact as not blocked.** See below —
+  fixed in the same live session.
+
+### Changed
+
+- `load messages` tests no longer assert success unconditionally. They could
+  not distinguish "this chat has no older history" (expected) from "history
+  loading is broken" (a defect), so they now accept either but require the
+  no-history case to say so.
+
 ## [1.12.0] - 2026-09-02
 
 **Baileys 7.0.0-rc14, and the deferred feature backlog cleared.** All additive;

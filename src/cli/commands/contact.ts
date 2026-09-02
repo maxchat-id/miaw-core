@@ -94,7 +94,9 @@ export async function cmdContactInfo(
     return false;
   }
 
-  console.log(`🔍 Getting contact info for ${args.phone}...`);
+  if (!jsonOutput) {
+    console.log(`🔍 Getting contact info for ${args.phone}...`);
+  }
 
   const contactInfo = await client.getContactInfo(args.phone);
   if (!contactInfo) {
@@ -130,7 +132,9 @@ export async function cmdContactBusiness(
     return false;
   }
 
-  console.log(`🔍 Getting business profile for ${args.phone}...`);
+  if (!jsonOutput) {
+    console.log(`🔍 Getting business profile for ${args.phone}...`);
+  }
 
   const businessProfile = await client.getBusinessProfile(args.phone);
   if (!businessProfile) {

@@ -396,12 +396,21 @@ export async function cmdLoadMoreMessages(
   }
 
   const count = args.count || 50;
-  console.log(`\n⏳ Loading ${count} older messages for ${args.jid}...`);
+  if (!jsonOutput) {
+    console.log(`\n⏳ Loading ${count} older messages for ${args.jid}...`);
+  }
 
   const loadResult = await client.loadMoreMessages(args.jid, count);
 
   if (!loadResult.success) {
-    console.log(`❌ Failed to load messages: ${loadResult.error}`);
+    // --json must emit JSON on every path, including failure. A caller
+    // piping this to a parser previously got progress text and a human error
+    // message, so the failure was unreadable to the thing meant to read it.
+    if (jsonOutput) {
+      console.log(formatJson(loadResult));
+    } else {
+      console.log(`❌ Failed to load messages: ${loadResult.error}`);
+    }
     return false;
   }
 
