@@ -25,7 +25,15 @@ describe("ProxyRotator", () => {
     it("should accept a bare array of URLs", () => {
       const rotator = new ProxyRotator(POOL);
       expect(rotator.size).toBe(3);
-      expect(rotator.strategy).toBe("round-robin");
+      // Defaults to deterministic: round-robin would hand a long-lived session
+      // a different egress IP on each call.
+      expect(rotator.strategy).toBe("deterministic");
+    });
+
+    it("should tell you how to fix a defaulted next() with no instanceId", () => {
+      const rotator = new ProxyRotator(POOL);
+      expect(() => rotator.next()).toThrow(/defaults to the "deterministic" strategy/);
+      expect(() => rotator.next()).toThrow(/round-robin/);
     });
 
     it("should accept an options object", () => {
@@ -80,8 +88,9 @@ describe("ProxyRotator", () => {
   });
 
   describe("round-robin", () => {
+    // Explicit now: round-robin is no longer the default.
     it("should cycle through the pool and wrap", () => {
-      const rotator = new ProxyRotator(POOL);
+      const rotator = new ProxyRotator({ proxies: POOL, strategy: "round-robin" });
       const seen = [
         rotator.next().url,
         rotator.next().url,
@@ -92,7 +101,7 @@ describe("ProxyRotator", () => {
     });
 
     it("should preserve its position across setProxies", () => {
-      const rotator = new ProxyRotator(POOL);
+      const rotator = new ProxyRotator({ proxies: POOL, strategy: "round-robin" });
       expect(rotator.next().url).toBe(POOL[0]);
       expect(rotator.next().url).toBe(POOL[1]);
 
@@ -102,7 +111,7 @@ describe("ProxyRotator", () => {
     });
 
     it("should stay in range when the previously served proxy is gone", () => {
-      const rotator = new ProxyRotator(POOL);
+      const rotator = new ProxyRotator({ proxies: POOL, strategy: "round-robin" });
       rotator.next();
       rotator.next();
       rotator.next(); // last served: c

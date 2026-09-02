@@ -122,41 +122,68 @@ async function failoverExample(): Promise<void> {
   const rotator = new ProxyRotator({ proxies: pool, strategy: "deterministic" });
 
   const instanceId = "failover-bot";
-  let client = new MiawClient({
+
+  // ONE client for the lifetime of the process. Its auth state, instanceId,
+  // stores and event handlers all survive disconnect() -> connect(), so there
+  // is no reason to build a second one - and building a second one while this
+  // is alive would put two writers on the same auth state.
+  const client = new MiawClient({
     instanceId,
     sessionPath: "./sessions",
     proxy: rotator.forInstance(instanceId),
   });
 
-  client.on("connection", async (state) => {
-    if (state !== "disconnected") return;
+  let consecutiveFailures = 0;
+  let failingOver = false;
+
+  client.on("ready", () => {
+    consecutiveFailures = 0;
+  });
+
+  client.on("disconnected", async (reason) => {
+    if (reason === "intentional") return;   // our own disconnect(), below
+    if (failingOver) return;                // don't re-enter mid-failover
+
+    // One blip is not a dead proxy. Reacting to every drop would permanently
+    // evict a healthy entry the first time the network hiccups.
+    if (++consecutiveFailures < 3) return;
 
     const current = client.getProxyInfo();
-    if (!current) return;
+    if (!current) return;                   // direct, or a custom agent
 
-    // Drop the failing proxy and re-select from what remains. Removing one
-    // entry only moves the instances that were on it - every other bot in
-    // your fleet stays exactly where it was.
-    const deadHost = new URL(current.url).host;
-    pool = pool.filter((url) => new URL(url).host !== deadHost);
+    failingOver = true;
+    try {
+      // Drop the failing proxy and re-select from what remains. Removing one
+      // entry only moves the instances that were on it - every other bot in
+      // your fleet stays exactly where it was. Masking never touches the host.
+      const deadHost = new URL(current.url).host;
+      const remaining = pool.filter((url) => new URL(url).host !== deadHost);
 
-    if (pool.length === 0) {
-      console.error("❌ No proxies left in the pool");
-      return;
+      if (remaining.length === 0) {
+        console.error("❌ No proxies left in the pool");
+        return;
+      }
+
+      pool = remaining;
+      rotator.setProxies(pool);
+      const replacement = rotator.forInstance(instanceId);
+
+      // Tear the old egress down BEFORE staging, so no in-flight reconnect can
+      // pick the replacement up on a socket that is still half-alive.
+      await client.disconnect();
+
+      const result = client.setProxy(replacement);
+      if (!result.success) {
+        console.error(`❌ Proxy switch rejected: ${result.error}`);
+        return;
+      }
+      console.warn(`⚠️  ${current.url} failed; switching to ${maskProxyUrl(replacement)}`);
+
+      await client.connect();               // same session, no QR
+      consecutiveFailures = 0;
+    } finally {
+      failingOver = false;
     }
-
-    rotator.setProxies(pool);
-    const replacement = rotator.forInstance(instanceId);
-    console.warn(`⚠️  ${current.url} failed; switching to ${maskProxyUrl(replacement)}`);
-
-    // A client binds its agent at connect() time, so failing over means
-    // building a new client rather than mutating this one.
-    client = new MiawClient({
-      instanceId,
-      sessionPath: "./sessions",
-      proxy: replacement,
-    });
-    await client.connect();
   });
 
   await client.connect();

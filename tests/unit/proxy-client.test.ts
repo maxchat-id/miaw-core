@@ -31,6 +31,7 @@ jest.unstable_mockModule("@whiskeysockets/baileys", () => ({
 }));
 
 // Dynamic import after mocking
+const baileys = await import("@whiskeysockets/baileys");
 const { MiawClient } = await import("../../src/client/MiawClient.js");
 
 describe("MiawClient Proxy Integration", () => {
@@ -179,5 +180,304 @@ describe("MiawClient Proxy Integration", () => {
       expect(info!.url).not.toContain("****");
       expect(info!.protocol).toBe("http");
     });
+  });
+});
+
+describe("MiawClient.setProxy", () => {
+  const SECRET = "s3cretpassword";
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  const client = (options: Record<string, unknown> = {}) =>
+    new MiawClient({ instanceId: "test-set-proxy", ...options } as never);
+
+  describe("staging a proxy", () => {
+    it("should accept a valid URL string", () => {
+      const c = client();
+      const result = c.setProxy("socks5://new.example.com:1080");
+      expect(result.success).toBe(true);
+      expect(c.getProxyInfo()?.url).toBe("socks5://new.example.com:1080");
+    });
+
+    it("should replace an existing proxy", () => {
+      const c = client({ proxy: "socks5://old.example.com:1080" });
+      c.setProxy("socks5://new.example.com:1080");
+      expect(c.getProxyInfo()?.url).toBe("socks5://new.example.com:1080");
+    });
+
+    it("should accept a ProxyConfig object and mask the password", () => {
+      const c = client();
+      const result = c.setProxy({
+        url: "http://proxy.example.com:8080",
+        username: "user",
+        password: SECRET,
+      });
+      expect(result.success).toBe(true);
+      expect(result.proxy).not.toContain(SECRET);
+      expect(result.proxy).toContain("proxy.example.com");
+    });
+
+    it("should report reconnectRequired false while disconnected", () => {
+      expect(client().setProxy("socks5://a.example.com:1080").reconnectRequired).toBe(false);
+    });
+
+    it("should clear the proxy on null", () => {
+      const c = client({ proxy: "socks5://old.example.com:1080" });
+      expect(c.setProxy(null).success).toBe(true);
+      expect(c.getProxyInfo()).toBeNull();
+    });
+
+    it("should clear the proxy on undefined", () => {
+      const c = client({ proxy: "socks5://old.example.com:1080" });
+      expect(c.setProxy(undefined).success).toBe(true);
+      expect(c.getProxyInfo()).toBeNull();
+    });
+  });
+
+  describe("eager validation", () => {
+    // Left to connect(), an invalid proxy throws inside a catch that turns it
+    // into an `error` event, and scheduleReconnect() then retries forever.
+    it("should reject an unparseable URL", () => {
+      const result = client().setProxy("not-a-url");
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("Invalid proxy configuration");
+    });
+
+    it("should reject an unsupported protocol", () => {
+      expect(client().setProxy("ftp://proxy.example.com:21").success).toBe(false);
+    });
+
+    it("should leave the previous proxy untouched on rejection", () => {
+      const c = client({ proxy: "socks5://old.example.com:1080" });
+      c.setProxy("ftp://bad.example.com:21");
+      expect(c.getProxyInfo()?.url).toBe("socks5://old.example.com:1080");
+    });
+
+    it("should not leak the password in the error", () => {
+      const result = client().setProxy(`ftp://user:${SECRET}@bad.example.com:21`);
+      expect(result.success).toBe(false);
+      expect(result.error).not.toContain(SECRET);
+    });
+
+    it("should report reconnectRequired false on rejection", () => {
+      expect(client().setProxy("not-a-url").reconnectRequired).toBe(false);
+    });
+  });
+
+  describe("custom agent precedence", () => {
+    // resolveProxyAgents() early-returns on a custom agent, so accepting the
+    // call would be a silent no-op - the worst possible outcome.
+    it("should refuse when constructed with an agent", () => {
+      const c = client({ agent: {} as Agent });
+      const result = c.setProxy("socks5://new.example.com:1080");
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("agent");
+    });
+
+    it("should refuse when constructed with a fetchAgent", () => {
+      expect(client({ fetchAgent: {} }).setProxy("socks5://a.example.com:1080").success).toBe(
+        false
+      );
+    });
+
+    it("should not mutate the config when refusing", () => {
+      const c = client({ proxy: "socks5://old.example.com:1080", agent: {} as Agent });
+      c.setProxy("socks5://new.example.com:1080");
+      expect(c.getProxyInfo()?.url).toBe("socks5://old.example.com:1080");
+    });
+  });
+
+  describe("getProxyInfo liveness", () => {
+    it("should report active false before connect()", () => {
+      const info = client({ proxy: "socks5://a.example.com:1080" }).getProxyInfo();
+      expect(info?.active).toBe(false);
+    });
+
+    it("should not set pending when no socket is open", () => {
+      const c = client({ proxy: "socks5://a.example.com:1080" });
+      c.setProxy("socks5://b.example.com:1080");
+      expect(c.getProxyInfo()?.pending).toBeUndefined();
+    });
+
+    it("should still return null for a custom agent", () => {
+      // Documented contract: null means "no miaw-core-managed proxy".
+      expect(client({ agent: {} as Agent }).getProxyInfo()).toBeNull();
+    });
+
+    it("should not claim active when a custom agent supersedes the proxy", () => {
+      // agent + proxy together: resolveProxyAgents() early-returns the agent, so
+      // the socket does NOT dial through options.proxy. Reporting active here
+      // would be the same silent lie setProxy()'s refusal exists to prevent.
+      const c = client({ proxy: "socks5://a.example.com:1080", agent: {} as Agent });
+      expect(c.getProxyInfo()?.active).toBe(false);
+    });
+
+    it("should distinguish proxies that differ only by credentials", () => {
+      // `active` compares the RAW url; masking hides the password, so comparing
+      // masked forms would treat these two as the same proxy.
+      const c = client({
+        proxy: "http://user:one@a.example.com:8080",
+      });
+      const before = c.getProxyInfo()?.url;
+      c.setProxy("http://user:two@a.example.com:8080");
+      // Same masked display, different underlying credentials.
+      expect(c.getProxyInfo()?.url).toBe(before);
+      expect(c.getProxyInfo()?.active).toBe(false);
+    });
+  });
+});
+
+/**
+ * Regression coverage for client reuse across disconnect() -> connect(), the
+ * pattern the dead-proxy failover recipe depends on.
+ *
+ * Baileys' end() emits connection.update{connection:"close"} (verified in
+ * lib/Socket/socket.js), so an explicit disconnect() lands in handleDisconnect()
+ * as though the connection had dropped. The measured consequence is a DUPLICATE
+ * `disconnected` event - reason "unknown" from handleDisconnect(), then
+ * "intentional" from disconnect() itself.
+ *
+ * A second socket was NOT observed: disconnect() passes end(undefined), so the
+ * reconnect path does not actually fire here. The no-reconnect assertion below
+ * therefore locks in an invariant rather than covering a reproduced bug - worth
+ * keeping, because the failover recipe depends on disconnect() staying inert
+ * and a future Baileys change could make end() supply an error.
+ */
+describe("MiawClient explicit disconnect", () => {
+  /** Minimal Baileys socket whose end() emits close, exactly as the real one does. */
+  function makeFakeSocket() {
+    const handlers = new Map<string, ((...args: unknown[]) => void)[]>();
+    const ev = {
+      on: (event: string, fn: (...args: unknown[]) => void) => {
+        handlers.set(event, [...(handlers.get(event) ?? []), fn]);
+      },
+      removeAllListeners: (event: string) => handlers.delete(event),
+      emit: (event: string, payload: unknown) => {
+        for (const fn of handlers.get(event) ?? []) fn(payload);
+      },
+    };
+    return {
+      ev,
+      user: { id: "1@s.whatsapp.net" },
+      ws: { close: jest.fn() },
+      end: jest.fn(() => {
+        // The behaviour under test.
+        ev.emit("connection.update", { connection: "close", lastDisconnect: {} });
+      }),
+    };
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.useFakeTimers();
+
+    (baileys.useMultiFileAuthState as jest.Mock).mockResolvedValue({
+      state: { creds: { registered: true }, keys: {} },
+      saveCreds: jest.fn(),
+    } as never);
+    (baileys.makeCacheableSignalKeyStore as jest.Mock).mockReturnValue({} as never);
+    // MiawClient.ts:1 imports makeWASocket as the DEFAULT export, so that is the
+    // mock that actually gets invoked.
+    (baileys.default as jest.Mock).mockImplementation(() => makeFakeSocket() as never);
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  // Invariant, not a reproduced regression - see the note above.
+  it("should not reconnect after an explicit disconnect", async () => {
+    const client = new MiawClient({
+      instanceId: "test-disconnect",
+      sessionPath: "/tmp/miaw-unit-does-not-exist",
+      proxy: "socks5://a.example.com:1080",
+      reconnectDelay: 100,
+    });
+
+    await client.connect();
+    expect(baileys.default).toHaveBeenCalledTimes(1);
+
+    await client.disconnect();
+
+    // Well past reconnectDelay and several backoff multiples.
+    await jest.advanceTimersByTimeAsync(100 * 40);
+
+    expect(baileys.default).toHaveBeenCalledTimes(1);
+  });
+
+  it("should emit disconnected exactly once, as intentional", async () => {
+    const client = new MiawClient({
+      instanceId: "test-disconnect-event",
+      sessionPath: "/tmp/miaw-unit-does-not-exist",
+      reconnectDelay: 100,
+    });
+
+    const reasons: unknown[] = [];
+    client.on("disconnected", (reason: unknown) => reasons.push(reason));
+
+    await client.connect();
+    await client.disconnect();
+    await jest.advanceTimersByTimeAsync(100 * 40);
+
+    expect(reasons).toEqual(["intentional"]);
+  });
+
+  it("should pick up a setProxy() value on the next connect", async () => {
+    const client = new MiawClient({
+      instanceId: "test-reuse",
+      sessionPath: "/tmp/miaw-unit-does-not-exist",
+      proxy: "socks5://old.example.com:1080",
+      reconnectDelay: 100,
+    });
+
+    await client.connect();
+    await client.disconnect();
+
+    expect(client.setProxy("socks5://new.example.com:1080").success).toBe(true);
+    await client.connect();
+
+    expect(baileys.default).toHaveBeenCalledTimes(2);
+    expect(client.getProxyInfo()?.url).toBe("socks5://new.example.com:1080");
+    // The socket is live and was built from this config.
+    expect(client.getProxyInfo()?.active).toBe(true);
+  });
+
+  it("should not destroy a caller-supplied agent on disconnect", async () => {
+    // The agent is the caller's object, quite possibly shared with their other
+    // HTTP clients; tearing its sockets down would be a rude surprise.
+    const destroy = jest.fn();
+    const client = new MiawClient({
+      instanceId: "test-custom-agent",
+      sessionPath: "/tmp/miaw-unit-does-not-exist",
+      agent: { destroy } as never,
+      reconnectDelay: 100,
+    });
+
+    await client.connect();
+    await client.disconnect();
+    await client.connect();
+
+    expect(destroy).not.toHaveBeenCalled();
+  });
+
+  it("should keep user event handlers across the cycle", async () => {
+    // disconnect() must not removeAllListeners() - only the terminal dispose()
+    // does that - or the reconnected client would be deaf.
+    const client = new MiawClient({
+      instanceId: "test-handlers",
+      sessionPath: "/tmp/miaw-unit-does-not-exist",
+      reconnectDelay: 100,
+    });
+
+    const onReady = jest.fn();
+    client.on("ready", onReady);
+
+    await client.connect();
+    await client.disconnect();
+    await client.connect();
+
+    expect(client.listenerCount("ready")).toBe(1);
   });
 });

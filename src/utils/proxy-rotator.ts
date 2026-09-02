@@ -41,7 +41,11 @@ export type ProxyRotationStrategy =
 
 export interface ProxyRotatorOptions {
   proxies: readonly (string | ProxyPoolEntry)[];
-  /** Default "round-robin". */
+  /**
+   * Default "deterministic" - a stable proxy per instanceId, which is the only
+   * strategy safe for a long-lived WhatsApp session. Set "round-robin"
+   * explicitly if you actually want to spread requests.
+   */
   strategy?: ProxyRotationStrategy;
   /** Injectable RNG for tests and seeded determinism. Default Math.random. */
   random?: () => number;
@@ -126,12 +130,20 @@ export class ProxyRotator {
   private prefixSums: number[] = [];
   private watcher: ProxyListWatcher | undefined;
 
+  /** Whether `strategy` came from the default, for a clearer next() error. */
+  private strategyWasDefaulted = false;
+
   constructor(options: ProxyRotatorOptions | readonly (string | ProxyPoolEntry)[]) {
     const resolved: ProxyRotatorOptions = Array.isArray(options)
       ? { proxies: options as readonly (string | ProxyPoolEntry)[] }
       : (options as ProxyRotatorOptions);
 
-    this.strategy = resolved.strategy ?? "round-robin";
+    // Defaults to deterministic, matching the documented behaviour and, more
+    // importantly, failing safe: round-robin here would hand a long-lived
+    // session a different egress IP on each call, which WhatsApp reads as
+    // account takeover.
+    this.strategy = resolved.strategy ?? "deterministic";
+    this.strategyWasDefaulted = resolved.strategy === undefined;
     this.random = resolved.random ?? Math.random;
     this.setProxies(resolved.proxies);
   }
@@ -212,7 +224,9 @@ export class ProxyRotator {
       case "deterministic":
         if (!instanceId) {
           throw new Error(
-            'The "deterministic" strategy requires an instanceId: call next(instanceId) or forInstance(instanceId)'
+            this.strategyWasDefaulted
+              ? 'ProxyRotator defaults to the "deterministic" strategy, which needs an instanceId: call next(instanceId) or forInstance(instanceId), or pass { strategy: "round-robin" } explicitly.'
+              : 'The "deterministic" strategy requires an instanceId: call next(instanceId) or forInstance(instanceId)'
           );
         }
         return this.forInstance(instanceId);
@@ -254,7 +268,7 @@ export class ProxyRotator {
     let bestScore = -1;
 
     for (let i = 0; i < this.proxies.length; i++) {
-      const score = fnv1a32(`${instanceId} ${proxyKey(this.proxies[i])}`);
+      const score = fnv1a32(`${instanceId}\x00${proxyKey(this.proxies[i])}`);
       // Strict > breaks ties by lowest index, keeping duplicate URLs deterministic.
       if (score > bestScore) {
         bestScore = score;

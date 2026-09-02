@@ -5,6 +5,87 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.0] - 2026-09-02
+
+### Added
+
+- **Per-instance proxy pins (CLI).** `miaw-cli instance set-proxy <id>` persists a
+  proxy assignment to `<session-path>/instances.json`, so
+  `miaw-cli --instance-id bot-3 <command>` uses bot-3's proxy with no flags.
+  Four sources: a positional URL, `--label <name>` (selects a `label=` entry from
+  the proxy file and stores **no credentials**), `--from-env <VAR>`, and
+  `--from-file` (materializes the current deterministic selection).
+  `instance unset-proxy <id>` removes it.
+- `instance ls` gains a Proxy column (masked) and lists instances that are pinned
+  but not yet created as `[not created]` — pinning before `instance create` is
+  supported, so the pairing itself comes from the final egress IP.
+- **`MiawClient.setProxy(proxy)`** — stages a proxy for the **next** `connect()`,
+  returning `{ success, proxy, reconnectRequired, error }`. It never touches a
+  live socket, validates eagerly, and is refused when the client was constructed
+  with a custom `agent`/`fetchAgent`.
+- `getProxyInfo()` gains `active` (is the open socket using this config?) and
+  `pending` (what it is using instead). The `{ url, protocol }` shape and the
+  `null`-for-custom-agent contract are unchanged.
+- New exported types `SetProxyResult` and `ProxyInfo`.
+- A complete, runnable dead-proxy failover recipe in docs/PROXY.md and
+  examples/10-proxy-rotation.ts, reusing a single client.
+- `docs/DEPLOYMENT_INSTANCE_PROXY.md` — operational notes for the new
+  persistent pin store, and `docs/FOLLOW_UPS.md` for deferred findings.
+
+### Behavior changes
+
+- **`ProxyRotator` now defaults to `deterministic`, not `round-robin`.** The docs
+  and CLAUDE.md have always said deterministic is the default; only the CLI
+  actually applied it. The mismatch was silent and severe: following the docs
+  (`new ProxyRotator(urls)` then `next(id)`) gave round-robin, which hands a
+  long-lived session a different egress IP on each call — read by WhatsApp as
+  account takeover. Code changed rather than docs, so the default fails safe.
+  `next()` with no `instanceId` on a defaulted rotator now throws a message
+  naming the fix; pass `{ strategy: "round-robin" }` explicitly to restore the
+  old behavior. Checked against the sibling `miaw-api`, which constructs with an
+  explicit strategy and always calls `next(instanceId)`: unaffected.
+
+### Fixed
+
+- **The CLI silently dropped the proxy.** `instance create`/`connect`/`disconnect`/
+  `logout` built clients from `{instanceId, sessionPath}` only, discarding both
+  `proxy` and `debug`. Since the client cache key ignored the proxy, REPL
+  `connect <id>` cached a proxy-less client that every later command reused —
+  traffic went direct with no indication.
+- **REPL `use <id>` carried the previous instance's proxy** to the next one: it
+  mutated `config.instanceId` in place without re-resolving.
+- **Proxy selection ignored the target instance.** `--proxy-file` was resolved once
+  per process against the *startup* instance id, so `instance connect bot-3` got
+  another instance's egress IP. Resolution is now per target.
+- `instance create` called `createClient()` directly, bypassing the cache, so the
+  freshly-paired live client was never registered and the next command built a
+  second `MiawClient` for the same account.
+- An explicit `disconnect()` emitted `disconnected` twice — once as `"unknown"`
+  from the `connection.update{close}` that Baileys' `end()` fires, then once as
+  `"intentional"`.
+- Console-filter reference leak: the filter was acquired only in the constructor
+  but released on every `disconnect()`/`logout()`, so a reconnect cycle lost this
+  client's reference and repeated cycles un-filtered other live clients' output.
+- Proxy transports leaked: `connect()` built fresh agents on every call, auto-
+  reconnects included, and never released the old ones.
+- `.cli_history` was written 0644 with every line verbatim, so an
+  `instance set-proxy` command turned it into a plaintext credential store. Now
+  redacted at entry and written 0600.
+- **Global boolean flags swallowed the command name.** The arg parser assumed
+  every `--flag` took a value, so `miaw-cli --json instance ls` parsed as
+  `json="instance"` and failed with "Unknown command: ls" — even though
+  `--json` is documented as a global option. Value-less flags (`--json`,
+  `--debug`, `--ip`, `--from-file`, `--help`, `--version`) are now recognised
+  as booleans in any position.
+- **`src/utils/proxy-rotator.ts` contained a literal NUL byte**, which made
+  `file(1)` classify the source as binary and caused `grep` to skip it in any
+  repo-wide search. Replaced with the equivalent escape sequence; verified
+  runtime-identical, so no instance is remapped to a different proxy.
+- **Docs: `fetchAgent` is an `http.Agent`, not an undici Dispatcher.** The JSDoc
+  and three doc sites claimed otherwise; the PROXY.md "Custom agents" snippet was
+  copy-pasteable and would silently break every media upload through the proxy.
+  Also corrects the `createProxyAgents` API-table row and two broken anchors.
+
 ## [1.10.0] - 2026-07-29
 
 **Proxy files, rotation, and CLI diagnostics** - builds on the v1.3.0 proxy core.

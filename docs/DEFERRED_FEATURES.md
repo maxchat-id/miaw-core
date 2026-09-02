@@ -60,8 +60,13 @@ Native LID (v1.5.0), rich messages + pairing code (v1.6.0), chat management
   native `fetch(url, { dispatcher })`, which requires an undici Dispatcher, and undici
   ships no SOCKS transport. Uploads and the WebSocket are proxied on SOCKS. Use an
   HTTP/HTTPS proxy if downloads must be proxied. See [PROXY.md](./PROXY.md).
-- **Runtime proxy health-checking / automatic failover** — would need a
-  connection-state feedback loop into the rotator. `miaw-cli proxy test-all`
-  covers the pre-flight case; `weight: 0` is the designed drain mechanism.
+- **Automatic proxy health-checking / failover** — still deferred: it would
+  need a connection-state feedback loop into the rotator, and the policy
+  (how many failures, how long a drain) belongs to the application. The
+  *mechanism* now ships in v1.11.0 — `setProxy()` plus client reuse across
+  `disconnect()`/`connect()` — so the recipe in
+  [PROXY.md](./PROXY.md#handling-a-dead-proxy) is complete and runnable.
+  `miaw-cli proxy test-all` covers the pre-flight case; `weight: 0` is the
+  designed drain mechanism.
 - **External session stores (Redis/Mongo), message queuing, webhooks** — infra
   ideas with no specific Baileys dependency; add on demand.

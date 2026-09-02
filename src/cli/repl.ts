@@ -7,7 +7,9 @@
 import * as readline from "readline";
 import * as fs from "fs";
 import * as path from "path";
-import { listInstances } from "./utils/session.js";
+import { listInstances, type ClientConfig } from "./utils/session.js";
+import { baseOf, buildClientConfig } from "./utils/proxy-resolver.js";
+import { maskProxyUrl } from "../utils/proxy-agent.js";
 import { disconnectAll, disconnectClient, getOrCreateClient } from "./utils/client-cache.js";
 import { runCommand } from "./commands/index.js";
 import { setReplReadline, setReplLineHandler, clearReplReadline } from "./utils/prompt.js";
@@ -48,7 +50,19 @@ const commandTree: Record<string, CommandNode> = {
 
   // Category commands with subcommands
   instance: {
-    subcommands: ["ls", "list", "status", "create", "delete", "connect", "disconnect", "logout"],
+    subcommands: [
+      "ls",
+      "list",
+      "status",
+      "create",
+      "delete",
+      "connect",
+      "disconnect",
+      "logout",
+      "set-proxy",
+      "unset-proxy",
+    ],
+    flags: ["--proxy", "--label", "--from-file", "--from-env", "--proxy-file", "--json"],
   },
   get: {
     subcommands: ["profile", "contacts", "groups", "chats", "messages", "labels"],
@@ -317,9 +331,16 @@ function saveHistory(sessionPath: string, history: string[]): void {
       fs.mkdirSync(dir, { recursive: true });
     }
 
-    // Keep only the last MAX_HISTORY_SIZE entries
-    const trimmedHistory = history.slice(-MAX_HISTORY_SIZE);
-    fs.writeFileSync(historyPath, trimmedHistory.join("\n") + "\n", "utf8");
+    // Redact again at the disk boundary. addToHistory() already redacts, but
+    // this is the only place credentials can actually reach persistent storage,
+    // so it is the right place to be certain.
+    const trimmedHistory = history.slice(-MAX_HISTORY_SIZE).map(redactHistoryEntry);
+    // 0600: history can still hold instance ids and session paths, and this
+    // file previously defaulted to 0644.
+    fs.writeFileSync(historyPath, trimmedHistory.join("\n") + "\n", {
+      encoding: "utf8",
+      mode: 0o600,
+    });
   } catch {
     // Silently ignore history save errors
   }
@@ -329,21 +350,55 @@ function saveHistory(sessionPath: string, history: string[]): void {
  * Add a command to history (avoiding duplicates of the last command)
  */
 function addToHistory(history: string[], command: string): void {
-  const trimmed = command.trim();
+  const trimmed = redactHistoryEntry(command.trim());
   if (trimmed && trimmed !== history[history.length - 1]) {
     history.push(trimmed);
   }
 }
 
-export interface ClientConfig {
-  instanceId: string;
-  sessionPath: string;
-  debug?: boolean;
-  proxy?: string;
-  /** Proxy list file from --proxy-file, so REPL `proxy` commands inherit it. */
-  proxyFile?: string;
-  /** Selection strategy from --proxy-strategy. */
-  proxyStrategy?: string;
+/**
+ * Strip credentials from a command before it reaches the history file.
+ *
+ * `instance set-proxy bot socks5://user:pass@host:1080` would otherwise be
+ * written to disk verbatim, turning .cli_history into a plaintext credential
+ * store. The command still runs in full - only the recorded copy is redacted.
+ */
+function redactHistoryEntry(command: string): string {
+  // The REPL accepts both `instance set-proxy ...` and the `miaw-cli`-prefixed
+  // form (the prefix is stripped before dispatch), so both must be redacted.
+  const match = /^(\s*(?:miaw-cli\s+)?instance\s+set-proxy\s+\S+)\s+\S.*$/.exec(command);
+  return match ? `${match[1]} ***` : command;
+}
+
+// ClientConfig lives in ./utils/session.js - re-exported here because the CLI
+// entry point imports it from this module. A local duplicate used to drift from
+// the canonical one, which is how proxy fields went missing on instance switch.
+export type { ClientConfig };
+
+/**
+ * Repoint a config at another instance, re-running proxy precedence for it.
+ *
+ * The old code mutated `config.instanceId` in place and left `config.proxy`
+ * untouched, so switching instances silently carried the previous instance's
+ * egress IP - or, via `connect <id>`, cached a proxy-less client that every
+ * later command then reused. Re-resolving is the fix.
+ */
+async function switchInstance(config: ClientConfig, nextId: string): Promise<boolean> {
+  let next: ClientConfig;
+  try {
+    next = await buildClientConfig(baseOf(config), nextId);
+  } catch (error) {
+    console.log(`❌ Proxy resolution failed for "${nextId}": ${getErrorMessage(error)}`);
+    return false;
+  }
+
+  config.instanceId = next.instanceId;
+  if (next.proxy) {
+    config.proxy = next.proxy;
+  } else {
+    delete config.proxy;
+  }
+  return true;
 }
 
 /**
@@ -367,8 +422,14 @@ export async function runRepl(config: ClientConfig): Promise<void> {
     console.log("✅ Connected to WhatsApp!");
   }
 
-  // Load command history from previous sessions
+  // Load command history from previous sessions.
+  //
+  // readline is handed a COPY: in terminal mode it unshifts every raw line it
+  // reads onto the array it was given, which would put unredacted `set-proxy`
+  // credentials straight back into the array we later persist (and duplicate
+  // every entry). Our copy is appended to only via addToHistory().
   const commandHistory = loadHistory(config.sessionPath);
+  const readlineHistory = [...commandHistory];
 
   // Create readline interface with autocomplete and history
   const rl = readline.createInterface({
@@ -376,7 +437,7 @@ export async function runRepl(config: ClientConfig): Promise<void> {
     output: process.stdout,
     prompt: getPrompt(config.instanceId, state),
     completer: createCompleter(config.sessionPath),
-    history: commandHistory,
+    history: readlineHistory,
     historySize: MAX_HISTORY_SIZE,
   });
 
@@ -415,7 +476,7 @@ export async function runRepl(config: ClientConfig): Promise<void> {
     }
 
     if (input === "status") {
-      await cmdInstanceStatus(config.sessionPath, config.instanceId, defaultCLIContext);
+      await cmdInstanceStatus(config, config.instanceId, defaultCLIContext);
       rl.prompt();
       return;
     }
@@ -431,9 +492,14 @@ export async function runRepl(config: ClientConfig): Promise<void> {
           await disconnectClient({ instanceId: config.instanceId, sessionPath: config.sessionPath });
         }
 
-        config.instanceId = newInstanceId;
+        if (!(await switchInstance(config, newInstanceId))) {
+          rl.prompt();
+          return;
+        }
         client = getOrCreateClient(config);
-        console.log(`✅ Switched to instance: ${newInstanceId}`);
+        console.log(
+          `✅ Switched to instance: ${newInstanceId} (via ${config.proxy ? maskProxyUrl(config.proxy) : "a direct connection"})`
+        );
         rl.setPrompt(getPrompt(newInstanceId, client.getConnectionState()));
       } else if (newInstanceId === config.instanceId) {
         console.log(`ℹ️  Already using instance: ${newInstanceId}`);
@@ -456,16 +522,27 @@ export async function runRepl(config: ClientConfig): Promise<void> {
         }
       }
 
-      // Always use cmdInstanceConnect for consistency
-      const result = await cmdInstanceConnect(config.sessionPath, targetInstanceId);
+      // Resolve for the TARGET instance: passing the current config would
+      // connect the target through this instance's proxy, or through none.
+      let targetConfig: ClientConfig;
+      try {
+        targetConfig = await buildClientConfig(baseOf(config), targetInstanceId);
+      } catch (error) {
+        console.log(`❌ Proxy resolution failed for "${targetInstanceId}": ${getErrorMessage(error)}`);
+        rl.prompt();
+        return;
+      }
+
+      const result = await cmdInstanceConnect(targetConfig);
 
       // Handle auto-switch if result indicates it
       if (result && typeof result === "object" && "switchToInstance" in result) {
         const switchTo = result.switchToInstance;
         if (switchTo && switchTo !== config.instanceId) {
-          config.instanceId = switchTo;
-          client = getOrCreateClient(config);
-          rl.setPrompt(getPrompt(switchTo, client.getConnectionState()));
+          if (await switchInstance(config, switchTo)) {
+            client = getOrCreateClient(config);
+            rl.setPrompt(getPrompt(switchTo, client.getConnectionState()));
+          }
           rl.prompt();
           return;
         }
@@ -480,20 +557,26 @@ export async function runRepl(config: ClientConfig): Promise<void> {
       const parts = input.split(/\s+/);
       const targetInstanceId = parts[1] || config.instanceId;
 
-      // Always use cmdInstanceDisconnect for consistency
-      const result = await cmdInstanceDisconnect(
-        config.sessionPath,
-        targetInstanceId,
-        config.instanceId
-      );
+      // Resolve for the target so the cache's proxy identity stays honest.
+      let targetConfig: ClientConfig;
+      try {
+        targetConfig = await buildClientConfig(baseOf(config), targetInstanceId);
+      } catch (error) {
+        console.log(`❌ Proxy resolution failed for "${targetInstanceId}": ${getErrorMessage(error)}`);
+        rl.prompt();
+        return;
+      }
+
+      const result = await cmdInstanceDisconnect(targetConfig, config.instanceId);
 
       // Handle auto-switch if result suggests it
       if (result && typeof result === "object" && "switchToInstance" in result) {
         const switchTo = result.switchToInstance;
         if (switchTo && switchTo !== config.instanceId) {
-          config.instanceId = switchTo;
-          client = getOrCreateClient(config);
-          console.log(`✅ Switched to instance: ${switchTo}`);
+          if (await switchInstance(config, switchTo)) {
+            client = getOrCreateClient(config);
+            console.log(`✅ Switched to instance: ${switchTo}`);
+          }
         }
       }
 
@@ -566,12 +649,13 @@ export async function runRepl(config: ClientConfig): Promise<void> {
             console.log(`📴 Disconnecting previous instance: ${config.instanceId}`);
             await disconnectClient({ instanceId: config.instanceId, sessionPath: config.sessionPath });
           }
-          config.instanceId = switchTo;
-          // Get the new client for the switched instance
-          client = getOrCreateClient(config);
-          console.log(`✅ Switched to instance: ${switchTo}`);
-          // Update prompt with new client's state
-          rl.setPrompt(getPrompt(switchTo, client.getConnectionState()));
+          if (await switchInstance(config, switchTo)) {
+            // Get the new client for the switched instance
+            client = getOrCreateClient(config);
+            console.log(`✅ Switched to instance: ${switchTo}`);
+            // Update prompt with new client's state
+            rl.setPrompt(getPrompt(switchTo, client.getConnectionState()));
+          }
           rl.prompt();
           return;
         }
@@ -627,6 +711,7 @@ function showWelcome(config: ClientConfig): void {
 
 Instance: ${config.instanceId}
 Session:  ${config.sessionPath}
+Proxy:    ${config.proxy ? maskProxyUrl(config.proxy) : "direct"}
 
 Type 'help' for available commands, 'exit' to quit.
 `);
@@ -741,19 +826,31 @@ function showHelpInstance(): void {
 ╚════════════════════════════════════════════════════════════════════════╝
 
 COMMANDS:
-  instance ls                                 List all instances
+  instance ls                                 List all instances (with pinned proxy)
   instance status [id]                        Show connection status
   instance create <id>                        Create new instance
-  instance delete <id>                        Delete instance
+  instance delete <id>                        Delete instance (also drops its proxy pin)
   instance connect <id>                       Connect instance
   instance disconnect <id>                    Disconnect instance
-  instance logout <id>                        Logout and clear session
+  instance logout <id>                        Logout and clear session (keeps the pin)
+  instance set-proxy <id> <url>               Pin a proxy to an instance
+  instance set-proxy <id> --label <name>      Pin by label from the proxy file
+  instance set-proxy <id> --from-env <VAR>    Pin from an environment variable
+  instance set-proxy <id> --from-file         Pin the current --proxy-file selection
+  instance unset-proxy <id>                   Remove an instance's proxy pin
 
-EXAMPLE:
+EXAMPLES:
   instance create my-bot                      Create and scan QR for new instance
+  instance set-proxy my-bot --label eu        Pin without storing credentials
+
+PROXY PRECEDENCE (highest first):
+  --proxy / MIAW_PROXY  >  pinned  >  --proxy-file  >  direct
 
 NOTES:
-  - Each instance maintains its own WhatsApp session
+  - Each instance maintains its own WhatsApp session and its own proxy
+  - A proxy change applies on the instance's NEXT connect. Never change a live
+    session's egress IP - WhatsApp reads that as account takeover.
+  - Prefer --label or --from-env: a URL typed inline lands in shell history
   - Creating an instance will prompt for QR code scan
   - Logout clears the session, requiring re-authentication
 `);

@@ -122,7 +122,7 @@ const client = new MiawClient({
 | `connectionTimeout`    | `number`  | `120000`       | Connection establishment timeout                    |
 | `proxy`                | `string \| ProxyConfig` | _none_ | Proxy URL or config object (see [Proxy Support](#proxy-support)) |
 | `agent`                | `Agent`   | _none_         | Custom WebSocket agent (advanced, overrides proxy)  |
-| `fetchAgent`           | `unknown` | _none_         | Custom fetch dispatcher (advanced, overrides proxy) |
+| `fetchAgent`           | `unknown` | _none_         | Custom media-upload agent (advanced, overrides proxy). Must be an `http.Agent`, **not** an undici Dispatcher |
 
 ## Authentication
 
@@ -1415,7 +1415,7 @@ bot2.on("message", (msg) => console.log("Bot 2:", msg.text));
 
 ## Proxy Support
 
-_Added in v1.3.0 · proxy files and rotation added in v1.10.0_
+_Added in v1.3.0 · proxy files and rotation added in v1.10.0 · `setProxy()` and per-instance CLI pins added in v1.11.0_
 
 Each MiawClient instance can connect through its own proxy, for geographic distribution, IP separation across instances, or network egress control. Supports HTTP, HTTPS, SOCKS4, and SOCKS5.
 
@@ -1438,8 +1438,39 @@ const client2 = new MiawClient({
 await client.connect();
 
 client.getProxyInfo();
-// { url: "socks5://proxy.example.com:1080/", protocol: "socks5" }  (password masked)
+// { url: "socks5://proxy.example.com:1080/", protocol: "socks5", active: true }
+// (password masked; `active` says whether the OPEN socket uses this config)
 ```
+
+### Changing an instance's proxy
+
+`setProxy()` stages a proxy for the **next** `connect()`. It never touches a live
+socket: changing a connected session's egress IP is read by WhatsApp as account
+takeover, so applying the change is an explicit disconnect/reconnect you write.
+
+```typescript
+await client.disconnect();
+
+const result = client.setProxy("socks5://backup.example.com:1080");
+if (!result.success) {
+  console.error(result.error);   // always credential-masked
+}
+
+await client.connect();          // same session, no QR
+```
+
+`setProxy(null)` clears the proxy, so the next connect goes direct. It returns
+`{ success: false }` — never throws — and refuses outright when the client was
+constructed with a custom `agent`/`fetchAgent`, since those take precedence and
+would make the call a silent no-op.
+
+The same client can be reused indefinitely across disconnect/connect cycles:
+`disconnect()` leaves your event listeners in place (only the terminal
+`dispose()` removes them) and `connect()` re-reads `creds.json`. See
+[the dead-proxy failover recipe](./PROXY.md#handling-a-dead-proxy).
+
+On the CLI, `miaw-cli instance set-proxy <id> ...` persists the assignment so it
+survives across invocations — see [PROXY.md](./PROXY.md#pinning-a-proxy-to-an-instance-cli).
 
 ### Supported Protocols
 

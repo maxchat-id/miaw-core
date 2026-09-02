@@ -141,9 +141,19 @@ npx miaw-cli instance ls
 ```
 📱 Instances (2):
 
-  default [connected]
-  my-bot [disconnected]
+┌──────────────┬──────────────┬────────────────────────────────┐
+│ Instance     │ Status       │ Proxy                          │
+├──────────────┼──────────────┼────────────────────────────────┤
+│ default      │ connected    │ -                              │
+│ my-bot       │ disconnected │ socks5://user:****@eu1:1080    │
+│ bot-asia     │ [not created]│ label:asia                     │
+└──────────────┴──────────────┴────────────────────────────────┘
 ```
+
+The Proxy column shows each instance's pin, with any password masked. An
+instance listed as `[not created]` has a proxy pinned but no session yet —
+pinning before `instance create` is supported, so the pairing itself comes from
+the final egress IP.
 
 #### Show Instance Status
 
@@ -206,7 +216,47 @@ npx miaw-cli instance disconnect <instance-id>
 npx miaw-cli instance logout <instance-id>
 ```
 
-Logs out and clears session data. Requires QR scan on next connect.
+Logs out and clears session data. Requires QR scan on next connect. The
+instance's proxy pin is **kept**, so you re-pair from the same egress IP — use
+`instance unset-proxy` to drop it, or `instance delete` to forget the instance
+entirely.
+
+#### Pin a Proxy to an Instance
+
+```bash
+# By label - stores NO credentials, just the name of a `label=` entry
+npx miaw-cli instance set-proxy bot-eu --label eu --proxy-file ./proxies.txt
+
+# From an environment variable, to keep the URL out of shell history
+npx miaw-cli instance set-proxy bot-eu --from-env MIAW_EU_PROXY
+
+# Materialize the current --proxy-file selection for this instance
+npx miaw-cli instance set-proxy bot-eu --from-file --proxy-file ./proxies.txt
+
+# Or a URL directly (lands in shell history - prefer the forms above)
+npx miaw-cli instance set-proxy bot-eu socks5://eu1.example.com:1080
+
+npx miaw-cli instance unset-proxy bot-eu
+```
+
+The assignment is written to `<session-path>/instances.json` (mode `0600`), so
+every later invocation for that instance uses it with no flags:
+
+```bash
+npx miaw-cli --instance-id bot-eu get groups
+npx miaw-cli --instance-id bot-eu proxy test    # tests bot-eu's pinned proxy
+```
+
+**Precedence**, highest first:
+
+1. `--proxy` / `MIAW_PROXY` — always wins, and warns when it shadows a pin
+2. the pin in `instances.json`
+3. `--proxy-file` + `--proxy-strategy`, hashed on the **target** instance id
+4. direct
+
+A pin applies on the instance's **next** connect. Changing a live session's
+egress IP is read by WhatsApp as account takeover, so `set-proxy` says so, and a
+connected client is never rebuilt underneath you.
 
 ### Get Operations
 

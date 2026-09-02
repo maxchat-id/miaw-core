@@ -8,6 +8,7 @@
 import { MiawClient } from "../../index.js";
 import type { ConnectionState } from "../../types/index.js";
 import type { ClientConfig } from "./session.js";
+import { maskProxyUrl } from "../../utils/proxy-agent.js";
 
 /**
  * Information about a tracked instance
@@ -18,6 +19,13 @@ interface InstanceInfo {
   state: ConnectionState;
   client: MiawClient;
   lastUpdated: number;
+  /**
+   * Password-masked proxy this instance was built with, or undefined for a
+   * direct connection. Stored already-masked because the registry exists to be
+   * displayed - keeping the raw URL out of it makes a leak structurally
+   * impossible rather than merely unlikely.
+   */
+  proxy?: string;
 }
 
 /**
@@ -57,6 +65,7 @@ class InstanceRegistry {
       state: initialState,
       client,
       lastUpdated: Date.now(),
+      ...(config.proxy ? { proxy: maskProxyUrl(config.proxy) } : {}),
     };
 
     // Store in registry

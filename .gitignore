@@ -8,6 +8,8 @@ dist-test/
 *.tsbuildinfo
 
 # Session data (sensitive)
+# NOTE: <session-path>/instances.json lives here and may contain proxy
+# credentials (a `url` pin). Keep any relocated session directory ignored.
 sessions/
 test-sessions/
 test-sessions-manual/

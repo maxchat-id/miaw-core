@@ -5,6 +5,12 @@ changed operationally in v1.10.0; it is not a general deployment guide. If you
 deploy miaw-core without proxies configured, nothing here applies — the feature
 is entirely opt-in and the defaults are unchanged.
 
+> **v1.11.0 adds per-instance proxy pins**, which introduce a new persistent,
+> secret-grade file (`<session-path>/instances.json`) and change the
+> `ProxyRotator` default strategy. See
+> [DEPLOYMENT_INSTANCE_PROXY.md](./DEPLOYMENT_INSTANCE_PROXY.md) before
+> upgrading. Everything below still applies.
+
 Related: [PROXY.md](./PROXY.md) for the feature itself, [CLI.md](./CLI.md) for
 command reference.
 

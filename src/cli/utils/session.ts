@@ -9,6 +9,7 @@ import * as path from "path";
 import qrcode from "qrcode-terminal";
 import { MiawClient } from "../../index.js";
 import { TIMEOUTS, THRESHOLDS } from "../../constants/timeouts.js";
+import type { ProxyRotationStrategy } from "../../utils/proxy-rotator.js";
 
 // Re-export prompt functions from shared utility
 export { prompt, confirm } from "./prompt.js";
@@ -17,8 +18,30 @@ export interface ClientConfig {
   instanceId: string;
   sessionPath: string;
   debug?: boolean;
-  /** Proxy URL for this instance (e.g., "socks5://proxy:1080") */
+  /**
+   * Resolved proxy URL for THIS instance (e.g. "socks5://proxy:1080").
+   * Never print it raw - route display through maskProxyUrl().
+   */
   proxy?: string;
+  /**
+   * The --proxy / MIAW_PROXY value as given, kept separate from the resolved
+   * `proxy` above so a config can be re-resolved for a *different* instance.
+   * Without it, switching instances mid-session would either inherit the
+   * previous instance's proxy or silently drop it.
+   */
+  explicitProxy?: string;
+  /** Proxy list file from --proxy-file / MIAW_PROXY_FILE. */
+  proxyFile?: string;
+  /** Selection strategy from --proxy-strategy. */
+  proxyStrategy?: ProxyRotationStrategy;
+  /**
+   * Set when proxy resolution failed for this instance (an unresolvable label
+   * pin, an unreadable proxy file). Offline commands still run - you must be
+   * able to reach `instance unset-proxy` to repair a bad pin - but building a
+   * client is refused, because connecting with no proxy would leak the real IP
+   * the operator was deliberately hiding.
+   */
+  proxyError?: string;
 }
 
 /**
@@ -73,6 +96,14 @@ export function deleteInstance(
  * Create a new MiawClient instance
  */
 export function createClient(config: ClientConfig): MiawClient {
+  // The single MiawClient construction site, and therefore the right place to
+  // stop a connection that would silently go direct.
+  if (config.proxyError) {
+    throw new Error(
+      `Refusing to connect "${config.instanceId}" without its configured proxy: ${config.proxyError}`
+    );
+  }
+
   return new MiawClient({
     instanceId: config.instanceId,
     sessionPath: config.sessionPath,

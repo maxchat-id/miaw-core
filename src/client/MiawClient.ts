@@ -26,6 +26,9 @@ import {
 import {
   MiawClientOptions,
   ConnectionState,
+  ProxyConfig,
+  ProxyInfo,
+  SetProxyResult,
   SendTextOptions,
   SendMessageResult,
   MiawClientEvents,
@@ -208,6 +211,24 @@ class LruCache {
 /**
  * Main client class for interacting with WhatsApp
  */
+/**
+ * Run a teardown call, swallowing both synchronous throws and promise
+ * rejections. undici's close()/destroy() return promises, and an escaping
+ * rejection is fatal under Node's default unhandled-rejection policy.
+ */
+function settle(fn: () => unknown): void {
+  try {
+    const result = fn();
+    if (result && typeof (result as Promise<unknown>).catch === "function") {
+      void (result as Promise<unknown>).catch(() => {
+        /* a transport that refuses to close is not worth failing over */
+      });
+    }
+  } catch {
+    /* likewise */
+  }
+}
+
 export class MiawClient extends EventEmitter {
   private options: Required<Omit<MiawClientOptions, "proxy" | "agent" | "fetchAgent" | "usePairingCode" | "phoneNumber" | "browser">> & Pick<MiawClientOptions, "proxy" | "agent" | "fetchAgent" | "usePairingCode" | "phoneNumber" | "browser">;
   private socket: WASocket | null = null;
@@ -219,9 +240,47 @@ export class MiawClient extends EventEmitter {
   private reconnectTimer: NodeJS.Timeout | null = null;
   /** undici Dispatcher used to route media downloads through the proxy. */
   private downloadDispatcher: unknown;
+
+  /** The ws/upload agent of the current connection, kept so it can be closed. */
+  private proxyWsAgent: unknown;
+
+  /**
+   * The proxy the CURRENTLY OPEN socket was built from, masked. Distinct from
+   * options.proxy, which setProxy() can change while a socket is still live.
+   */
+  private activeProxy?: { url: string; protocol: string };
+
+  /**
+   * The RAW url behind `activeProxy`, used only for comparison. Masking hides
+   * the password, so two proxies differing only in credentials would otherwise
+   * compare equal.
+   */
+  private activeProxyKey?: string;
+
+  /**
+   * Whether the current transports were built by us from `options.proxy`.
+   * A caller-supplied `agent`/`fetchAgent` must never be destroyed here - it is
+   * their object, quite possibly shared with their other HTTP clients.
+   */
+  private ownsProxyTransport = false;
   // Cached WA Web version (resolved once, reused across reconnects)
   private cachedVersion: WAVersion | null = null;
   private loggingOut = false;
+
+  /**
+   * Set for the duration of an explicit disconnect(), so handleDisconnect()
+   * can tell a deliberate teardown from a dropped connection. Baileys' end()
+   * emits connection.update{close}, which would otherwise be read as an
+   * involuntary drop and schedule a reconnect the caller never asked for.
+   */
+  private intentionalDisconnect = false;
+
+  /**
+   * Whether THIS client currently holds a reference on the global console
+   * filter. The filter is reference-counted, so an unbalanced acquire/release
+   * across a reconnect cycle would steal a reference from another live client.
+   */
+  private consoleFilterActive = false;
   private logger: MiawLogger;
   private lidToJidMap: LruCache = new LruCache();
   // Custom stores for contacts, chats, messages (Baileys v7 removed makeInMemoryStore)
@@ -278,9 +337,7 @@ export class MiawClient extends EventEmitter {
 
     // Enable console filter to suppress libsignal logs when debug is off
     // libsignal logs directly to console.info/warn, bypassing our logger
-    if (!this.options.debug) {
-      enableConsoleFilter();
-    }
+    this.acquireConsoleFilter();
 
     // Initialize handlers
     this.authHandler = new AuthHandler(
@@ -336,7 +393,27 @@ export class MiawClient extends EventEmitter {
       const proxyAgents = await this.resolveProxyAgents();
       // Kept for downloadMedia(): Baileys never plumbs a proxy into its
       // download path, so we have to supply the dispatcher ourselves.
+      // Release the previous connection's pools before replacing them.
+      this.disposeProxyTransport();
+
+      // We own the transports only when we built them from options.proxy; with
+      // a custom agent these are the caller's objects.
+      const usingCustomAgent = Boolean(this.options.agent || this.options.fetchAgent);
+      this.ownsProxyTransport = !usingCustomAgent && Boolean(proxyAgents);
       this.downloadDispatcher = proxyAgents?.downloadDispatcher;
+      this.proxyWsAgent = proxyAgents?.wsAgent;
+
+      // A disconnect() released this client's console-filter reference; take
+      // it back rather than leaving the refcount short for other clients.
+      this.acquireConsoleFilter();
+      this.intentionalDisconnect = false;
+
+      // Remember what this socket is actually dialling through, so a later
+      // setProxy() can report the divergence instead of pretending it took.
+      // With a custom agent we genuinely do not know the egress, so we claim
+      // nothing rather than reporting options.proxy as if it were in use.
+      this.activeProxy = usingCustomAgent ? undefined : this.describeConfiguredProxy();
+      this.activeProxyKey = usingCustomAgent ? undefined : this.configuredProxyUrl();
 
       // Create socket
       const debugMode = this.options.debug;
@@ -505,27 +582,149 @@ export class MiawClient extends EventEmitter {
     return undefined;
   }
 
+  /** Take a reference on the console filter, at most once per client. */
+  private acquireConsoleFilter(): void {
+    if (!this.options.debug && !this.consoleFilterActive) {
+      enableConsoleFilter();
+      this.consoleFilterActive = true;
+    }
+  }
+
+  /** Release this client's console-filter reference, if it holds one. */
+  private releaseConsoleFilter(): void {
+    if (this.consoleFilterActive) {
+      disableConsoleFilter();
+      this.consoleFilterActive = false;
+    }
+  }
+
   /**
-   * Get current proxy configuration info (URL with credentials masked).
-   * Returns null if no proxy is configured.
+   * Best-effort teardown of the previous connection's proxy transports.
+   *
+   * connect() builds fresh agents on every call, auto-reconnects included, so
+   * without this a long reconnect loop leaks socket pools.
    */
-  getProxyInfo(): { url: string; protocol: string } | null {
-    const proxyUrl = typeof this.options.proxy === "string"
+  private disposeProxyTransport(): void {
+    // Never touch a caller-supplied agent: it is their object, and destroying
+    // it would tear down sockets their other HTTP clients are using.
+    if (this.ownsProxyTransport) {
+      for (const item of [this.downloadDispatcher, this.proxyWsAgent]) {
+        // undici returns promises from close()/destroy(); an escaping rejection
+        // would be an unhandled rejection, which Node treats as fatal.
+        settle(() => (item as { close?: () => unknown })?.close?.());
+        settle(() => (item as { destroy?: () => unknown })?.destroy?.());
+      }
+    }
+
+    this.ownsProxyTransport = false;
+    this.downloadDispatcher = undefined;
+    this.proxyWsAgent = undefined;
+  }
+
+  /** The raw configured proxy URL, or undefined when direct. Never printed. */
+  private configuredProxyUrl(): string | undefined {
+    return typeof this.options.proxy === "string"
       ? this.options.proxy
       : this.options.proxy?.url;
+  }
 
-    if (!proxyUrl) return null;
+  /** Masked description of the configured proxy, or undefined when direct. */
+  private describeConfiguredProxy(): { url: string; protocol: string } | undefined {
+    const proxyUrl = this.configuredProxyUrl();
+    if (!proxyUrl) return undefined;
 
     const masked = maskProxyUrl(this.options.proxy!);
 
     try {
-      return {
-        url: masked,
-        protocol: new URL(proxyUrl).protocol.replace(":", ""),
-      };
+      return { url: masked, protocol: new URL(proxyUrl).protocol.replace(":", "") };
     } catch {
       return { url: masked, protocol: "unknown" };
     }
+  }
+
+  /**
+   * Get current proxy configuration info (URL with credentials masked).
+   *
+   * Returns null when no miaw-core-managed proxy is configured. Note that a
+   * client constructed with a custom `agent`/`fetchAgent` also returns null:
+   * there is no URL to report, so null means "no managed proxy", not
+   * "no proxy".
+   */
+  getProxyInfo(): ProxyInfo | null {
+    const configured = this.describeConfiguredProxy();
+    if (!configured) return null;
+
+    const active =
+      this.socket !== null &&
+      this.activeProxyKey !== undefined &&
+      this.activeProxyKey === this.configuredProxyUrl();
+
+    return {
+      ...configured,
+      active,
+      // Only meaningful while a socket built from a *different* config is open.
+      ...(!active && this.socket !== null && this.activeProxy
+        ? { pending: { ...this.activeProxy } }
+        : {}),
+    };
+  }
+
+  /**
+   * Change the proxy this instance will use on its NEXT connect().
+   *
+   * Deliberately does not touch the live socket. Changing a connected
+   * session's egress IP is read by WhatsApp as account takeover, so applying
+   * the change is an explicit `disconnect()` then `connect()` that you write
+   * yourself - see the failover recipe in docs/PROXY.md.
+   *
+   * Staging (rather than refusing while connected) is what makes that recipe
+   * safe: you can put the replacement in place before tearing the old socket
+   * down, so no auto-reconnect can fire on the dead proxy in between.
+   *
+   * @param proxy a URL string, a ProxyConfig, or null/undefined to go direct.
+   */
+  setProxy(proxy: ProxyConfig | string | null | undefined): SetProxyResult {
+    const reconnectRequired = this.connectionState !== "disconnected";
+
+    // A custom agent short-circuits resolveProxyAgents(), so accepting this
+    // would be a silent no-op - the worst possible outcome.
+    if (this.options.agent || this.options.fetchAgent) {
+      return {
+        success: false,
+        reconnectRequired: false,
+        error:
+          "Cannot set proxy: this client was constructed with a custom agent/fetchAgent, which takes precedence over proxy config. Construct without agent/fetchAgent to use setProxy().",
+      };
+    }
+
+    if (proxy === null || proxy === undefined) {
+      this.options.proxy = undefined;
+      this.logger.info("Proxy cleared; next connect() will be direct");
+      return { success: true, reconnectRequired };
+    }
+
+    // Validate eagerly. Left to connect(), an invalid proxy throws inside a
+    // catch that turns it into an `error` event, and scheduleReconnect() then
+    // retries it forever.
+    if (!validateProxyConfig(proxy)) {
+      return {
+        success: false,
+        reconnectRequired: false,
+        error: `Invalid proxy configuration: ${maskProxyUrl(proxy)}`,
+      };
+    }
+
+    this.options.proxy = proxy;
+    const masked = maskProxyUrl(proxy);
+    this.logger.info(`Proxy staged for next connect: ${masked}`);
+
+    if (reconnectRequired) {
+      this.logger.warn(
+        "Proxy change does not affect the live session; call disconnect() then connect() to apply it. Never rotate a connected session's IP casually - WhatsApp reads an IP change on a live session as account takeover."
+      );
+    }
+
+    return { success: true, proxy: masked, reconnectRequired };
   }
 
   /**
@@ -1477,6 +1676,10 @@ export class MiawClient extends EventEmitter {
    * Dispose client and clean up resources
    */
   async dispose(): Promise<void> {
+    // Terminal teardown, so it counts as intentional: nothing here should
+    // trigger a reconnect.
+    this.intentionalDisconnect = true;
+
     // Clear reconnect timer
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
@@ -1499,6 +1702,11 @@ export class MiawClient extends EventEmitter {
       this.socket = null;
     }
 
+    this.disposeProxyTransport();
+    this.activeProxy = undefined;
+    this.activeProxyKey = undefined;
+    this.releaseConsoleFilter();
+
     this.updateConnectionState("disconnected");
   }
 
@@ -1507,6 +1715,17 @@ export class MiawClient extends EventEmitter {
    * @returns true if should reconnect
    */
   private handleDisconnect(lastDisconnect: any): boolean {
+    // An explicit disconnect() already emitted `disconnected` with reason
+    // "intentional" and cleared the reconnect timer. Baileys' end() then emits
+    // connection.update{close}, landing us here: without this guard we would
+    // emit a duplicate event and schedule a reconnect the caller never asked
+    // for - on the old proxy, racing whatever they do next.
+    if (this.intentionalDisconnect) {
+      this.logger.debug("Intentional disconnect, skipping auto-reconnect");
+      this.intentionalDisconnect = false;
+      return false;
+    }
+
     const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
     const reason = DisconnectReason[statusCode] || "unknown";
 
@@ -6984,22 +7203,35 @@ export class MiawClient extends EventEmitter {
    * Use logout() if you want to fully log out and require a new QR code.
    */
   async disconnect(): Promise<void> {
+    // Baileys' end() emits connection.update{connection:"close"}, which our
+    // handler reads as an involuntary drop: it would emit a second
+    // `disconnected` event and schedule a reconnect AFTER the timer below was
+    // cleared - silently reconnecting on the old proxy moments later. This
+    // flag lets handleDisconnect() tell the two apart.
+    this.intentionalDisconnect = true;
+
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
 
     if (this.socket) {
+      // Drop our handlers before ending, so nothing fires on a socket we are
+      // discarding. Must run while this.socket is still set.
+      this.removeSocketEvents();
+
       // Use end() instead of logout() to preserve session
       // logout() would clear credentials and require new QR scan
       this.socket.end(undefined);
       this.socket = null;
     }
 
+    this.disposeProxyTransport();
+    this.activeProxy = undefined;
+    this.activeProxyKey = undefined;
+
     // Cleanup console filter if it was enabled (reference counted)
-    if (!this.options.debug) {
-      disableConsoleFilter();
-    }
+    this.releaseConsoleFilter();
 
     this.updateConnectionState("disconnected");
     this.logger.info("Disconnected (session preserved)");
@@ -7126,9 +7358,7 @@ export class MiawClient extends EventEmitter {
     this.loggingOut = false;
 
     // Cleanup console filter if it was enabled (reference counted)
-    if (!this.options.debug) {
-      disableConsoleFilter();
-    }
+    this.releaseConsoleFilter();
 
     this.updateConnectionState("disconnected");
     this.logger.info("Logged out (session cleared)");
@@ -7203,8 +7433,8 @@ export class MiawClient extends EventEmitter {
       (this.socket as any).logger = this.logger;
     }
 
-    // Disable console filter to show libsignal logs in debug mode
-    disableConsoleFilter();
+    // Show libsignal logs in debug mode by dropping our filter reference.
+    this.releaseConsoleFilter();
 
     this.logger.info("Debug mode enabled");
   }
@@ -7226,8 +7456,8 @@ export class MiawClient extends EventEmitter {
       (this.socket as any).logger = this.logger;
     }
 
-    // Enable console filter to suppress libsignal session logs
-    enableConsoleFilter();
+    // Suppress libsignal session logs again.
+    this.acquireConsoleFilter();
   }
 
   /**

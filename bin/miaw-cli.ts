@@ -17,10 +17,15 @@ import { runRepl } from "../src/cli/repl.js";
 import { runCommand } from "../src/cli/commands/index.js";
 import { initializeCLICleanup } from "../src/cli/utils/cleanup.js";
 import { getErrorMessage } from "../src/utils/type-guards.js";
+import {
+  configFromResolved,
+  describeProxySource,
+  resolveProxyForInstance,
+  type ProxyResolutionBase,
+} from "../src/cli/utils/proxy-resolver.js";
 import { maskProxyUrl } from "../src/utils/proxy-agent.js";
 import {
   parseProxyStrategy,
-  selectProxyForInstance,
 } from "../src/cli/utils/proxy-config.js";
 
 // Initialize CLI cleanup handlers for graceful shutdown
@@ -39,6 +44,12 @@ const DEFAULT_PROXY_FILE = process.env.MIAW_PROXY_FILE || undefined;
 const DEFAULT_PROXY_STRATEGY_ENV = process.env.MIAW_PROXY_STRATEGY || undefined;
 
 /**
+ * Global flags that never take a value. Listed explicitly because the parser is
+ * positional: without this an `--ip`-style flag consumes the command name.
+ */
+const BOOLEAN_FLAGS = new Set(["json", "debug", "help", "version", "ip", "from-file"]);
+
+/**
  * Parse CLI arguments
  */
 function parseArgs(args: string[]): {
@@ -53,6 +64,14 @@ function parseArgs(args: string[]): {
     const arg = args[i];
     if (arg.startsWith("--")) {
       const flagName = arg.slice(2);
+      // Value-less flags must never swallow the next token. `--json instance ls`
+      // otherwise parsed as json="instance", leaving the command empty and
+      // reporting "Unknown command: ls" - even though --json is documented as a
+      // global option, i.e. valid before the command.
+      if (BOOLEAN_FLAGS.has(flagName)) {
+        flags[flagName] = true;
+        continue;
+      }
       const nextArg = args[i + 1];
       if (nextArg && !nextArg.startsWith("--")) {
         flags[flagName] = nextArg;
@@ -95,7 +114,8 @@ GLOBAL FLAGS:
   --debug                                     Enable verbose logging
 
 COMMANDS:
-  instance    Manage instances (ls, status, create, delete, connect, disconnect, logout)
+  instance    Manage instances (ls, status, create, delete, connect, disconnect,
+              logout, set-proxy, unset-proxy)
   get         Fetch data (profile, contacts, groups, chats, messages, labels)
   load        Load older messages from history
   send        Send messages (text, image, document)
@@ -118,6 +138,14 @@ EXAMPLES:
   miaw-cli contact add 6281234567890 "John Doe"
   miaw-cli proxy test socks5://proxy.example.com:1080
   miaw-cli --instance-id bot-3 --proxy-file ./proxies.txt get groups
+  miaw-cli instance set-proxy bot-3 --label eu     Pin a proxy, no credentials stored
+  miaw-cli --instance-id bot-3 get groups          Uses bot-3's pinned proxy, no flags
+
+PROXY PRECEDENCE (highest first):
+  --proxy / MIAW_PROXY  >  pinned in <session-path>/instances.json
+                        >  --proxy-file  >  direct
+  A pin applies on the instance's NEXT connect. Never change a live session's
+  egress IP - WhatsApp reads that as account takeover.
 
 REPL MODE:
   Run 'miaw-cli' without arguments to start interactive mode.
@@ -161,38 +189,55 @@ async function main() {
     process.exit(1);
   }
 
-  // Precedence: an explicit --proxy always wins; otherwise a --proxy-file
-  // selects one proxy for this process. The default strategy is
-  // deterministic so a given instanceId keeps a stable egress IP across
-  // invocations - round-robin here would silently rotate a live session's IP.
-  let proxyUrl = explicitProxy;
-  if (explicitProxy && proxyFile) {
-    console.log("⚠️  --proxy overrides --proxy-file");
-  } else if (!explicitProxy && proxyFile) {
-    try {
-      proxyUrl = await selectProxyForInstance(proxyFile, proxyStrategy, instanceId);
-    } catch (error: unknown) {
-      console.error(`❌ Failed to select a proxy from ${proxyFile}: ${getErrorMessage(error)}`);
-      process.exit(1);
-    }
-  }
-
-  // Create client configuration
-  const clientConfig = {
-    instanceId,
+  // Precedence lives in one place - see src/cli/utils/proxy-resolver.ts:
+  //   --proxy  >  pin in instances.json  >  --proxy-file  >  direct
+  // Selection is keyed on this instanceId, and commands targeting a *different*
+  // instance re-resolve rather than reusing what the process started with.
+  const proxyBase: ProxyResolutionBase = {
     sessionPath,
     debug: debugMode,
-    ...(proxyUrl && { proxy: proxyUrl }),
+    ...(explicitProxy && { explicitProxy }),
     ...(proxyFile && { proxyFile }),
     proxyStrategy,
   };
+
+  // A failure here is reported but does NOT exit. A bad pin would otherwise
+  // lock the operator out of `instance unset-proxy` and `instance ls` - the
+  // commands that repair it. The config instead carries `proxyError`, and
+  // createClient() refuses to build a client, so nothing connects direct.
+  let clientConfig;
+  let resolvedProxy;
+  try {
+    // Resolve once, then build the config from that result: resolving twice
+    // would print every override warning twice.
+    resolvedProxy = await resolveProxyForInstance(proxyBase, instanceId);
+    clientConfig = configFromResolved(proxyBase, instanceId, resolvedProxy);
+  } catch (error: unknown) {
+    const reason = getErrorMessage(error);
+    console.error(`❌ ${reason}`);
+    console.error(
+      `   Commands needing a connection will refuse until this is fixed; ` +
+        `"instance unset-proxy ${instanceId}" removes the pin.`
+    );
+    resolvedProxy = { source: "none" as const };
+    clientConfig = {
+      ...configFromResolved(proxyBase, instanceId, resolvedProxy),
+      proxyError: reason,
+    };
+  }
+
+  const proxyUrl = clientConfig.proxy;
 
   // No command provided - start REPL
   if (!command) {
     console.log(`\n🚀 Starting miaw-cli REPL...`);
     console.log(`📂 Instance: ${instanceId}`);
     console.log(`📂 Session: ${sessionPath}`);
-    if (proxyUrl) console.log(`🌐 Proxy: ${maskProxyUrl(proxyUrl)}`);
+    if (proxyUrl) {
+      console.log(
+        `🌐 Proxy: ${maskProxyUrl(proxyUrl)} (${describeProxySource(resolvedProxy.source)})`
+      );
+    }
     console.log(`🔧 Debug: ${debugMode ? "ON" : "OFF"}\n`);
 
     try {

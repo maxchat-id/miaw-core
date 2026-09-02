@@ -12,6 +12,8 @@ export {
   cmdInstanceConnect,
   cmdInstanceDisconnect,
   cmdInstanceLogout,
+  cmdInstanceSetProxy,
+  cmdInstanceUnsetProxy,
 } from "./instance.js";
 
 export {
