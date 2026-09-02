@@ -30,6 +30,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A complete, runnable dead-proxy failover recipe in docs/PROXY.md and
   examples/10-proxy-rotation.ts, reusing a single client.
 
+### Behavior changes
+
+- **`ProxyRotator` now defaults to `deterministic`, not `round-robin`.** The docs
+  and CLAUDE.md have always said deterministic is the default; only the CLI
+  actually applied it. The mismatch was silent and severe: following the docs
+  (`new ProxyRotator(urls)` then `next(id)`) gave round-robin, which hands a
+  long-lived session a different egress IP on each call — read by WhatsApp as
+  account takeover. Code changed rather than docs, so the default fails safe.
+  `next()` with no `instanceId` on a defaulted rotator now throws a message
+  naming the fix; pass `{ strategy: "round-robin" }` explicitly to restore the
+  old behavior.
+
 ### Fixed
 
 - **The CLI silently dropped the proxy.** `instance create`/`connect`/`disconnect`/
