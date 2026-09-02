@@ -182,8 +182,21 @@ export async function buildClientConfig(
   base: ProxyResolutionBase,
   instanceId: string
 ): Promise<ClientConfig> {
-  const resolved = await resolveProxyForInstance(base, instanceId);
+  return configFromResolved(base, instanceId, await resolveProxyForInstance(base, instanceId));
+}
 
+/**
+ * Assemble a ClientConfig from an already-resolved proxy.
+ *
+ * Separate from buildClientConfig so a caller that needs the ResolvedProxy
+ * itself (to report the source, say) does not resolve twice - which would
+ * print every override warning twice.
+ */
+export function configFromResolved(
+  base: ProxyResolutionBase,
+  instanceId: string,
+  resolved: ResolvedProxy
+): ClientConfig {
   return {
     instanceId,
     sessionPath: base.sessionPath,

@@ -6,18 +6,46 @@
 
 import * as path from "path";
 import {
-  createClient,
   deleteInstance,
   ensureConnected,
   listInstances,
+  type ClientConfig,
 } from "../utils/session.js";
 import {
   disconnectClient,
   getOrCreateClient,
+  peekClient,
 } from "../utils/client-cache.js";
 import { listInstanceStates, updateInstanceState } from "../utils/instance-registry.js";
 import { confirm } from "../utils/prompt.js";
+import { maskProxyUrl } from "../../utils/proxy-agent.js";
+import {
+  clearInstanceProxyPin,
+  deleteInstanceRecord,
+  describePin,
+  getPinnedProxy,
+  listPinnedInstanceIds,
+  setInstanceProxyPin,
+  type InstanceProxyPin,
+} from "../utils/instance-config.js";
+import { DEFAULT_PROXY_STRATEGY, selectProxyForInstance } from "../utils/proxy-config.js";
+import type { ProxyRotationStrategy } from "../../utils/proxy-rotator.js";
+import { getErrorMessage } from "../../utils/type-guards.js";
+import { describePinnedProxy } from "../utils/proxy-resolver.js";
+import { formatTable } from "../utils/formatter.js";
 import type { CLIContext } from "../context.js";
+
+/**
+ * Every handler here takes the whole ClientConfig rather than a bare
+ * (sessionPath, instanceId) pair. The pair silently dropped `proxy` and
+ * `debug`, so an instance connected through no proxy at all while the config
+ * said otherwise. Passing the config makes that impossible to reintroduce.
+ */
+
+/** Describes the egress a config will use, for status and confirmation lines. */
+function describeConfigProxy(config: ClientConfig): string {
+  return config.proxy ? maskProxyUrl(config.proxy) : "a direct connection";
+}
 
 /**
  * Result type for instance connect command
@@ -41,7 +69,15 @@ export interface InstanceDisconnectResult {
 export async function cmdInstanceList(sessionPath: string): Promise<boolean> {
   const instances = listInstances(sessionPath);
 
-  if (instances.length === 0) {
+  // Instances pinned to a proxy but not created yet are worth listing:
+  // pinning before `instance create` is the supported workflow (you want the
+  // pairing itself to come from the final egress IP), and a pin left behind by
+  // `instance logout` should stay visible.
+  const pinnedOnly = listPinnedInstanceIds(sessionPath).filter(
+    (id) => !instances.includes(id)
+  );
+
+  if (instances.length === 0 && pinnedOnly.length === 0) {
     console.log("No instances found.");
     console.log(`Create one with: miaw-cli instance create <id>`);
     return true;
@@ -53,12 +89,27 @@ export async function cmdInstanceList(sessionPath: string): Promise<boolean> {
     trackedStates.set(info.instanceId, info.state);
   }
 
+  const rows = [
+    ...instances.map((instanceId) => ({
+      instanceId,
+      status: trackedStates.get(instanceId) ?? "disconnected",
+      proxy: describePinnedProxy(sessionPath, instanceId) ?? "-",
+    })),
+    ...pinnedOnly.map((instanceId) => ({
+      instanceId,
+      status: "[not created]",
+      proxy: describePinnedProxy(sessionPath, instanceId) ?? "-",
+    })),
+  ];
+
   console.log(`\n📱 Instances (${instances.length}):\n`);
-  for (const instanceId of instances) {
-    // Use registry state if available, otherwise show as disconnected
-    const status = trackedStates.get(instanceId) ?? "disconnected";
-    console.log(`  ${instanceId} [${status}]`);
-  }
+  console.log(
+    formatTable(rows, [
+      { key: "instanceId", label: "Instance", width: 24 },
+      { key: "status", label: "Status", width: 16 },
+      { key: "proxy", label: "Proxy", width: 40 },
+    ])
+  );
   console.log();
 
   return true;
@@ -68,10 +119,11 @@ export async function cmdInstanceList(sessionPath: string): Promise<boolean> {
  * Show instance status
  */
 export async function cmdInstanceStatus(
-  sessionPath: string,
+  config: ClientConfig,
   instanceId: string,
   context: CLIContext
 ): Promise<boolean> {
+  const { sessionPath } = config;
   const instances = listInstances(sessionPath);
 
   if (instanceId && !instances.includes(instanceId)) {
@@ -95,15 +147,12 @@ export async function cmdInstanceStatus(
     let state = context.registry.getInstanceState({ instanceId: id, sessionPath });
     let client: any = null;
 
-    // If not in registry, try to get from cache (but don't create new one)
+    // If not in registry, look in the cache - peek, never create. Using
+    // getOrCreateClient here would trip the proxy-mismatch check (and could
+    // rebuild a client) merely because someone asked for status.
     if (state === null) {
-      // Use context to access cache without circular dependency
-      if (context.cache.hasClient({ instanceId: id, sessionPath })) {
-        client = context.cache.getOrCreateClient({ instanceId: id, sessionPath });
-        state = client.getConnectionState();
-      } else {
-        state = "disconnected";
-      }
+      client = context.cache.peekClient({ instanceId: id, sessionPath });
+      state = client ? client.getConnectionState() : "disconnected";
     } else {
       // Get client from registry if we have a state
       client = context.registry.getInstanceClient({ instanceId: id, sessionPath });
@@ -111,6 +160,20 @@ export async function cmdInstanceStatus(
 
     console.log(`Status: ${state}`);
     console.log(`Session: ${path.join(sessionPath, id)}`);
+
+    // The proxy line describes the target instance, which is not necessarily
+    // the one this config was resolved for.
+    if (id === config.instanceId) {
+      const source = config.proxy
+        ? describePinnedProxy(sessionPath, id)
+          ? "pinned"
+          : "--proxy / --proxy-file"
+        : "none";
+      console.log(`Proxy: ${describeConfigProxy(config)} (${source})`);
+    } else {
+      const pin = describePinnedProxy(sessionPath, id);
+      console.log(`Proxy: ${pin ?? "not pinned"}${pin ? " (pinned)" : ""}`);
+    }
 
     if (state === "connected" && client) {
       try {
@@ -133,10 +196,8 @@ export async function cmdInstanceStatus(
 /**
  * Create new instance (triggers QR)
  */
-export async function cmdInstanceCreate(
-  sessionPath: string,
-  instanceId: string
-): Promise<boolean> {
+export async function cmdInstanceCreate(config: ClientConfig): Promise<boolean> {
+  const { sessionPath, instanceId } = config;
   const instances = listInstances(sessionPath);
 
   if (instances.includes(instanceId)) {
@@ -146,13 +207,18 @@ export async function cmdInstanceCreate(
       console.log("Cancelled.");
       return false;
     }
+    // Drop any cached client before the session files vanish underneath it.
+    await disconnectClient(config);
     deleteInstance(sessionPath, instanceId);
   }
 
   console.log(`\n📱 Creating instance: ${instanceId}`);
   console.log("─".repeat(50));
+  console.log(`🌐 Pairing through ${describeConfigProxy(config)}`);
 
-  const client = createClient({ instanceId, sessionPath });
+  // Cached, not bare createClient(): a bare client is never registered, so the
+  // next command builds a *second* MiawClient for the same account.
+  const client = getOrCreateClient(config);
 
   const result = await ensureConnected(client);
   if (!result.success) {
@@ -169,10 +235,8 @@ export async function cmdInstanceCreate(
 /**
  * Delete instance
  */
-export async function cmdInstanceDelete(
-  sessionPath: string,
-  instanceId: string
-): Promise<boolean> {
+export async function cmdInstanceDelete(config: ClientConfig): Promise<boolean> {
+  const { sessionPath, instanceId } = config;
   const instances = listInstances(sessionPath);
 
   if (!instances.includes(instanceId)) {
@@ -189,11 +253,13 @@ export async function cmdInstanceDelete(
   }
 
   // Remove from cache first (disconnects if connected)
-  await disconnectClient({ instanceId, sessionPath });
+  await disconnectClient(config);
 
   // Delete session files
   const success = deleteInstance(sessionPath, instanceId);
   if (success) {
+    // Deleting the instance destroys its identity, proxy pin included.
+    deleteInstanceRecord(sessionPath, instanceId);
     console.log(`✅ Instance "${instanceId}" deleted.`);
     return true;
   }
@@ -206,9 +272,9 @@ export async function cmdInstanceDelete(
  * Connect instance
  */
 export async function cmdInstanceConnect(
-  sessionPath: string,
-  instanceId: string
+  config: ClientConfig
 ): Promise<InstanceConnectResult> {
+  const { sessionPath, instanceId } = config;
   const instances = listInstances(sessionPath);
 
   if (!instances.includes(instanceId)) {
@@ -218,9 +284,12 @@ export async function cmdInstanceConnect(
   }
 
   console.log(`\n📱 Connecting instance: ${instanceId}`);
+  console.log(`🌐 Via ${describeConfigProxy(config)}`);
 
-  // Use cached client (creates new if not in cache)
-  const client = getOrCreateClient({ instanceId, sessionPath });
+  // Pass the whole config: the old {instanceId, sessionPath} shorthand dropped
+  // `proxy` and `debug`, so this cached a proxy-less client that every later
+  // command then reused - traffic went direct with no indication.
+  const client = getOrCreateClient(config);
 
   const result = await ensureConnected(client);
   if (!result.success) {
@@ -232,7 +301,7 @@ export async function cmdInstanceConnect(
 
   // Explicitly update registry state for immediate consistency
   // The event listener might not have fired yet, so update proactively
-  updateInstanceState({ instanceId, sessionPath }, "connected");
+  updateInstanceState(config, "connected");
 
   // Signal REPL to switch to this instance
   return { success: true, switchToInstance: instanceId };
@@ -242,23 +311,23 @@ export async function cmdInstanceConnect(
  * Disconnect instance
  */
 export async function cmdInstanceDisconnect(
-  sessionPath: string,
-  instanceId: string,
+  config: ClientConfig,
   currentInstanceId?: string
 ): Promise<InstanceDisconnectResult> {
-  const client = getOrCreateClient({ instanceId, sessionPath });
+  const { instanceId } = config;
+  const client = getOrCreateClient(config);
 
   const state = client.getConnectionState();
   if (state !== "connected") {
     console.log(`ℹ️  Instance "${instanceId}" is not connected.`);
     // Still remove from cache to clean up
-    await disconnectClient({ instanceId, sessionPath });
+    await disconnectClient(config);
     return { success: true };
   }
 
   await client.disconnect();
   // Remove from cache after disconnecting
-  await disconnectClient({ instanceId, sessionPath });
+  await disconnectClient(config);
   console.log(`✅ Disconnected from "${instanceId}"`);
 
   // If we disconnected the currently active instance, suggest switching to default
@@ -273,11 +342,11 @@ export async function cmdInstanceDisconnect(
  * Logout and clear session
  */
 export async function cmdInstanceLogout(
-  sessionPath: string,
-  instanceId: string,
+  config: ClientConfig,
   currentInstanceId?: string
 ): Promise<boolean | { success: boolean; switchToInstance?: string }> {
-  const client = getOrCreateClient({ instanceId, sessionPath });
+  const { sessionPath, instanceId } = config;
+  const client = getOrCreateClient(config);
 
   // Always ask for confirmation
   const ans = await confirm(
@@ -306,7 +375,7 @@ export async function cmdInstanceLogout(
   }
 
   // Remove from cache
-  await disconnectClient({ instanceId, sessionPath });
+  await disconnectClient(config);
 
   // Double-check session directory is deleted (logout should have already done this)
   const sessionStillExists = deleteInstance(sessionPath, instanceId);
@@ -317,6 +386,16 @@ export async function cmdInstanceLogout(
   } else {
     // Normal case - logout already cleaned everything
     console.log(`✅ Logged out and cleared session for "${instanceId}"`);
+  }
+
+  // The proxy pin deliberately survives a logout: the session is gone but the
+  // instance's identity is not, and you want to re-pair from the same egress
+  // IP. `instance delete` is the operation that forgets it.
+  const keptPin = getPinnedProxy(sessionPath, instanceId);
+  if (keptPin) {
+    console.log(
+      `ℹ️  Proxy pin for "${instanceId}" kept (${describePin(keptPin)}). Remove it with: instance unset-proxy ${instanceId}`
+    );
   }
 
   // Final brief pause to ensure message is displayed before prompt returns
@@ -339,5 +418,143 @@ export async function cmdInstanceLogout(
     }
   }
 
+  return true;
+}
+
+/**
+ * How a set-proxy invocation named the proxy. Exactly one field is set.
+ *
+ * `url` is the blunt form and puts credentials in shell history; `label` and
+ * `fromEnv` exist so they don't have to.
+ */
+export interface SetProxySpec {
+  /** A full proxy URL, typed directly. */
+  url?: string;
+  /** A `label=` from the --proxy-file pool. Stores no credentials. */
+  label?: string;
+  /** Materialize the current --proxy-file selection for this instance. */
+  fromFile?: boolean;
+  /** Read the URL from the named environment variable. */
+  fromEnv?: string;
+}
+
+/**
+ * Pin a proxy to an instance.
+ *
+ * Offline: writes a file and constructs no client. The pin applies on the
+ * instance's NEXT connect - a live session must never change egress IP,
+ * because WhatsApp reads that as account takeover.
+ */
+export async function cmdInstanceSetProxy(
+  sessionPath: string,
+  instanceId: string,
+  spec: SetProxySpec,
+  options: { proxyFile?: string; proxyStrategy?: ProxyRotationStrategy } = {}
+): Promise<boolean> {
+  const given = [
+    spec.url ? "a url" : null,
+    spec.label ? "--label" : null,
+    spec.fromFile ? "--from-file" : null,
+    spec.fromEnv ? "--from-env" : null,
+  ].filter(Boolean);
+
+  if (given.length === 0) {
+    console.log("❌ Usage: instance set-proxy <id> <url|--label L|--from-file|--from-env VAR>");
+    return false;
+  }
+  if (given.length > 1) {
+    console.log(`❌ Give exactly one proxy source, not ${given.join(" and ")}.`);
+    return false;
+  }
+
+  let pin: InstanceProxyPin;
+
+  if (spec.label) {
+    pin = { label: spec.label };
+  } else if (spec.fromEnv) {
+    const value = process.env[spec.fromEnv];
+    if (!value) {
+      console.log(`❌ Environment variable ${spec.fromEnv} is not set or empty.`);
+      return false;
+    }
+    pin = { url: value };
+  } else if (spec.fromFile) {
+    if (!options.proxyFile) {
+      console.log("❌ --from-file needs a proxy list: pass --proxy-file or set MIAW_PROXY_FILE.");
+      return false;
+    }
+    try {
+      pin = {
+        url: await selectProxyForInstance(
+          options.proxyFile,
+          options.proxyStrategy ?? DEFAULT_PROXY_STRATEGY,
+          instanceId
+        ),
+      };
+    } catch (error) {
+      console.log(`❌ Could not select a proxy from ${options.proxyFile}: ${getErrorMessage(error)}`);
+      return false;
+    }
+  } else {
+    pin = { url: spec.url };
+  }
+
+  try {
+    setInstanceProxyPin(sessionPath, instanceId, pin);
+  } catch (error) {
+    // The message is already masked by instance-config.
+    console.log(`❌ ${getErrorMessage(error)}`);
+    return false;
+  }
+
+  console.log(
+    `✅ Pinned ${describePin(pin)} to "${instanceId}". Takes effect on the NEXT connect - a live session must not change egress IP.`
+  );
+
+  if (spec.url && hasCredentials(spec.url)) {
+    console.log(
+      "💡 Tip: use --from-env VAR or --label to keep credentials out of shell history."
+    );
+  }
+
+  // If it is running right now on something else, say so plainly.
+  const live = peekClient({ instanceId, sessionPath });
+  if (live && live.getConnectionState() !== "disconnected") {
+    const current = live.getProxyInfo();
+    console.log(
+      `⚠️  "${instanceId}" is currently connected through ${current ? current.url : "a direct connection"}; disconnect and reconnect to apply.`
+    );
+  }
+
+  return true;
+}
+
+/** Does this URL carry a password we should warn about leaking? */
+function hasCredentials(url: string): boolean {
+  try {
+    return new URL(url).password !== "";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Remove an instance's proxy pin.
+ *
+ * @returns false when nothing was pinned, so the caller does not report a
+ *   success that changed nothing.
+ */
+export async function cmdInstanceUnsetProxy(
+  sessionPath: string,
+  instanceId: string
+): Promise<boolean> {
+  if (!clearInstanceProxyPin(sessionPath, instanceId)) {
+    console.log(`ℹ️  No proxy pinned for "${instanceId}".`);
+    return false;
+  }
+
+  console.log(
+    `✅ Removed the proxy pin for "${instanceId}". Takes effect on the NEXT connect.`
+  );
   return true;
 }
