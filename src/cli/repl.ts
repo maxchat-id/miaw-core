@@ -37,7 +37,7 @@ interface CommandNode {
 const commandTree: Record<string, CommandNode> = {
   // REPL-specific commands
   help: {
-    subcommands: ["instance", "get", "load", "send", "media", "chat", "story", "group", "community", "check", "contact", "profile", "label", "business", "catalog", "proxy"],
+    subcommands: ["instance", "get", "load", "send", "media", "chat", "story", "group", "community", "check", "contact", "profile", "privacy", "block", "label", "business", "catalog", "proxy"],
   },
   status: {},
   exit: { aliases: ["quit"] },
@@ -121,6 +121,20 @@ const commandTree: Record<string, CommandNode> = {
       requests: ["list", "ls", "approve", "reject"],
     },
     flags: ["--limit", "--filter", "--json"],
+  },
+  privacy: {
+    subcommands: ["show", "set", "disappearing", "link-previews"],
+    nestedSubcommands: {
+      set: [
+        "last-seen", "online", "picture", "status",
+        "read-receipts", "group-add", "messages", "calls",
+      ],
+    },
+    flags: ["--json", "--force"],
+  },
+  block: {
+    subcommands: ["list", "ls", "add", "remove", "rm"],
+    flags: ["--json"],
   },
   load: {
     subcommands: ["messages"],
@@ -756,6 +770,10 @@ function showReplHelp(topic: string = ""): void {
     case "profile":
       showHelpProfile();
       return;
+    case "privacy":
+    case "block":
+      showHelpPrivacy();
+      return;
     case "label":
       showHelpLabel();
       return;
@@ -770,7 +788,7 @@ function showReplHelp(topic: string = ""): void {
       break;
     default:
       console.log(`❌ Unknown help topic: ${topic}`);
-      console.log(`Available topics: instance, get, load, send, media, group, check, contact, profile, label, catalog, proxy`);
+      console.log(`Available topics: instance, get, load, send, media, group, check, contact, profile, privacy, block, label, catalog, proxy`);
       console.log(`Usage: help [topic]`);
       return;
   }
@@ -782,7 +800,7 @@ function showReplHelp(topic: string = ""): void {
 ╚════════════════════════════════════════════════════════════════════════╝
 
 REPL-SPECIFIC:
-  help [topic]                                Show help (topics: instance, get, send, group, contact, profile, label, catalog, proxy)
+  help [topic]                                Show help (topics: instance, get, send, group, contact, profile, privacy, block, label, catalog, proxy)
   status                                      Show connection status
   use <instance-id>                           Switch active instance
   connect [id]                                Connect to WhatsApp
@@ -798,13 +816,15 @@ COMMANDS (use "help <command>" for details):
   load        Load older messages from chat history
   send        Send messages (text, image, document, video, audio, location, contact, poll, sticker)
   media       Media operations (download)
-  chat        Chat management (archive, pin, mute, read, clear, delete)
+  chat        Chat management (archive, pin, mute, read, clear, delete, ephemeral)
   story       Post status/story (text, image, video)
   group       Group management (info, participants, invites, settings)
   community   Community management (create, link groups, members, invites)
   check       Check if phone numbers are on WhatsApp
   contact     Contact management (list, info, add, remove)
   profile     Profile management (picture, name, status)
+  privacy     Privacy settings (last-seen, online, read receipts, calls, ...)
+  block       Blocklist management (list, add, remove)
   label       Label management (WhatsApp Business)
   business    Business profile & cover photo (WhatsApp Business)
   catalog     Catalog management (WhatsApp Business)
@@ -1117,6 +1137,50 @@ COMMANDS:
 
 NOTES:
   - Supported image formats: JPEG, PNG
+`);
+}
+
+/**
+ * Show help for privacy and blocklist commands
+ */
+function showHelpPrivacy(): void {
+  console.log(`
+╔════════════════════════════════════════════════════════════════════════╗
+║                   Privacy & Blocklist Commands                         ║
+╚════════════════════════════════════════════════════════════════════════╝
+
+PRIVACY:
+  privacy show [--force]                      Show current privacy settings
+  privacy set <setting> <value>               Change one setting
+  privacy disappearing <off|24h|7d|90d>       Default timer for NEW chats
+  privacy link-previews <on|off>              Link previews on messages you send
+
+SETTINGS AND THEIR VALUES:
+  last-seen       all | contacts | contact_blacklist | none
+  online          all | match_last_seen
+  picture         all | contacts | contact_blacklist | none
+  status          all | contacts | contact_blacklist | none
+  read-receipts   all | none
+  group-add       all | contacts | contact_blacklist
+  messages        all | contacts
+  calls           all | known
+
+BLOCKLIST:
+  block list                                  List blocked contacts
+  block add <phone>                           Block a contact
+  block remove <phone>                        Unblock a contact
+
+EXAMPLE:
+  privacy set last-seen contacts
+  privacy set read-receipts none
+  block add 6281234567890
+
+NOTES:
+  - 'contact_blacklist' means "my contacts, except..."; the exclusion list
+    itself is managed in the WhatsApp app and is not exposed over this protocol
+  - 'privacy disappearing' only affects NEW chats; use 'chat ephemeral',
+    'group ephemeral' or 'community ephemeral' for existing ones
+  - --force bypasses the cache and re-queries WhatsApp
 `);
 }
 

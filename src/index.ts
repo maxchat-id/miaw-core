@@ -45,6 +45,15 @@ export type {
   MemberAddMode,
   JoinRequest,
   EphemeralDurationValue,
+  // v1.12.0 Privacy & Blocklist
+  PrivacyValue,
+  PrivacyOnlineValue,
+  PrivacyGroupAddValue,
+  ReadReceiptsValue,
+  PrivacyCallValue,
+  PrivacyMessagesValue,
+  PrivacySettings,
+  PrivacyOperationResult,
   // v0.8.0 Profile Management
   ProfileOperationResult,
   // v0.9.0 Labels

@@ -1014,6 +1014,79 @@ export type EphemeralDurationValue =
   (typeof EphemeralDuration)[keyof typeof EphemeralDuration];
 
 // ============================================
+// Privacy & Blocklist Types (v1.12.0)
+// ============================================
+
+/**
+ * Audience for a privacy setting.
+ * `contact_blacklist` means "my contacts, except..." — the exclusion list itself
+ * is managed in the WhatsApp app and is not exposed over this protocol.
+ */
+export type PrivacyValue = "all" | "contacts" | "contact_blacklist" | "none";
+
+/** Who may see you as online. `match_last_seen` mirrors the last-seen setting. */
+export type PrivacyOnlineValue = "all" | "match_last_seen";
+
+/** Who may add you to groups. */
+export type PrivacyGroupAddValue = "all" | "contacts" | "contact_blacklist";
+
+/** Whether read receipts (blue ticks) are sent. */
+export type ReadReceiptsValue = "all" | "none";
+
+/** Who may call you. */
+export type PrivacyCallValue = "all" | "known";
+
+/** Who may message you. */
+export type PrivacyMessagesValue = "all" | "contacts";
+
+/**
+ * Your current privacy settings.
+ *
+ * WhatsApp returns these as a flat string map and has added keys over time, so
+ * every field is optional and the unrecognized remainder is kept under `raw`
+ * rather than dropped.
+ */
+export interface PrivacySettings {
+  /** Who can see your last-seen timestamp */
+  lastSeen?: PrivacyValue;
+
+  /** Who can see when you are online */
+  online?: PrivacyOnlineValue;
+
+  /** Who can see your profile picture */
+  profilePicture?: PrivacyValue;
+
+  /** Who can see your status updates */
+  status?: PrivacyValue;
+
+  /** Whether read receipts are sent */
+  readReceipts?: ReadReceiptsValue;
+
+  /** Who can add you to groups */
+  groupAdd?: PrivacyGroupAddValue;
+
+  /** Who can message you */
+  messages?: PrivacyMessagesValue;
+
+  /** Who can call you */
+  calls?: PrivacyCallValue;
+
+  /** The unnormalized map as returned by WhatsApp */
+  raw: Record<string, string>;
+}
+
+/**
+ * Result of a privacy or blocklist operation.
+ */
+export interface PrivacyOperationResult {
+  /** Whether the operation was successful */
+  success: boolean;
+
+  /** Error message if failed */
+  error?: string;
+}
+
+// ============================================
 // Profile Management Types (v0.8.0)
 // ============================================
 

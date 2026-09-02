@@ -56,6 +56,14 @@ import {
   cmdChatPin,
   cmdChatUnpin,
   cmdChatEphemeral,
+  // Privacy & blocklist (v1.12.0)
+  cmdPrivacyShow,
+  cmdPrivacySet,
+  cmdPrivacyDisappearing,
+  cmdPrivacyLinkPreviews,
+  cmdBlockList,
+  cmdBlockSet,
+  PRIVACY_SETTINGS,
   cmdChatMute,
   cmdChatUnmute,
   cmdChatRead,
@@ -544,6 +552,88 @@ export async function runCommand(
   }
 
   // Chat management commands
+  // Privacy settings (v1.12.0)
+  if (command === "privacy") {
+    const subCommand = parsedArgs._[0] || "";
+
+    switch (subCommand) {
+      case "show":
+      case "":
+        return await cmdPrivacyShow(client, { force: parsedArgs.force }, jsonOutput);
+
+      case "set":
+        if (parsedArgs._.length < 3) {
+          console.log("❌ Usage: miaw-cli privacy set <setting> <value>");
+          console.log(`   Settings: ${Object.keys(PRIVACY_SETTINGS).join(", ")}`);
+          return false;
+        }
+        return await cmdPrivacySet(client, {
+          setting: parsedArgs._[1],
+          value: parsedArgs._[2],
+        });
+
+      case "disappearing": {
+        const seconds = parseEphemeral(parsedArgs._[1]);
+        if (seconds === null) {
+          console.log("❌ Usage: miaw-cli privacy disappearing <off|24h|7d|90d|seconds>");
+          return false;
+        }
+        return await cmdPrivacyDisappearing(client, { seconds });
+      }
+
+      case "link-previews": {
+        const on = parseToggle(parsedArgs._[1]);
+        if (on === null) {
+          console.log("❌ Usage: miaw-cli privacy link-previews <on|off>");
+          return false;
+        }
+        return await cmdPrivacyLinkPreviews(client, { on });
+      }
+
+      default:
+        console.log(`❌ Unknown privacy command: ${subCommand}`);
+        console.log("Commands: show, set, disappearing, link-previews");
+        return false;
+    }
+  }
+
+  // Blocklist (v1.12.0)
+  if (command === "block") {
+    const subCommand = parsedArgs._[0] || "";
+
+    switch (subCommand) {
+      case "list":
+      case "ls":
+        return await cmdBlockList(client, jsonOutput);
+
+      case "add":
+        if (!parsedArgs._[1]) {
+          console.log("❌ Usage: miaw-cli block add <phone>");
+          return false;
+        }
+        return await cmdBlockSet(client, {
+          phone: parsedArgs._[1],
+          block: true,
+        });
+
+      case "remove":
+      case "rm":
+        if (!parsedArgs._[1]) {
+          console.log("❌ Usage: miaw-cli block remove <phone>");
+          return false;
+        }
+        return await cmdBlockSet(client, {
+          phone: parsedArgs._[1],
+          block: false,
+        });
+
+      default:
+        console.log(`❌ Unknown block command: ${subCommand}`);
+        console.log("Commands: list, add, remove");
+        return false;
+    }
+  }
+
   if (command === "chat") {
     const subCommand = parsedArgs._[0] || "";
     const jid = parsedArgs._[1] || "";

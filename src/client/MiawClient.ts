@@ -64,6 +64,15 @@ import {
   MemberAddMode,
   JoinRequest,
   EphemeralDurationValue,
+  // v1.12.0 Privacy & Blocklist
+  PrivacyValue,
+  PrivacyOnlineValue,
+  PrivacyGroupAddValue,
+  ReadReceiptsValue,
+  PrivacyCallValue,
+  PrivacyMessagesValue,
+  PrivacySettings,
+  PrivacyOperationResult,
   // v0.8.0 Profile Management
   ProfileOperationResult,
   // v0.9.0 Labels
@@ -6108,6 +6117,241 @@ export class MiawClient extends EventEmitter {
           formatted,
           "reject"
         )
+    );
+  }
+
+
+  // ============================================
+  // Privacy & Blocklist Methods (v1.12.0)
+  // ============================================
+
+  /**
+   * Run a privacy/blocklist call behind the standard connection guard.
+   * @param what - verb phrase used in error messages
+   */
+  private async runPrivacyOp(
+    what: string,
+    run: (socket: WASocket) => Promise<void>
+  ): Promise<PrivacyOperationResult> {
+    try {
+      if (!this.socket) {
+        throw new Error("Not connected. Call connect() first.");
+      }
+
+      if (this.connectionState !== "connected") {
+        throw new Error(
+          `Cannot ${what}. Connection state: ${this.connectionState}`
+        );
+      }
+
+      await run(this.socket);
+
+      return { success: true };
+    } catch (error) {
+      this.logger.error(`Failed to ${what}:`, error);
+      return { success: false, error: (error as Error).message };
+    }
+  }
+
+  // ---------- Blocklist ----------
+
+  /**
+   * Block a contact.
+   * @param jidOrPhone - Phone number or JID to block
+   */
+  async blockContact(jidOrPhone: string): Promise<PrivacyOperationResult> {
+    const jid = MessageHandler.formatPhoneToJid(jidOrPhone);
+    return this.runPrivacyOp("block contact", (socket) =>
+      socket.updateBlockStatus(jid, "block")
+    );
+  }
+
+  /**
+   * Unblock a contact.
+   * @param jidOrPhone - Phone number or JID to unblock
+   */
+  async unblockContact(jidOrPhone: string): Promise<PrivacyOperationResult> {
+    const jid = MessageHandler.formatPhoneToJid(jidOrPhone);
+    return this.runPrivacyOp("unblock contact", (socket) =>
+      socket.updateBlockStatus(jid, "unblock")
+    );
+  }
+
+  /**
+   * List the JIDs you have blocked.
+   * @returns Blocked JIDs, or [] when disconnected or on failure
+   */
+  async getBlocklist(): Promise<string[]> {
+    try {
+      if (!this.socket) {
+        throw new Error("Not connected. Call connect() first.");
+      }
+
+      if (this.connectionState !== "connected") {
+        throw new Error(
+          `Cannot fetch blocklist. Connection state: ${this.connectionState}`
+        );
+      }
+
+      const blocked = await this.socket.fetchBlocklist();
+
+      // Baileys types this as (string | undefined)[]; drop the holes rather
+      // than handing callers an array they have to null-check.
+      return (blocked || []).filter((jid): jid is string => Boolean(jid));
+    } catch (error) {
+      this.logger.error("Failed to fetch blocklist:", error);
+      return [];
+    }
+  }
+
+  /**
+   * Check whether a contact is on your blocklist.
+   * Convenience over {@link getBlocklist}; each call refetches the list.
+   * @param jidOrPhone - Phone number or JID to check
+   */
+  async isBlocked(jidOrPhone: string): Promise<boolean> {
+    const jid = MessageHandler.formatPhoneToJid(jidOrPhone);
+    const blocklist = await this.getBlocklist();
+    return blocklist.includes(jid);
+  }
+
+  // ---------- Privacy settings ----------
+
+  /**
+   * Fetch your current privacy settings.
+   *
+   * WhatsApp returns a flat string map whose keys have grown over time, so the
+   * known keys are normalized onto typed fields and the whole map is preserved
+   * under `raw`.
+   *
+   * @param force - bypass Baileys' cache and re-query WhatsApp
+   * @returns the settings, or null when disconnected or on failure
+   */
+  async getPrivacySettings(force = false): Promise<PrivacySettings | null> {
+    try {
+      if (!this.socket) {
+        throw new Error("Not connected. Call connect() first.");
+      }
+
+      if (this.connectionState !== "connected") {
+        throw new Error(
+          `Cannot fetch privacy settings. Connection state: ${this.connectionState}`
+        );
+      }
+
+      const raw = (await this.socket.fetchPrivacySettings(force)) || {};
+
+      return {
+        lastSeen: raw.last as PrivacyValue | undefined,
+        online: raw.online as PrivacyOnlineValue | undefined,
+        profilePicture: raw.profile as PrivacyValue | undefined,
+        status: raw.status as PrivacyValue | undefined,
+        readReceipts: raw.readreceipts as ReadReceiptsValue | undefined,
+        groupAdd: raw.groupadd as PrivacyGroupAddValue | undefined,
+        messages: raw.messages as PrivacyMessagesValue | undefined,
+        calls: raw.calladd as PrivacyCallValue | undefined,
+        raw,
+      };
+    } catch (error) {
+      this.logger.error("Failed to fetch privacy settings:", error);
+      return null;
+    }
+  }
+
+  /** Set who can see your last-seen timestamp. */
+  async setLastSeenPrivacy(
+    value: PrivacyValue
+  ): Promise<PrivacyOperationResult> {
+    return this.runPrivacyOp("update last-seen privacy", (socket) =>
+      socket.updateLastSeenPrivacy(value)
+    );
+  }
+
+  /** Set who can see when you are online. */
+  async setOnlinePrivacy(
+    value: PrivacyOnlineValue
+  ): Promise<PrivacyOperationResult> {
+    return this.runPrivacyOp("update online privacy", (socket) =>
+      socket.updateOnlinePrivacy(value)
+    );
+  }
+
+  /** Set who can see your profile picture. */
+  async setProfilePicturePrivacy(
+    value: PrivacyValue
+  ): Promise<PrivacyOperationResult> {
+    return this.runPrivacyOp("update profile-picture privacy", (socket) =>
+      socket.updateProfilePicturePrivacy(value)
+    );
+  }
+
+  /** Set who can see your status updates. */
+  async setStatusPrivacy(
+    value: PrivacyValue
+  ): Promise<PrivacyOperationResult> {
+    return this.runPrivacyOp("update status privacy", (socket) =>
+      socket.updateStatusPrivacy(value)
+    );
+  }
+
+  /** Turn read receipts (blue ticks) on or off. */
+  async setReadReceiptsPrivacy(
+    value: ReadReceiptsValue
+  ): Promise<PrivacyOperationResult> {
+    return this.runPrivacyOp("update read-receipt privacy", (socket) =>
+      socket.updateReadReceiptsPrivacy(value)
+    );
+  }
+
+  /** Set who can add you to groups. */
+  async setGroupAddPrivacy(
+    value: PrivacyGroupAddValue
+  ): Promise<PrivacyOperationResult> {
+    return this.runPrivacyOp("update group-add privacy", (socket) =>
+      socket.updateGroupsAddPrivacy(value)
+    );
+  }
+
+  /** Set who can message you. */
+  async setMessagesPrivacy(
+    value: PrivacyMessagesValue
+  ): Promise<PrivacyOperationResult> {
+    return this.runPrivacyOp("update message privacy", (socket) =>
+      socket.updateMessagesPrivacy(value)
+    );
+  }
+
+  /** Set who can call you. */
+  async setCallPrivacy(
+    value: PrivacyCallValue
+  ): Promise<PrivacyOperationResult> {
+    return this.runPrivacyOp("update call privacy", (socket) =>
+      socket.updateCallPrivacy(value)
+    );
+  }
+
+  /**
+   * Set the default disappearing-message timer applied to NEW chats.
+   *
+   * This does not touch existing chats — use {@link setChatEphemeral},
+   * {@link setGroupEphemeral} or {@link setCommunityEphemeral} for those.
+   *
+   * @param seconds - Duration in seconds; 0 (EphemeralDuration.Off) disables it
+   */
+  async setDefaultDisappearingMode(
+    seconds: EphemeralDurationValue | number
+  ): Promise<PrivacyOperationResult> {
+    return this.runPrivacyOp("update default disappearing mode", (socket) =>
+      socket.updateDefaultDisappearingMode(seconds)
+    );
+  }
+
+  /** Turn link previews on or off for messages you send. */
+  async setLinkPreviewsDisabled(
+    disabled: boolean
+  ): Promise<PrivacyOperationResult> {
+    return this.runPrivacyOp("update link-preview privacy", (socket) =>
+      socket.updateDisableLinkPreviewsPrivacy(disabled)
     );
   }
 

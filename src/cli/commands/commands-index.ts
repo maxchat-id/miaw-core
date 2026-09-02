@@ -159,3 +159,13 @@ export {
   cmdCatalogProductUpdate,
   cmdCatalogProductDelete,
 } from "./catalog.js";
+
+export {
+  cmdPrivacyShow,
+  cmdPrivacySet,
+  cmdPrivacyDisappearing,
+  cmdPrivacyLinkPreviews,
+  cmdBlockList,
+  cmdBlockSet,
+  PRIVACY_SETTINGS,
+} from "./privacy.js";

@@ -428,6 +428,111 @@ describe("CLI Command Router", () => {
     }
   });
 
+  // ============================================
+  // Privacy & Blocklist (v1.12.0)
+  // ============================================
+  //
+  // cmdPrivacySet validates the setting name and its value BEFORE asking for a
+  // connection, precisely so a typo cannot silently change the wrong setting.
+  // That makes these routable offline.
+
+  test("privacy set with an unknown setting lists the valid ones", async () => {
+    const capture = captureConsole();
+    try {
+      const result = await runCmd("privacy", ["set", "nonsense", "all"]);
+      expect(result).toBe(false);
+      const output = capture.getFullOutput();
+      expect(output).toContain("Unknown privacy setting");
+      expect(output).toContain("last-seen");
+    } finally {
+      capture.stop();
+    }
+  });
+
+  test("privacy set with an out-of-range value lists the accepted ones", async () => {
+    const capture = captureConsole();
+    try {
+      // "known" is valid for calls but not for last-seen -- the kind of mix-up
+      // that would otherwise reach WhatsApp and fail opaquely.
+      const result = await runCmd("privacy", ["set", "last-seen", "known"]);
+      expect(result).toBe(false);
+      const output = capture.getFullOutput();
+      expect(output).toContain("Invalid value");
+      expect(output).toContain("contact_blacklist");
+    } finally {
+      capture.stop();
+    }
+  });
+
+  test("privacy set with missing args shows usage", async () => {
+    const capture = captureConsole();
+    try {
+      const result = await runCmd("privacy", ["set", "last-seen"]);
+      expect(result).toBe(false);
+      expect(capture.getFullOutput()).toContain("Usage:");
+    } finally {
+      capture.stop();
+    }
+  });
+
+  test("unknown privacy subcommand shows the command list", async () => {
+    const capture = captureConsole();
+    try {
+      const result = await runCmd("privacy", ["foobar"]);
+      expect(result).toBe(false);
+      expect(capture.getFullOutput()).toContain("Unknown privacy command");
+    } finally {
+      capture.stop();
+    }
+  });
+
+  test("privacy disappearing with an unparseable duration shows usage", async () => {
+    const capture = captureConsole();
+    try {
+      const result = await runCmd("privacy", ["disappearing", "soon"]);
+      expect(result).toBe(false);
+      expect(capture.getFullOutput()).toContain("Usage:");
+    } finally {
+      capture.stop();
+    }
+  });
+
+  test("privacy link-previews with a bad toggle shows usage", async () => {
+    const capture = captureConsole();
+    try {
+      const result = await runCmd("privacy", ["link-previews", "maybe"]);
+      expect(result).toBe(false);
+      expect(capture.getFullOutput()).toContain("Usage:");
+    } finally {
+      capture.stop();
+    }
+  });
+
+  test.each(["add", "remove"])(
+    "block %s without a phone shows usage",
+    async (sub) => {
+      const capture = captureConsole();
+      try {
+        const result = await runCmd("block", [sub]);
+        expect(result).toBe(false);
+        expect(capture.getFullOutput()).toContain("Usage:");
+      } finally {
+        capture.stop();
+      }
+    }
+  );
+
+  test("unknown block subcommand shows the command list", async () => {
+    const capture = captureConsole();
+    try {
+      const result = await runCmd("block", ["foobar"]);
+      expect(result).toBe(false);
+      expect(capture.getFullOutput()).toContain("Unknown block command");
+    } finally {
+      capture.stop();
+    }
+  });
+
   test("community usage line advertises the new admin subcommands", async () => {
     const capture = captureConsole();
     try {
