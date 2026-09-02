@@ -22,6 +22,7 @@ const FIXTURES = "tests/fixtures";
 const PROXY_TXT = path.join(FIXTURES, "proxies.txt");
 const PROXY_JSON = path.join(FIXTURES, "proxies.json");
 const PROXY_UNREACHABLE = path.join(FIXTURES, "proxies-unreachable.txt");
+const PROXY_VENDOR = path.join(FIXTURES, "proxies-vendor.txt");
 
 /** The password planted in the fixtures. It must never reach any output. */
 const FIXTURE_SECRET = "s3cretpassword";
@@ -29,6 +30,24 @@ const FIXTURE_SECRET = "s3cretpassword";
 /**
  * Runs a proxy command and returns its exit boolean plus captured stdout.
  */
+/**
+ * Runs `fn` with MIAW_PROXY_FILE unset.
+ *
+ * `--proxy-file` falls back to that variable, and it is a documented setting
+ * an operator is encouraged to have exported - so without this, the two tests
+ * covering the "no proxy file configured" path fail on exactly the machines
+ * that use the feature, and pass in CI.
+ */
+async function withoutAmbientProxyFile<T>(fn: () => Promise<T>): Promise<T> {
+  const saved = process.env.MIAW_PROXY_FILE;
+  delete process.env.MIAW_PROXY_FILE;
+  try {
+    return await fn();
+  } finally {
+    if (saved !== undefined) process.env.MIAW_PROXY_FILE = saved;
+  }
+}
+
 async function run(
   args: string[],
   options?: { jsonOutput?: boolean; flags?: { [key: string]: string | boolean } }
@@ -75,7 +94,9 @@ describe("CLI: proxy commands", () => {
 
   describe("proxy list", () => {
     it("should require a proxy file", async () => {
-      const { ok, output } = await run(["list"]);
+      const { ok, output } = await withoutAmbientProxyFile(() =>
+        run(["list"])
+      );
       expect(ok).toBe(false);
       expect(output).toContain("--proxy-file");
     });
@@ -275,6 +296,83 @@ describe("CLI: proxy commands", () => {
       }
     }, 20000);
 
+    it("should explain an unparseable CONNECT rejection", async () => {
+      // Several vendors (Webshare among them) reject bad credentials by
+      // writing a response and slamming the socket shut. Node's parser
+      // surfaces that as "HPE_CLOSED_CONNECTION - Parse Error: Data after
+      // `Connection: close`", which names the parser's problem and not the
+      // operator's. The raw code is kept; a hint is appended.
+      const proxy = http.createServer();
+      proxy.on("connect", (_req, socket: net.Socket) => {
+        socket.write(
+          "HTTP/1.1 407 Proxy Authentication Required\r\n" +
+            "Connection: close\r\n\r\nDenied by proxy\n"
+        );
+        socket.destroy();
+      });
+
+      await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", resolve));
+      const { port } = proxy.address() as net.AddressInfo;
+
+      try {
+        const { ok, output } = await run(
+          ["test", `http://wrong:${FIXTURE_SECRET}@127.0.0.1:${port}`],
+          { jsonOutput: true }
+        );
+
+        expect(ok).toBe(false);
+        const payload = JSON.parse(output);
+        expect(payload.error.code).toBe("HPE_CLOSED_CONNECTION");
+        expect(payload.error.message).toContain("credentials");
+        expect(output).not.toContain(FIXTURE_SECRET);
+      } finally {
+        await new Promise<void>((resolve) => proxy.close(() => resolve()));
+      }
+    }, 20000);
+
+    it("should not redact a short password out of ordinary error prose", async () => {
+      // Regression: scrub() replaced every literal occurrence of the password
+      // anywhere in the message, so the one-character password "p" turned
+      // "before receiving CONNECT response" into "... res****onse".
+      const proxy = http.createServer();
+      proxy.on("connect", (_req, socket: net.Socket) => socket.destroy());
+
+      await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", resolve));
+      const { port } = proxy.address() as net.AddressInfo;
+
+      try {
+        const { output } = await run(["test", `http://u:p@127.0.0.1:${port}`], {
+          jsonOutput: true,
+        });
+        expect(JSON.parse(output).error.message).toContain("response");
+      } finally {
+        await new Promise<void>((resolve) => proxy.close(() => resolve()));
+      }
+    }, 20000);
+
+    it("should still redact a real-length password from error prose", async () => {
+      // The backstop for a library that prints the password on its own must
+      // survive the fix above. "response" is 8 characters, so it is long
+      // enough to be scrubbed even though it also appears in the message.
+      const proxy = http.createServer();
+      proxy.on("connect", (_req, socket: net.Socket) => socket.destroy());
+
+      await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", resolve));
+      const { port } = proxy.address() as net.AddressInfo;
+
+      try {
+        const { output } = await run(
+          ["test", `http://u:response@127.0.0.1:${port}`],
+          { jsonOutput: true }
+        );
+        const { message } = JSON.parse(output).error;
+        expect(message).toContain("****");
+        expect(message).not.toContain("response");
+      } finally {
+        await new Promise<void>((resolve) => proxy.close(() => resolve()));
+      }
+    }, 20000);
+
     it("should honour --timeout even when the proxy host blackholes", async () => {
       // Regression: req.destroy() cannot abort a TCP connect still in flight
       // inside the agent, so a blackholed host used to hang for the OS connect
@@ -329,7 +427,9 @@ describe("CLI: proxy commands", () => {
 
   describe("proxy test-all", () => {
     it("should require a proxy file", async () => {
-      const { ok, output } = await run(["test-all"]);
+      const { ok, output } = await withoutAmbientProxyFile(() =>
+        run(["test-all"])
+      );
       expect(ok).toBe(false);
       expect(output).toContain("--proxy-file");
     });
@@ -362,5 +462,37 @@ describe("CLI: proxy commands", () => {
       expect(output).toContain("FAIL");
       expect(output).toContain("0/3 proxies reachable");
     }, 20000);
+
+    it("should identify each row by host:port, not by the masked url", async () => {
+      // Regression: the Proxy column printed the full masked URL at width 40.
+      // Vendors issue one long username across the whole pool, so every row
+      // truncated to the same string - and since results are sorted by
+      // latency, there was no way to map a row back to a proxy at all.
+      const { output } = await run(["test-all"], {
+        flags: { "proxy-file": PROXY_VENDOR },
+      });
+
+      expect(output).toContain("127.0.0.1:1");
+      expect(output).toContain("127.0.0.1:2");
+      expect(output).toContain("127.0.0.1:3");
+      // The identity shown carries no credentials at all, masked or not.
+      expect(output).not.toContain(FIXTURE_SECRET);
+      expect(output).not.toContain("vendorpool-static-residential");
+    }, 20000);
+
+    it("should show an Exit IP column only when --ip is passed", async () => {
+      // Regression: --ip is documented for test-all and probeProxy did make
+      // the extra echo request per proxy, but the table had no column for the
+      // result - so the flag cost a round trip per proxy and showed nothing.
+      const withIp = await run(["test-all"], {
+        flags: { "proxy-file": PROXY_UNREACHABLE, ip: true },
+      });
+      expect(withIp.output).toContain("Exit IP");
+
+      const withoutIp = await run(["test-all"], {
+        flags: { "proxy-file": PROXY_UNREACHABLE },
+      });
+      expect(withoutIp.output).not.toContain("Exit IP");
+    }, 30000);
   });
 });

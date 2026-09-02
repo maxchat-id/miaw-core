@@ -308,6 +308,42 @@ describe("CLI: instance proxy pins", () => {
     });
   });
 
+  describe("instance status", () => {
+    it("should accept a pinned but uncreated instance", async () => {
+      // Regression: status resolved instances from session directories alone,
+      // so it rejected an instance that `ls` displays. That broke the
+      // documented pin-then-create workflow: you pin a proxy, then cannot ask
+      // what you just pinned.
+      await run(["set-proxy", "bot-3", "socks5://127.0.0.1:1080"]);
+      const { ok, output } = await run(["status", "bot-3"]);
+      expect(ok).toBe(true);
+      expect(output).not.toContain("not found");
+      expect(output).toContain("bot-3");
+      expect(output).toContain("127.0.0.1:1080");
+      // Same label `ls` uses, so the two commands cannot disagree.
+      expect(output).toContain("[not created]");
+    });
+
+    it("should still reject an instance that is neither created nor pinned", async () => {
+      const { ok, output } = await run(["status", "nonexistent"]);
+      expect(ok).toBe(false);
+      expect(output).toContain("not found");
+    });
+
+    it("should offer pinned instances as available ones", async () => {
+      await run(["set-proxy", "bot-3", "socks5://127.0.0.1:1080"]);
+      const { output } = await run(["status", "nonexistent"]);
+      expect(output).toContain("Available instances:");
+      expect(output).toContain("bot-3");
+    });
+
+    it("should not leak the pinned password", async () => {
+      await run(["set-proxy", "bot-3", `socks5://user:${TYPED_SECRET}@127.0.0.1:1080`]);
+      const { output } = await run(["status", "bot-3"]);
+      expect(output).not.toContain(TYPED_SECRET);
+    });
+  });
+
   describe("corrupt config", () => {
     it("should refuse to run rather than silently connect direct", async () => {
       // Treating an unreadable pin store as "no proxy" would leak the real IP.

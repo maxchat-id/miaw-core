@@ -5,6 +5,78 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.2] - 2026-09-03
+
+### Fixed
+
+Found by pointing the proxy tooling at a real 10-proxy vendor list (Webshare)
+rather than at the test fixtures, and by carrying the resulting configuration
+back into `.env.test`. Nothing here is an rc14 regression.
+
+- **`maskProxyUrl()` could return a password in clear text.** A URL whose
+  userinfo did not survive parsing was returned verbatim — and a URL is easy to
+  get into that state, because omitting the scheme makes `user:pw@host:8080`
+  parse as the *scheme* `user:`, stranding the password in the path where
+  nothing masked it. A scheme-less form is an easy mistake to make given that
+  the TXT list format is itself scheme-less. Since every proxy string the CLI
+  prints, error text included, is routed through this one function, the leak
+  reached anywhere a malformed proxy was reported. It now redacts whatever sits
+  in userinfo position on both the parse-success and parse-failure paths. A
+  string with no `@` is still returned untouched: it has no userinfo to hide,
+  and mangling it would remove the detail that explains the failure.
+- **`scrub()` corrupted error text when the password was short.** It replaced
+  every literal occurrence of the password anywhere in the message, so a
+  one-character password of `p` rendered "before receiving CONNECT response"
+  as "... res****onse". Credentials are now replaced unconditionally in
+  userinfo position, where they are unambiguous, and the blanket replacement is
+  kept as a backstop only for passwords long enough (8+) that colliding with
+  ordinary prose is implausible.
+- **An unparseable CONNECT rejection reported the parser's problem, not the
+  operator's.** Vendors that reject bad credentials by writing a response and
+  slamming the socket shut surface as `HPE_CLOSED_CONNECTION - Parse Error:
+  Data after 'Connection: close'`, which never reaches the 407 branch because
+  no response was ever parsed. `HPE_*` failures now carry a hint naming the two
+  usual causes.
+
+The remaining three are display-only — the `--json` output of every command
+below was already correct, so scripted deploy gating was never affected.
+
+- **`proxy test-all --ip` collected exit IPs and threw them away.** The flag is
+  documented for `test-all` and `probeProxy` did make the extra echo request
+  per proxy, but the table had no column for the result — so the flag cost a
+  round trip per proxy and displayed nothing. `proxy test` on a single URL was
+  unaffected. The column is now rendered, and only when `--ip` is passed.
+- **`proxy test-all` rows were indistinguishable on real vendor lists.** The
+  Proxy column printed the masked URL at width 40. Vendors issue one long
+  username across a whole pool, so every row truncated to a byte-identical
+  string — and since results are sorted by latency, there was no way at all to
+  tell which proxy was the slow one. Rows are now identified by `host:port`,
+  which is both the part that differs and the part carrying no credentials.
+  An over-long endpoint keeps its **tail**, because a per-session port is
+  frequently the only thing separating two entries and right-truncation
+  collapsed those rows in exactly the same way.
+- **`instance status <id>` rejected an instance that `instance ls` lists.**
+  Status resolved instances from session directories alone, so an instance
+  defined only by a proxy pin came back "not found" — breaking the documented
+  pin-then-create workflow, where you pin a proxy so that the pairing itself
+  comes from the final egress IP, and then could not ask what you had just
+  pinned. It now accepts pinned instances, reports them as `[not created]` to
+  match `ls`, and offers them under "Available instances".
+
+### Changed
+
+- **`docs/PROXY.md` overstated what the `deterministic` strategy guarantees.**
+  It said N instances "spread across N proxies"; rendezvous hashing is
+  stateless, so instances can collide — 10 instances over a 10-proxy pool
+  resolve to about 7 distinct egress IPs in practice, not 10. Since IP
+  separation is one of the stated reasons to run a pool at all, the section now
+  says so and points at explicit pins for a guaranteed 1:1 mapping.
+- The two `proxy` tests covering the "no proxy file configured" path now unset
+  `MIAW_PROXY_FILE` around themselves. It is a documented setting an operator
+  is encouraged to export, and it silently satisfied the condition under test —
+  so those two failed on exactly the machines that use the feature, and passed
+  in CI.
+
 ## [1.12.1] - 2026-09-02
 
 ### Fixed

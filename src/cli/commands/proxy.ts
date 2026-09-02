@@ -25,6 +25,39 @@ const IP_ECHO_TARGET = "https://api.ipify.org";
 const DEFAULT_TIMEOUT_MS = 10000;
 /** Concurrency for test-all: enough to be fast, low enough not to trip provider rate limits. */
 const TEST_ALL_CONCURRENCY = 5;
+/** Width of the test-all Proxy column. Paired with formatProxyEndpoint(). */
+const ENDPOINT_WIDTH = 34;
+
+/**
+ * The host:port a `test-all` row is identified by.
+ *
+ * The masked URL cannot serve as that identity. Vendors issue one long
+ * username across a whole pool, so `http://averyverylongvendoruser:****@...`
+ * truncates to a byte-identical string on every row - and since results are
+ * sorted by latency, there is then no way at all to map a row back to a
+ * proxy. host:port is both the part that differs and the part that carries no
+ * credentials.
+ *
+ * Over-long endpoints keep their tail rather than their head: vendors
+ * commonly issue one gateway hostname with a per-session port, so the port is
+ * the only distinguishing part and right-truncation would collapse those rows
+ * into each other exactly as the masked URL did.
+ */
+export function formatProxyEndpoint(
+  maskedUrl: string,
+  width = ENDPOINT_WIDTH
+): string {
+  let endpoint: string;
+  try {
+    endpoint = new URL(maskedUrl).host;
+  } catch {
+    endpoint = maskedUrl;
+  }
+
+  // cli-table3 reserves a padding space on each side of the cell.
+  const max = width - 2;
+  return endpoint.length <= max ? endpoint : `\u2026${endpoint.slice(-(max - 1))}`;
+}
 
 export interface ProxyProbeResult {
   /** Credential-masked. */
@@ -47,6 +80,13 @@ export interface ProxyProbeResult {
 }
 
 /**
+ * Shortest password replaced wherever it appears, rather than only in a
+ * credential position. Below this, a blanket replacement is more likely to be
+ * hitting ordinary prose than a real secret.
+ */
+const MIN_BLANKET_SCRUB_LENGTH = 8;
+
+/**
  * Strips a proxy URL's password out of arbitrary error text.
  *
  * The proxy-agent libraries sometimes embed the full URL in their errors.
@@ -58,11 +98,44 @@ function scrub(message: string, rawUrl: string): string {
   } catch {
     /* not parseable, nothing to scrub */
   }
+
   let scrubbed = message.split(rawUrl).join(maskProxyUrl(rawUrl));
-  if (password) {
+  if (!password) return scrubbed;
+
+  // Credentials reach error text either as the whole URL (handled above) or
+  // as bare userinfo. Both forms are unambiguous, so replace them whatever
+  // the password looks like.
+  scrubbed = scrubbed.split(`:${password}@`).join(":****@");
+
+  // Replacing the password everywhere else is the backstop for a library that
+  // prints it on its own. It is only safe once the password is long enough
+  // that colliding with ordinary prose is implausible: a one-character
+  // password of "p" used to turn "before receiving CONNECT response" into
+  // "... res****onse".
+  if (password.length >= MIN_BLANKET_SCRUB_LENGTH) {
     scrubbed = scrubbed.split(password).join("****");
   }
+
   return scrubbed;
+}
+
+/**
+ * Turns an unreadable HTTP-parse failure into something an operator can act on.
+ *
+ * A proxy that refuses the tunnel by writing a response and immediately
+ * closing the socket - which is how several vendors, Webshare among them,
+ * reject bad credentials - surfaces from Node's parser as
+ * "HPE_CLOSED_CONNECTION: Parse Error: Data after `Connection: close`". That
+ * names the parser's problem rather than the operator's, and the 407 branch
+ * below never sees it because no response was ever parsed. The raw code is
+ * left intact; only a hint is appended.
+ */
+function explainParseFailure(code: string | null, message: string): string {
+  if (!code?.startsWith("HPE_")) return message;
+  return (
+    `${message} - the proxy closed the tunnel without a valid HTTP response. ` +
+    "Most often wrong credentials, or a SOCKS proxy addressed as http://"
+  );
 }
 
 /**
@@ -241,7 +314,10 @@ export async function probeProxy(
       status: null,
       downloadProxied,
       exitIp: null,
-      error: { code, message: scrub(getErrorMessage(error), rawUrl) },
+      error: {
+        code,
+        message: explainParseFailure(code, scrub(getErrorMessage(error), rawUrl)),
+      },
     };
   } finally {
     // Mandatory: a lingering agent keeps sockets open and the CLI never exits.
@@ -524,23 +600,31 @@ export async function cmdProxyTestAll(
     return okResults.length === results.length;
   }
 
+  // --ip costs an extra echo request per proxy, so only render the column the
+  // user actually paid for.
+  const showExitIp = options.showIp === true;
+
   console.log("");
   console.log(
     formatTable(
       results.map((r) => ({
         status: r.ok ? "OK" : "FAIL",
-        url: r.url,
+        endpoint: formatProxyEndpoint(r.url),
         protocol: r.protocol,
         latency: r.ok ? `${r.latencyMs}ms` : "-",
+        ...(showExitIp && { exitIp: r.exitIp ?? "-" }),
         detail: r.ok
           ? `HTTP ${r.status}${r.downloadProxied ? "" : " (dl direct)"}`
           : (r.error?.code ?? r.error?.message ?? "unknown"),
       })),
       [
         { key: "status", label: "Status", width: 9 },
-        { key: "url", label: "Proxy", width: 40 },
+        { key: "endpoint", label: "Proxy", width: ENDPOINT_WIDTH },
         { key: "protocol", label: "Protocol", width: 11 },
         { key: "latency", label: "Latency", width: 10 },
+        ...(showExitIp
+          ? [{ key: "exitIp", label: "Exit IP", width: 20 }]
+          : []),
         { key: "detail", label: "Detail", width: 30 },
       ]
     )

@@ -144,12 +144,39 @@ export function maskProxyUrl(config: ProxyConfig | string): string {
     }
     if (parsed.password) {
       parsed.password = "****";
+      return parsed.toString();
     }
-    return parsed.toString();
+
+    // Parsed, but with nothing in userinfo - which does not mean there are no
+    // credentials, only that the URL is not shaped the way it reads.
+    // "user:pw@host:8080" with the scheme left off parses as the *scheme*
+    // "user:", stranding the password in the path where nothing masks it, so
+    // this used to return the secret verbatim. A scheme-less form is an easy
+    // mistake to make given that the TXT list format is itself scheme-less.
+    return redactUserinfo(parsed.toString());
   } catch {
-    return raw;
+    // Not parseable at all, and it may still carry credentials.
+    return redactUserinfo(raw);
   }
 }
+
+/**
+ * Last-resort credential redaction for a string `new URL()` could not make
+ * sense of.
+ *
+ * Replaces whatever sits in userinfo position - between an optional scheme
+ * and the "@" that ends it. A string with no "@" has no userinfo by URL
+ * syntax and is returned untouched: there is no password in it to hide, and
+ * mangling it would remove exactly the detail that explains why it was
+ * rejected.
+ */
+function redactUserinfo(raw: string): string {
+  return raw.replace(
+    /^([a-z][a-z0-9+.-]*:\/{0,2})?([^/@]*?:)[^/@]*@/i,
+    (_match, scheme = "", user = "") => `${scheme}${user}****@`
+  );
+}
+
 
 /**
  * Validates a proxy configuration.

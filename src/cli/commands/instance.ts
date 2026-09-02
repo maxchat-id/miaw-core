@@ -159,17 +159,28 @@ export async function cmdInstanceStatus(
   const { sessionPath } = config;
   const instances = listInstances(sessionPath);
 
-  if (instanceId && !instances.includes(instanceId)) {
+  // An instance defined only by a proxy pin is a real one: `instance ls` lists
+  // it as "[not created]", and pinning before `instance create` is the
+  // supported workflow (you want the pairing itself to come from the final
+  // egress IP). Resolving from session directories alone made `status` reject
+  // an instance that `ls` displays - so you could pin a proxy and then not be
+  // able to ask what you had just pinned.
+  const pinnedOnly = listPinnedInstanceIds(sessionPath).filter(
+    (id) => !instances.includes(id)
+  );
+  const known = [...instances, ...pinnedOnly];
+
+  if (instanceId && !known.includes(instanceId)) {
     console.log(`❌ Instance "${instanceId}" not found.`);
-    console.log(`\nAvailable instances:`, instances.join(", ") || "none");
+    console.log(`\nAvailable instances:`, known.join(", ") || "none");
     return false;
   }
 
   // Show status for specific instance or all
   const targetInstances = instanceId
     ? [instanceId]
-    : instances.length > 0
-    ? instances
+    : known.length > 0
+    ? known
     : ["default"];
 
   for (const id of targetInstances) {
@@ -191,7 +202,12 @@ export async function cmdInstanceStatus(
       client = context.registry.getInstanceClient({ instanceId: id, sessionPath });
     }
 
-    console.log(`Status: ${state}`);
+    // Match the label `ls` uses, so the two commands cannot disagree about an
+    // instance that is pinned but not yet paired. A client mid-pairing has no
+    // creds.json yet, so defer to a live state when there is one.
+    console.log(
+      `Status: ${!instances.includes(id) && state === "disconnected" ? "[not created]" : state}`
+    );
     console.log(`Session: ${path.join(sessionPath, id)}`);
 
     // Report the rule that actually won, not merely whether a pin exists - a

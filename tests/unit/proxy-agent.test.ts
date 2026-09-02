@@ -230,5 +230,31 @@ describe("Proxy Agent Utilities", () => {
       expect(maskProxyUrl("not-a-url")).toBe("not-a-url");
       expect(maskProxyUrl("")).toBe("");
     });
+
+    it("should still redact credentials when the url will not parse", () => {
+      // Regression: the fallback returned the input verbatim, so anything
+      // new URL() rejected was printed with its password intact - in the one
+      // function whose whole job is to prevent that. A missing scheme is
+      // enough to get here, and it is an easy mistake to make given that the
+      // TXT list format is itself scheme-less.
+      const masked = maskProxyUrl("user:s3cretpassword@proxy.example.com:8080");
+      expect(masked).not.toContain("s3cretpassword");
+      expect(masked).toContain("****");
+      // The part an operator needs in order to fix it survives.
+      expect(masked).toContain("proxy.example.com:8080");
+    });
+
+    it("should redact credentials in a url with a broken scheme", () => {
+      const masked = maskProxyUrl("htp:/user:s3cretpassword@proxy.example.com:8080");
+      expect(masked).not.toContain("s3cretpassword");
+      expect(masked).toContain("****");
+    });
+
+    it("should leave an unparseable string with no userinfo alone", () => {
+      // No "@" means no userinfo by URL syntax, so there is no password to
+      // hide - and mangling it would remove exactly the detail that explains
+      // why it failed to parse.
+      expect(maskProxyUrl("http://host:not-a-port")).toBe("http://host:not-a-port");
+    });
   });
 });

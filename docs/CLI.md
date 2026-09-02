@@ -170,6 +170,10 @@ npx miaw-cli instance status
 npx miaw-cli instance status my-bot
 ```
 
+Like `instance ls`, this accepts an instance that exists only as a proxy pin
+and reports it as `[not created]` — pinning before `instance create` is the
+supported workflow, so you can always ask what you just pinned.
+
 #### Create Instance
 
 ```bash
@@ -955,23 +959,44 @@ npx miaw-cli proxy test-all --proxy-file ./proxies.txt || exit 1
 **Output:**
 
 ```
-🔍 Testing 4 proxies via https://web.whatsapp.com/ (5 at a time) ...
+🔍 Testing 3 proxies via https://web.whatsapp.com/ (5 at a time) ...
 
-┌────────┬──────────────────────────────────┬──────────┬─────────┬──────────────────────┐
-│ Status │ Proxy                            │ Protocol │ Latency │ Detail               │
-├────────┼──────────────────────────────────┼──────────┼─────────┼──────────────────────┤
-│ OK     │ http://eu1.example.com:8080      │ http     │ 188ms   │ HTTP 200             │
-│ OK     │ socks5://us1.example.com:1080    │ socks5   │ 412ms   │ HTTP 200 (dl direct)    │
-│ FAIL   │ http://dead.example.com:8080     │ http     │ -       │ ECONNREFUSED         │
-└────────┴──────────────────────────────────┴──────────┴─────────┴──────────────────────┘
+┌─────────┬──────────────────────────────────┬───────────┬──────────┬──────────────────────────────┐
+│ Status  │ Proxy                            │ Protocol  │ Latency  │ Detail                       │
+├─────────┼──────────────────────────────────┼───────────┼──────────┼──────────────────────────────┤
+│ OK      │ eu1.example.com:8080             │ http      │ 188ms    │ HTTP 200                     │
+│ OK      │ us1.example.com:1080             │ socks5    │ 412ms    │ HTTP 200 (dl direct)         │
+│ FAIL    │ dead.example.com:8080            │ http      │ -        │ ECONNREFUSED                 │
+└─────────┴──────────────────────────────────┴───────────┴──────────┴──────────────────────────────┘
 
 ⚠️  2/3 proxies reachable (median 300ms)
+```
+
+With `--ip`, an Exit IP column is added — the column is only rendered when you
+ask for it, since each entry costs an extra request to the echo service:
+
+```bash
+npx miaw-cli proxy test-all --proxy-file ./proxies.txt --ip
+```
+
+```
+┌─────────┬─────────────────────┬───────────┬──────────┬────────────────┬──────────┐
+│ Status  │ Proxy               │ Protocol  │ Latency  │ Exit IP        │ Detail   │
+├─────────┼─────────────────────┼───────────┼──────────┼────────────────┼──────────┤
+│ OK      │ 198.51.100.23:5829  │ http      │ 975ms    │ 198.51.100.23  │ HTTP 200 │
+│ OK      │ 203.0.113.7:7809    │ http      │ 1223ms   │ 203.0.113.7    │ HTTP 200 │
+└─────────┴─────────────────────┴───────────┴──────────┴────────────────┴──────────┘
 ```
 
 **Notes:**
 
 - Results are sorted fastest-first with failures last.
 - Exits non-zero if **any** proxy fails.
+- The Proxy column shows `host:port`, not the masked URL. Vendors issue one
+  long username across a whole pool, so the masked URLs are identical on every
+  row; `host:port` is the part that differs, and it carries no credentials.
+  An over-long endpoint keeps its **tail** (`…pool.example.com:19001`) because
+  a per-session port is often the only thing distinguishing two entries.
 
 ### Contact Operations
 

@@ -321,7 +321,11 @@ Random, biased by each entry's `weight` (default `1`). **A weight of `0` drains 
 
 WhatsApp treats a session's source IP as part of its trust signal. If `bot-3` connects from Frankfurt on Monday and São Paulo on Tuesday, you have manufactured an account-takeover signature against your own account. The observable results are re-pairing prompts, 401/440 disconnect loops, and eventually a ban.
 
-`deterministic` hashes the `instanceId` to a stable entry, so a given session keeps a stable egress IP for its lifetime while N instances still spread across N proxies.
+`deterministic` hashes the `instanceId` to a stable entry, so a given session keeps a stable egress IP for its lifetime while instances still spread across the pool.
+
+> **It spreads, it does not deal.** Hashing is stateless, so two instances can land on the same proxy — with 10 instances over a 10-proxy pool, expect roughly 6-7 distinct egress IPs, not 10. That is inherent: a rotator that guaranteed one proxy per instance would need to know about every other instance, and would then have to remap live sessions whenever the set changed, which is the churn this strategy exists to avoid.
+>
+> If you need a guaranteed 1:1 mapping — and [IP separation for multi-instance](#ip-separation-for-multi-instance) is a reason you might — assign it explicitly rather than by hashing: pin each instance with [`instance set-proxy`](#pinning-a-proxy-to-an-instance-cli), or build the assignment map yourself. Size the pool above the instance count either way.
 
 > **Rotation is for distributing instances across proxies. It is never for rotating a live session's IP.**
 

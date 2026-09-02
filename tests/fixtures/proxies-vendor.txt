@@ -1,0 +1,13 @@
+# Vendor-shaped proxy list: one long username shared across the whole pool,
+# which is how Webshare, Bright Data, Oxylabs et al. actually ship lists.
+#
+# Masked, every line here renders as the same
+# "http://vendorpool-static-residential-rotating:****@..." prefix, so a table that
+# prints the masked URL truncates all three rows to an identical string and
+# stops saying which proxy was slow. The distinguishing part is host:port.
+#
+# Loopback ports 1-3 never listen, so these ECONNREFUSE immediately: no
+# network access and no timeout wait.
+http://vendorpool-static-residential-rotating:s3cretpassword@127.0.0.1:1
+http://vendorpool-static-residential-rotating:s3cretpassword@127.0.0.1:2
+http://vendorpool-static-residential-rotating:s3cretpassword@127.0.0.1:3
