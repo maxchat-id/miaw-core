@@ -43,6 +43,7 @@ export {
   cmdChatUnarchive,
   cmdChatPin,
   cmdChatUnpin,
+  cmdChatEphemeral,
   cmdChatMute,
   cmdChatUnmute,
   cmdChatRead,

@@ -78,7 +78,7 @@ const commandTree: Record<string, CommandNode> = {
   chat: {
     subcommands: [
       "archive", "unarchive", "pin", "unpin", "mute", "unmute",
-      "read", "unread", "clear", "delete",
+      "read", "unread", "clear", "delete", "ephemeral",
     ],
     flags: ["--duration"],
   },

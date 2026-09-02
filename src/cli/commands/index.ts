@@ -55,6 +55,7 @@ import {
   cmdChatUnarchive,
   cmdChatPin,
   cmdChatUnpin,
+  cmdChatEphemeral,
   cmdChatMute,
   cmdChatUnmute,
   cmdChatRead,
@@ -578,6 +579,14 @@ export async function runCommand(
         return await cmdChatClear(client, { jid });
       case "delete":
         return await cmdChatDelete(client, { jid });
+      case "ephemeral": {
+        const seconds = parseEphemeral(parsedArgs._[2]);
+        if (seconds === null) {
+          console.log("❌ Usage: miaw-cli chat ephemeral <jid|phone> <off|24h|7d|90d|seconds>");
+          return false;
+        }
+        return await cmdChatEphemeral(client, { jid, seconds });
+      }
       default:
         if (subCommand) {
           console.log(`❌ Unknown chat command: ${subCommand}`);
@@ -585,7 +594,7 @@ export async function runCommand(
           console.log("Usage: chat <command> <jid|phone> [--duration <ms> for mute]");
         }
         console.log(
-          "Commands: archive, unarchive, pin, unpin, mute, unmute, read, unread, clear, delete"
+          "Commands: archive, unarchive, pin, unpin, mute, unmute, read, unread, clear, delete, ephemeral"
         );
         return false;
     }

@@ -61,3 +61,16 @@ export const cmdChatClear = (client: MiawClient, args: { jid: string }) =>
 
 export const cmdChatDelete = (client: MiawClient, args: { jid: string }) =>
   runChatOp(client, args.jid, "Deleting", () => client.deleteChat(args.jid));
+
+export const cmdChatEphemeral = (
+  client: MiawClient,
+  args: { jid: string; seconds: number }
+) =>
+  runChatOp(
+    client,
+    args.jid,
+    args.seconds === 0
+      ? "Disabling disappearing messages for"
+      : `Setting ${args.seconds}s disappearing messages for`,
+    () => client.setChatEphemeral(args.jid, args.seconds)
+  );

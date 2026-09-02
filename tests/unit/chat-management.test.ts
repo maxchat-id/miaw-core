@@ -30,17 +30,19 @@ const { MiawClient } = await import("../../src/client/MiawClient.js");
 const PHONE = "6281234567890";
 const JID = "6281234567890@s.whatsapp.net";
 const chatModifyMock = jest.fn<(...a: unknown[]) => Promise<unknown>>();
+const sendMessageMock = jest.fn<(...a: unknown[]) => Promise<unknown>>();
 
 function makeConnectedClient(): any {
   const client: any = new MiawClient({ instanceId: "test-chat" });
   client.connectionState = "connected";
-  client.socket = { chatModify: chatModifyMock };
+  client.socket = { chatModify: chatModifyMock, sendMessage: sendMessageMock };
   return client;
 }
 
 describe("v1.7.0 chat management", () => {
   beforeEach(() => {
     chatModifyMock.mockReset().mockResolvedValue(undefined);
+    sendMessageMock.mockReset().mockResolvedValue(undefined);
   });
 
   describe("archive / unarchive (need lastMessages)", () => {
@@ -188,12 +190,65 @@ describe("v1.7.0 chat management", () => {
     });
   });
 
+  describe("setChatEphemeral (v1.12.0)", () => {
+    // 1:1 chats have no socket method for this -- the timer is set by sending a
+    // protocol message -- so this path goes through sendMessage, not chatModify.
+    it("sends the duration in seconds via sendMessage", async () => {
+      const client = makeConnectedClient();
+
+      const res = await client.setChatEphemeral(JID, 604800);
+
+      expect(res).toEqual({ success: true });
+      expect(sendMessageMock).toHaveBeenCalledWith(JID, {
+        disappearingMessagesInChat: 604800,
+      });
+      expect(chatModifyMock).not.toHaveBeenCalled();
+    });
+
+    it("maps 0 to false, since Baileys does not treat 0 as off here", async () => {
+      const client = makeConnectedClient();
+
+      await client.setChatEphemeral(JID, 0);
+
+      expect(sendMessageMock).toHaveBeenCalledWith(JID, {
+        disappearingMessagesInChat: false,
+      });
+    });
+
+    it("formats a bare phone number into a JID", async () => {
+      const client = makeConnectedClient();
+
+      await client.setChatEphemeral("6281234567890", 86400);
+
+      expect(sendMessageMock).toHaveBeenCalledWith(
+        "6281234567890@s.whatsapp.net",
+        { disappearingMessagesInChat: 86400 }
+      );
+    });
+
+    it("surfaces a send failure as an error result", async () => {
+      sendMessageMock.mockRejectedValue(new Error("nope"));
+      const client = makeConnectedClient();
+
+      const res = await client.setChatEphemeral(JID, 86400);
+
+      expect(res).toEqual({ success: false, error: "nope" });
+    });
+  });
+
   describe("connection guard", () => {
     it("returns { success:false } when not connected", async () => {
       const client: any = new MiawClient({ instanceId: "test-chat-disc" });
       const res = await client.archiveChat(JID);
       expect(res.success).toBe(false);
       expect(res.error).toBeTruthy();
+    });
+
+    it("setChatEphemeral returns { success:false } when not connected", async () => {
+      const client: any = new MiawClient({ instanceId: "test-chat-disc" });
+      const res = await client.setChatEphemeral(JID, 86400);
+      expect(res.success).toBe(false);
+      expect(res.error).toContain("Not connected");
     });
   });
 });

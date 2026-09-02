@@ -4523,6 +4523,47 @@ export class MiawClient extends EventEmitter {
     }
   }
 
+  /**
+   * Set the disappearing-message timer for a 1:1 chat (v1.12.0).
+   *
+   * Unlike groups and communities, WhatsApp has no socket method for this — the
+   * timer is set by sending a protocol message into the chat, so this goes
+   * through `sendMessage` rather than {@link setGroupEphemeral}'s
+   * `groupToggleEphemeral`.
+   *
+   * @param jidOrPhone - Phone number or JID of the contact
+   * @param seconds - Duration in seconds; 0 (EphemeralDuration.Off) disables it
+   */
+  async setChatEphemeral(
+    jidOrPhone: string,
+    seconds: EphemeralDurationValue | number
+  ): Promise<ChatOperationResult> {
+    try {
+      if (!this.socket) {
+        throw new Error("Not connected. Call connect() first.");
+      }
+
+      if (this.connectionState !== "connected") {
+        throw new Error(
+          `Cannot update disappearing messages. Connection state: ${this.connectionState}`
+        );
+      }
+
+      const jid = MessageHandler.formatPhoneToJid(jidOrPhone);
+
+      // Baileys accepts `false` to disable and a second count to enable; it does
+      // not treat 0 as "off" on this path, so map it explicitly.
+      await this.socket.sendMessage(jid, {
+        disappearingMessagesInChat: seconds === 0 ? false : seconds,
+      });
+
+      return { success: true };
+    } catch (error) {
+      this.logger.error("Failed to update disappearing messages:", error);
+      return { success: false, error: (error as Error).message };
+    }
+  }
+
   // ============================================
   // UX Methods (v0.5.0)
   // ============================================
