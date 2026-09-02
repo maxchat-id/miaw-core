@@ -449,6 +449,7 @@ docs/                   # Documentation
 ├── PROXY.md           # Proxy guide (files, rotation, troubleshooting)
 ├── DEPLOYMENT_PROXY.md          # Deploying with proxies (v1.10.0)
 ├── DEPLOYMENT_INSTANCE_PROXY.md # Per-instance proxy pins (v1.11.0)
+├── DEPLOYMENT_V1.12.0.md        # Operator notes for the rc14 release
 ├── LID_RESOLUTION.md  # Privacy-masked (@lid) JID resolution guide
 ├── ROADMAP.md         # Feature roadmap
 ├── DEFERRED_FEATURES.md  # Backlog of deferred Baileys features (empty)

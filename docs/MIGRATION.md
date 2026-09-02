@@ -25,6 +25,9 @@ Purely additive: Baileys moves 7.0.0-rc13 → 7.0.0-rc14, and ~37 methods plus a
 matching CLI surface are added. Nothing existing changed shape, so upgrading is
 a version bump.
 
+If you operate a deployment rather than consume the library, see
+[DEPLOYMENT_V1.12.0.md](./DEPLOYMENT_V1.12.0.md).
+
 ### Baileys 7.0.0-rc13 → rc14
 
 No public API change. Three things worth knowing:

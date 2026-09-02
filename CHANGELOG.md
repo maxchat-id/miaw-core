@@ -12,6 +12,8 @@ no breaking changes.
 
 ### Changed
 
+- **Operator notes:** [docs/DEPLOYMENT_V1.12.0.md](docs/DEPLOYMENT_V1.12.0.md) —
+  no env, migration or state-format changes; rollback does not require re-pairing.
 - **Upgraded `@whiskeysockets/baileys` from `7.0.0-rc13` to `7.0.0-rc14`** (pinned
   exactly, as before). Four substantive upstream commits:
   - WhatsApp Web version `2.3000.1035194821` → `2.3000.1043857760`. Low impact —
