@@ -47,7 +47,23 @@ const CATEGORY_MAP: { [key: string]: string[] } = {
 };
 
 // Get CLI argument
-const cliArg = process.argv[2]?.toLowerCase() || "";
+const rawArgs = process.argv.slice(2).map((a) => a.toLowerCase());
+const cliArg = rawArgs.find((a) => !a.startsWith("--")) || "";
+
+/**
+ * Unattended mode: never block on stdin, never prompt, exit non-zero on failure.
+ *
+ * Enabled with `--auto` or AUTO=1. Every prompt resolves to "" — which the
+ * existing helpers already treat as "use the cached .env.test value" — so the
+ * same entries run, just without a human at the keyboard.
+ *
+ * Skipped in this mode:
+ *   - `manual` entries, which need a human to send a message or place a call
+ *   - `destructive` entries, unless AUTO_DESTRUCTIVE=1 (or --destructive)
+ */
+const AUTO_MODE = rawArgs.includes("--auto") || process.env.AUTO === "1";
+const AUTO_DESTRUCTIVE =
+  rawArgs.includes("--destructive") || process.env.AUTO_DESTRUCTIVE === "1";
 
 // Load environment variables from .env and .env.test files
 dotenv.config(); // Load .env first
@@ -175,6 +191,16 @@ interface TestItem {
   test?: (client: MiawClient) => boolean | string | Promise<boolean | string>;
   action?: (client: MiawClient) => boolean | string | Promise<boolean | string>;
   businessOnly?: boolean; // Skip for personal accounts
+  /**
+   * Needs a human to DO something out-of-band — send a message to the bot,
+   * place a call. Env config cannot substitute for it, so AUTO mode skips these.
+   */
+  manual?: boolean;
+  /**
+   * Irreversibly changes real state (leaves a group, deletes a product). AUTO
+   * mode skips these unless AUTO_DESTRUCTIVE=1.
+   */
+  destructive?: boolean;
 }
 
 // All tests organized by category
@@ -445,6 +471,7 @@ const tests: TestItem[] = [
   {
     category: "Messaging",
     name: "replyToMessage() - Reply/quote a message",
+    manual: true,
     action: async (client: MiawClient) => {
       console.log("\n💬 To test replying to a message:");
       console.log("1. Send a message to the bot from another phone");
@@ -540,6 +567,7 @@ const tests: TestItem[] = [
   {
     category: "Messaging",
     name: "downloadMedia() - Download media",
+    manual: true,
     action: async (client: MiawClient) => {
       console.log("\n📥 To test media download:");
       console.log("1. Send an image/video to the bot from another phone");
@@ -569,6 +597,7 @@ const tests: TestItem[] = [
   {
     category: "Messaging",
     name: "sendReaction() - Send reaction",
+    manual: true,
     action: async (client: MiawClient) => {
       console.log("\n📝 To test reactions:");
       console.log("1. Send a message to the bot from another phone");
@@ -597,6 +626,7 @@ const tests: TestItem[] = [
   {
     category: "Messaging",
     name: "removeReaction() - Remove reaction",
+    manual: true,
     action: async (client: MiawClient) => {
       if (!TEST_CONFIG.lastReactedMessage) {
         console.log("\n⚠️  No previous reaction to remove.");
@@ -622,6 +652,7 @@ const tests: TestItem[] = [
   {
     category: "Messaging",
     name: "forwardMessage() - Forward message",
+    manual: true,
     action: async (client: MiawClient) => {
       const phone2 = await getTestPhone2(
         "Enter phone number to forward message to:"
@@ -692,6 +723,7 @@ const tests: TestItem[] = [
   {
     category: "Messaging",
     name: "deleteMessage() - Delete for everyone",
+    manual: true,
     action: async (client: MiawClient) => {
       const phone = await getTestPhone(
         "Enter phone number to send and delete message:"
@@ -1069,6 +1101,7 @@ const tests: TestItem[] = [
   {
     category: "Group Mgmt",
     name: "removeParticipants() - Remove members (DESTRUCTIVE)",
+    destructive: true,
     action: async (client: MiawClient) => {
       const groupJid = await getTestGroup("Enter group JID:");
       const phone = await getTestPhone("Enter phone number to remove:");
@@ -1087,6 +1120,7 @@ const tests: TestItem[] = [
   {
     category: "Group Mgmt",
     name: "leaveGroup() - Leave group (DESTRUCTIVE)",
+    destructive: true,
     action: async (client: MiawClient) => {
       console.log("\n⚠️  This will make the bot leave a group.");
       console.log("Press ENTER to continue, or s to skip");
@@ -1149,6 +1183,7 @@ const tests: TestItem[] = [
   {
     category: "Profile Mgmt",
     name: "removeProfilePicture() - Remove profile picture (DESTRUCTIVE)",
+    destructive: true,
     action: async (client: MiawClient) => {
       console.log("\n🗑️  This will remove your profile picture.");
       console.log("Press ENTER to continue, or s to skip");
@@ -1467,6 +1502,7 @@ const tests: TestItem[] = [
   {
     category: "Business",
     name: "deleteProducts() - Remove products (CLEANUP)",
+    destructive: true,
     businessOnly: true,
     action: async (client: MiawClient) => {
       if (!TEST_CONFIG.lastCreatedProductId) {
@@ -1672,6 +1708,7 @@ const tests: TestItem[] = [
   {
     category: "Newsletter",
     name: "deleteNewsletter() - Delete newsletter",
+    destructive: true,
     action: async (client: MiawClient) => {
       // Use stored newsletter ID or prompt
       let newsletterId = TEST_CONFIG.lastCreatedNewsletterId;
@@ -1725,6 +1762,7 @@ const tests: TestItem[] = [
   {
     category: "Contacts",
     name: "removeContact() - Remove contact",
+    destructive: true,
     action: async (client: MiawClient) => {
       const phone = await getTestPhone(
         "Enter phone number to remove from contacts:"
@@ -1744,6 +1782,7 @@ const tests: TestItem[] = [
   {
     category: "UX Features",
     name: "markAsRead() - Mark message as read",
+    manual: true,
     action: async (client: MiawClient) => {
       console.log("\n📝 To test mark as read:");
       console.log("1. Send a message to the bot from another phone");
@@ -1929,6 +1968,7 @@ const tests: TestItem[] = [
   {
     category: "Calls",
     name: "call event - Receive an incoming call",
+    manual: true,
     action: async (client: MiawClient) => {
       console.log("\n📞 Call the bot from another phone within 45 seconds.");
       console.log("   (Do not answer — we only need the 'offer' event.)");
@@ -1959,6 +1999,7 @@ const tests: TestItem[] = [
   {
     category: "Calls",
     name: "rejectCall() - Reject an incoming call",
+    manual: true,
     action: async (client: MiawClient) => {
       console.log("\n📞 Call the bot from another phone within 45 seconds.");
       console.log("   It should be rejected automatically.");
@@ -1988,6 +2029,7 @@ const tests: TestItem[] = [
   {
     category: "Calls",
     name: "createCallLink() - Create a shareable video call link",
+    destructive: true,
     action: async (client: MiawClient) => {
       console.log("\n⚠️  This mints a REAL shareable call link.");
       console.log("   [y] Create it   [n] Skip (default)");
@@ -2088,6 +2130,7 @@ const tests: TestItem[] = [
   {
     category: "Messaging",
     name: "pinMessage() / unpinMessage() - Pin a message then unpin it",
+    manual: true,
     action: async (client: MiawClient) => {
       console.log("\n📝 Send a text message to the bot from another phone.");
 
@@ -2155,6 +2198,51 @@ const tests: TestItem[] = [
 // HELPER FUNCTIONS
 // ============================================================
 
+/**
+ * Warn about test config that silently invalidates results.
+ *
+ * Several entries compare two contacts, add a participant, or block someone.
+ * If both configured numbers are the same, or are the connected account's own
+ * number, those entries fail for reasons that have nothing to do with the code:
+ * WhatsApp deduplicates a batch check, refuses a self-block, and will not add
+ * you to a group you are already in. That looks exactly like a real defect in
+ * the output, so say so up front.
+ */
+function warnOnDegenerateConfig(ownJid: string | undefined): void {
+  const own = (ownJid || "").split(":")[0].split("@")[0];
+  const a = TEST_CONFIG.testPhone;
+  const b = TEST_CONFIG.testPhone2;
+  const warnings: string[] = [];
+
+  if (a && b && a === b) {
+    warnings.push(
+      "TEST_CONTACT_PHONE_A and TEST_CONTACT_PHONE_B are the same number."
+    );
+  }
+  if (own && a && a === own) {
+    warnings.push(
+      "TEST_CONTACT_PHONE_A is this account's OWN number — every 'send to " +
+        "someone else' test is really a send-to-self."
+    );
+  }
+  if (own && b && b === own) {
+    warnings.push("TEST_CONTACT_PHONE_B is this account's OWN number.");
+  }
+  if (!TEST_CONFIG.testGroupJid) {
+    warnings.push("TEST_GROUP_JID is unset — group entries will prompt or skip.");
+  }
+
+  if (warnings.length === 0) return;
+
+  console.log("\n⚠️  TEST CONFIG WARNINGS (.env.test)");
+  for (const w of warnings) console.log(`   - ${w}`);
+  console.log(
+    "   Expect failures in checkNumbers, addParticipants, promoteToAdmin,\n" +
+      "   demoteFromAdmin and blockContact that are caused by the config,\n" +
+      "   not by miaw-core. Set B to a real second number for honest coverage."
+  );
+}
+
 async function detectAccountType(client: MiawClient): Promise<void> {
   console.log("\n🔍 Detecting account type...");
   try {
@@ -2185,6 +2273,12 @@ function createReadlineInterface() {
 }
 
 function waitForInput(prompt: string = ""): Promise<string> {
+  if (AUTO_MODE) {
+    // "" is what every caller already treats as "accept the default / cached
+    // value", so auto mode needs no separate code path through the tests.
+    if (prompt) console.log(`${prompt}(auto: default)`);
+    return Promise.resolve("");
+  }
   const rl = createReadlineInterface();
   return new Promise((resolve) => {
     rl.question(prompt, (answer: string) => {
@@ -2195,6 +2289,10 @@ function waitForInput(prompt: string = ""): Promise<string> {
 }
 
 function waitForEnter(prompt: string = ""): Promise<void> {
+  if (AUTO_MODE) {
+    if (prompt) console.log(`${prompt}(auto)`);
+    return Promise.resolve();
+  }
   const rl = createReadlineInterface();
   return new Promise((resolve) => {
     rl.question(prompt, () => {
@@ -2351,6 +2449,16 @@ function showHelp() {
   console.log("  privacy     - Privacy & Blocklist (settings, block/unblock)");
   console.log("  calls       - Calls (call event, reject, call links)");
 
+  console.log("\n🤖 Unattended mode:");
+  console.log("  npm run test:manual:auto              # all groups, no prompts");
+  console.log("  npm run test:manual all -- --auto     # same thing");
+  console.log("  npm run test:manual group -- --auto   # one group, no prompts");
+  console.log("  AUTO=1 npm run test:manual all        # via env instead of a flag");
+  console.log("");
+  console.log("  Prompts resolve to their defaults (the .env.test values), entries");
+  console.log("  needing a human are skipped, and the process exits non-zero if any");
+  console.log("  test failed. Add --destructive to include the destructive entries.");
+
   console.log("\n💡 Examples:");
   console.log("  npm run test:manual all       # Run all tests");
   console.log(
@@ -2428,6 +2536,12 @@ async function main() {
   console.log("║     Miaw Core - Interactive Manual Testing Script        ║");
   console.log("╚════════════════════════════════════════════════════════════╝");
   console.log(`\n🎯 Running: ${targetDesc}`);
+  if (AUTO_MODE) {
+    console.log("🤖 AUTO mode — no prompts, exits non-zero on failure");
+    console.log(
+      `   manual entries: skipped · destructive entries: ${AUTO_DESTRUCTIVE ? "INCLUDED" : "skipped"}`
+    );
+  }
   console.log("\nActions: [Enter] run | [n] skip | [s] skip all | [q] quit");
   console.log("Icons: ⚡ auto | 👤 interactive | [BIZ] business only");
   console.log(
@@ -2516,6 +2630,10 @@ async function main() {
 
     console.log("✅ Connected!");
     await detectAccountType(client);
+    warnOnDegenerateConfig(
+      (client as unknown as { socket?: { user?: { id?: string } } }).socket?.user
+        ?.id
+    );
     console.log("\n🚀 Starting tests...\n");
   } else {
     await waitForEnter("\n> Press ENTER to start...");
@@ -2539,17 +2657,35 @@ async function main() {
     }
     console.log(`Next ${progress}:${interactiveTag} ${test.name}${bizTag}`);
 
-    // Prompt for action
-    const preAnswer = await waitForInput(
-      "> [Enter] run | [n] skip | [q] quit: "
-    );
-    if (preAnswer.toLowerCase() === "q") break;
-    if (preAnswer.toLowerCase() === "s") break;
-    if (preAnswer.toLowerCase() === "n") {
-      testResults[test.name] = "skip";
-      lastResult = "skip";
-      console.log(`⏭️  Skipped`);
-      continue;
+    if (AUTO_MODE) {
+      // These need a human to send a message or place a call; env config
+      // cannot stand in for that, so they are reported as skipped rather than
+      // left to time out.
+      if (test.manual) {
+        testResults[test.name] = "skip";
+        lastResult = "skip";
+        console.log("⏭️  Skipped (needs a human — run without --auto)");
+        continue;
+      }
+      if (test.destructive && !AUTO_DESTRUCTIVE) {
+        testResults[test.name] = "skip";
+        lastResult = "skip";
+        console.log("⏭️  Skipped (destructive — pass --destructive to include)");
+        continue;
+      }
+    } else {
+      // Prompt for action
+      const preAnswer = await waitForInput(
+        "> [Enter] run | [n] skip | [q] quit: "
+      );
+      if (preAnswer.toLowerCase() === "q") break;
+      if (preAnswer.toLowerCase() === "s") break;
+      if (preAnswer.toLowerCase() === "n") {
+        testResults[test.name] = "skip";
+        lastResult = "skip";
+        console.log(`⏭️  Skipped`);
+        continue;
+      }
     }
 
     const result = await runTest(test, client);
@@ -2566,6 +2702,14 @@ async function main() {
 
   // Show summary
   showSummary();
+
+  if (AUTO_MODE) {
+    // Machine-readable gate: unattended runs must fail the shell on a failure,
+    // otherwise a red suite looks identical to a green one in CI or a script.
+    const failed = Object.values(testResults).filter((r) => r === "fail").length;
+    await client.dispose();
+    process.exit(failed > 0 ? 1 : 0);
+  }
 
   // Exit process (connection may still be active if user chose to keep it)
   process.exit(0);

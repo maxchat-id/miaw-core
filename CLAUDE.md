@@ -49,9 +49,22 @@ npm run test:manual business    # Test business features
 npm run test:manual newsletter  # Test newsletter/channels
 npm run test:manual privacy     # Test privacy + blocklist
 npm run test:manual calls       # Test call event / reject / links
+
+# Unattended: no prompts, exits non-zero on failure
+npm run test:manual:auto              # all groups
+npm run test:manual group -- --auto   # one group
 ```
 
-The interactive test suite (`npm run test:manual`) drives a curated subset of the API against a live connection, organized into 11 groups: core, get, messaging, contacts, group, profile, business, newsletter, ux, privacy, and calls. It is a human smoke-test harness (it prompts before every test and has no machine-readable exit), not a gate. See [Test Coverage Analysis](./docs/TEST_COVERAGE_ANALYSIS.md).
+The interactive test suite (`npm run test:manual`) drives a curated subset of the API against a live connection, organized into 11 groups: core, get, messaging, contacts, group, profile, business, newsletter, ux, privacy, and calls. See [Test Coverage Analysis](./docs/TEST_COVERAGE_ANALYSIS.md).
+
+**`--auto` (v1.12.0) makes it a real gate.** Every prompt resolves to its default — which the helpers already treat as "use the `.env.test` value" — so the same entries run without a human, and the process exits non-zero if any failed. Two flags on `TestItem` control what runs:
+
+- `manual: true` — needs a human to act out-of-band (send the bot a message, place a call). Always skipped under `--auto`; env config cannot substitute.
+- `destructive: true` — irreversibly changes real state (leaves a group, deletes a product). Skipped unless `--destructive` / `AUTO_DESTRUCTIVE=1`.
+
+Tag new entries accordingly, or an unattended run will hang on a prompt or wreck the test account.
+
+On connect it also warns about `.env.test` config that silently invalidates results — both contact numbers being equal, or being the connected account's own number. That combination makes `checkNumbers`, `addParticipants`, `promoteToAdmin`, `demoteFromAdmin` and `blockContact` fail for reasons unrelated to the code (WhatsApp deduplicates a batch check, refuses a self-block, and will not add you to a group you are already in).
 
 **CLI integration tests** (`npm run test:cli`) exercise all CLI commands via `runCommand()` with a real WhatsApp connection. Tests skip gracefully when not connected. Uses `--runInBand` (sequential, shared connection) and `--forceExit`. See [CLI Integration Test Plan](./docs/CLI_INTEGRATION_TEST_PLAN.md).
 

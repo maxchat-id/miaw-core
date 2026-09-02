@@ -26,6 +26,7 @@
     "test:coverage": "NODE_OPTIONS='--experimental-vm-modules' jest --coverage",
     "test:cli": "NODE_OPTIONS='--experimental-vm-modules' jest --testPathPattern='tests/integration/cli' --runInBand --forceExit",
     "test:manual": "tsx tests/interactive-test.ts",
+    "test:manual:auto": "tsx tests/interactive-test.ts all --auto",
     "test:manual:build": "npm run build && node dist/tests/interactive-test.js",
     "cli": "tsx bin/miaw-cli.ts"
   },
