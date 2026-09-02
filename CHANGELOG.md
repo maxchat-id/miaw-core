@@ -86,6 +86,21 @@ no breaking changes.
 
 ### Fixed
 
+- **`npx miaw-cli` was broken for every consumer, published or local.**
+  `bin.miaw-cli` pointed at `bin/miaw-cli.ts` — a TypeScript file carrying a
+  `#!/usr/bin/env node` shebang and importing from `../src/**`. A bin runs
+  under the user's plain `node`, which cannot resolve TypeScript's
+  `.js`-for-`.ts` specifiers; and `.npmignore` excludes `src/` from the
+  tarball, so the published package shipped an entry point that could not
+  find its own imports. The entry logic moved to `src/cli/main.ts` (so `tsc`
+  compiles it into `dist/`), `bin/miaw-cli.mjs` is the published executable,
+  and `bin/miaw-cli.ts` remains the tsx development shim behind
+  `npm run cli`.
+- **`dotenv` was a devDependency but is imported at runtime**, so an
+  installed package failed on startup with `ERR_MODULE_NOT_FOUND`. Moved to
+  `dependencies`. Found by `npm pack` + installing the tarball into a clean
+  directory — neither bug is visible from inside the repo, where `src/`
+  exists and devDependencies are installed.
 - **`community invite-link` was advertised but never worked.** The subcommand
   list printed by `community` has named it since v1.9.0, but the dispatch
   switch had no `case` for it, so it fell through to the unknown-command
@@ -148,7 +163,7 @@ Against a real WhatsApp connection (Baileys rc14):
   `13-privacy-call-commands.test.ts`. Files run in name order and 13 is now the
   last one needing a connection (11 and 12 are deliberately offline), so
   disconnecting at 10 would pull the socket out from under it.
-- 615 unit tests across 29 suites (up from 417), 105 CLI router tests (up from
+- 623 unit tests across 30 suites (up from 417), 105 CLI router tests (up from
   26), 278 CLI integration tests across 13 files (up from 238).
 - New `tests/unit/cli-help-consistency.test.ts` and a dispatchability sweep in
   `01-command-router.test.ts`, both verified to fail against the previous code.

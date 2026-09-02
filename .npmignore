@@ -34,3 +34,6 @@ sessions/
 .DS_Store
 *.log
 coverage/
+
+# Dev-only CLI shim; the published executable is bin/miaw-cli.mjs
+bin/miaw-cli.ts

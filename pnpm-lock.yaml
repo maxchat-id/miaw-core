@@ -17,6 +17,9 @@ importers:
       cli-table3:
         specifier: ^0.6.5
         version: 0.6.5
+      dotenv:
+        specifier: ^16.4.5
+        version: 16.6.1
       https-proxy-agent:
         specifier: ^8.0.0
         version: 8.0.0
@@ -60,9 +63,6 @@ importers:
       babel-jest:
         specifier: ^30.2.0
         version: 30.4.1(@babel/core@7.29.7)
-      dotenv:
-        specifier: ^16.4.5
-        version: 16.6.1
       eslint:
         specifier: ^9.39.2
         version: 9.39.4
