@@ -94,6 +94,9 @@ const client = new MiawClient({
   maxReconnectAttempts: 10, // Default: Infinity
   reconnectDelay: 5000, // Default: 3000 (ms)
 
+  // Browser identity (v1.6.1+). Default: BrowserPresets.macOS("Chrome")
+  browser: BrowserPresets.macOS("Chrome"),
+
   // Proxy configuration (v1.3.0+)
   proxy: "socks5://proxy.example.com:1080", // Proxy URL string
   // or: proxy: { url: "http://proxy:8080", username: "user", password: "pass" }
@@ -120,9 +123,69 @@ const client = new MiawClient({
 | `qrGracePeriod`        | `number`  | `30000`        | QR code grace period                                |
 | `qrScanTimeout`        | `number`  | `60000`        | QR code scan timeout                                |
 | `connectionTimeout`    | `number`  | `120000`       | Connection establishment timeout                    |
+| `browser`              | `BrowserTuple` | `BrowserPresets.macOS("Chrome")` | Browser identity sent to WhatsApp (see [Browser Identity](#browser-identity)) |
 | `proxy`                | `string \| ProxyConfig` | _none_ | Proxy URL or config object (see [Proxy Support](#proxy-support)) |
 | `agent`                | `Agent`   | _none_         | Custom WebSocket agent (advanced, overrides proxy)  |
 | `fetchAgent`           | `unknown` | _none_         | Custom media-upload agent (advanced, overrides proxy). Must be an `http.Agent`, **not** an undici Dispatcher |
+
+### Browser Identity
+
+WhatsApp is told what kind of client is connecting via a three-part tuple,
+`[os, browserName, version]`. The choice is load-bearing: it decides the label
+the linked device shows on the phone, how deep a history sync you are given,
+and whether the handshake is negotiated as a web client or an Android one.
+
+Use `BrowserPresets` rather than writing a tuple by hand:
+
+```typescript
+import { MiawClient, BrowserPresets } from "miaw-core";
+
+const client = new MiawClient({
+  instanceId: "bot",
+  browser: BrowserPresets.macOS("Chrome"), // the default
+});
+```
+
+| Preset | Tuple | Notes |
+| ------ | ----- | ----- |
+| `BrowserPresets.macOS(browser?)`   | `["Mac OS", "Chrome", "14.4.1"]`   | **Default.** |
+| `BrowserPresets.windows(browser?)` | `["Windows", "Chrome", "10.0.22631"]` | |
+| `BrowserPresets.ubuntu(browser?)`  | `["Ubuntu", "Chrome", "22.04.4"]`  | |
+| `BrowserPresets.android(version?)` | `["13", "Android", ""]`            | Experimental. Receives view-once media. |
+
+> **Never use a `"Desktop"` browser name.** Since ~2026-06-29 WhatsApp rejects the
+> legacy Desktop identity (webSubPlatform `DARWIN`/`WIN32`) with a **428 before
+> issuing a QR**. Browser identities still pair.
+> See [Baileys #2671](https://github.com/WhiskeySockets/Baileys/issues/2671).
+
+#### Receiving view-once messages (Android identity)
+
+A web-identity session **cannot receive view-once media** — WhatsApp simply does
+not deliver it. An Android-identity session can. Since Baileys 7.0.0-rc14 the
+handshake negotiates as `Platform.ANDROID` when the browser tuple names Android:
+
+```typescript
+const client = new MiawClient({
+  instanceId: "viewonce-bot",
+  browser: BrowserPresets.android("13"),
+});
+
+client.on("message", async (message) => {
+  if (message.media?.viewOnce) {
+    const buffer = await client.downloadMedia(message);
+    // ...
+  }
+});
+```
+
+miaw-core already normalizes view-once messages (all three envelope variants), so
+`message.media.viewOnce` and `downloadMedia()` work with no further change once
+the identity is in place.
+
+**Trade-offs.** Baileys marks this identity experimental and logs a warning on
+connect. The linked device is labelled differently on the phone, and history sync
+may be shallower. Pair it on a **dedicated `instanceId`** rather than switching an
+established session over — changing the identity of a live session means re-pairing.
 
 ## Authentication
 

@@ -125,6 +125,10 @@ export {
   isBaileysMessageUpsert,
 } from "./utils/type-guards.js";
 
+// Browser identity presets
+export { BrowserPresets } from "./utils/browser-presets.js";
+export type { BrowserTuple } from "./utils/browser-presets.js";
+
 // Proxy utilities
 export {
   createProxyAgents,

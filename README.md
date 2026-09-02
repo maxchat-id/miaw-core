@@ -208,6 +208,12 @@ Built on **Baileys v7.0.0-rc13** - the latest WhatsApp Web protocol implementati
 - ✅ `miaw-cli proxy test` connectivity diagnostics — no WhatsApp connection needed
 - ⚠️ SOCKS proxies: media *downloads* use a direct connection ([details](./docs/PROXY.md#️-socks-media-downloads-use-a-direct-connection))
 
+### Connection Identity
+
+- ✅ Configurable browser identity via `BrowserPresets` (macOS / Windows / Ubuntu / Android)
+- ✅ Android identity — the only way to **receive view-once media** ([details](./docs/USAGE.md#receiving-view-once-messages-android-identity))
+- ✅ Live WhatsApp Web version negotiation (avoids stale-version 428 rejections)
+
 ### Advanced Messaging
 
 - ✅ Reply/quote messages

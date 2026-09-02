@@ -112,13 +112,28 @@ export interface MiawClientOptions {
    * Browser identity tuple sent to WhatsApp: [os, browserName, version].
    * Default: Baileys' Browsers.macOS("Chrome").
    *
+   * Use `BrowserPresets` for the spellings known to work rather than writing
+   * a tuple by hand.
+   *
    * Do NOT use a "Desktop" browser name: since ~2026-06-29 WhatsApp rejects
    * the legacy Desktop identity (webSubPlatform DARWIN/WIN32) with a 428
    * before issuing a QR. Browser identities ("Chrome", etc.) still pair.
    * Note: the linked device is labeled with this tuple on the phone (e.g.
    * "Chrome (Mac OS)"), and browser identities may receive shallower history
    * sync than the old Desktop identity.
+   *
+   * `BrowserPresets.android()` is the exception to "browser identity": it
+   * negotiates as an Android client, which is the only way to **receive
+   * view-once media**. Baileys marks it experimental. Prefer it on a dedicated
+   * instance over switching an established session.
+   *
    * @see https://github.com/WhiskeySockets/Baileys/issues/2671
+   * @example
+   * // default web identity
+   * new MiawClient({ instanceId: "bot" })
+   * @example
+   * // opt in to view-once receipt
+   * new MiawClient({ instanceId: "bot", browser: BrowserPresets.android("13") })
    */
   browser?: [string, string, string];
 
