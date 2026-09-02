@@ -318,3 +318,34 @@ socket that can reject; the second needs the dispatch to be exercised. Adding
 mock-backed unit tests for the clusters above would raise the number without
 catching that class of bug. Prefer the CLI integration and manual suites for
 anything whose failure mode is "the real socket says no".
+
+---
+
+## 11. The test account's `.env.test` invalidates ~5 manual-runner results
+
+**Severity:** low (environment, not code — but it makes every run read as
+partly broken).
+
+`TEST_CONTACT_PHONE_A` and `TEST_CONTACT_PHONE_B` are both set to the test
+bot's **own** number. `warnOnDegenerateConfig()` detects this and says so on
+connect, and the live run on 2026-09-02 confirmed exactly the failures it
+predicts:
+
+| Entry | Why it fails |
+|---|---|
+| `checkNumbers()` | WhatsApp deduplicates a batch check of one repeated number |
+| `addParticipants()` | cannot add yourself to a group you are already in |
+| `promoteToAdmin()` / `demoteFromAdmin()` | same participant problem |
+| `blockContact()` | WhatsApp refuses a self-block (`forbidden`) |
+
+Fix by pointing `TEST_CONTACT_PHONE_B` at a second real number. Until then,
+read those five as environment noise rather than defects.
+
+Separately, the account belongs to **no community**, so the community entries
+have no valid JID. `getCommunityInfo()` now reports **skipped** rather than
+failed in that case (it used to hard-fail), but the community admin path stays
+genuinely unexercised live until a community exists. The unit suite covers it;
+`tests/unit/group-community-admin.test.ts` includes the group/community
+cross-wire assertions.
+
+_Recorded 2026-09-02 after the first fully-live run of v1.12.0._
