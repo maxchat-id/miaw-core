@@ -34,6 +34,9 @@ export const TIMEOUTS = {
   /** Connection establishment timeout (120 seconds) */
   CONNECTION_TIMEOUT: 120_000,
 
+  /** How long a timed out history request still claims a late answer (5 minutes) */
+  HISTORY_LATE_ANSWER: 300_000,
+
   /** Client cache grace period (60 seconds) */
   CACHE_GRACE_PERIOD: 60_000,
 

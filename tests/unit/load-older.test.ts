@@ -8,13 +8,20 @@
  *    asked about gained nothing. They must land in the requested chat.
  *  - messagesLoaded counts the messages newly stored for that chat.
  *  - hasMore is false only when WhatsApp answers with no message for the chat.
- *  - A timeout is reported as `timedOut: true`.
+ *  - A timeout is reported as `timedOut: true`; an answer that arrives after it
+ *    still lands in the requested chat, since WhatsApp does not send it twice.
+ *  - Every 1:1 message of an on-demand answer belongs to the requested chat:
+ *    WhatsApp keys the answer by how the phone stores the chat, not by the
+ *    remoteJid of the anchor it was asked with.
+ *  - An explicit anchor starts the request from a message the caller names,
+ *    whether or not the store holds it.
  *  - A history answer writes the store to disk once, not once per message.
  *
  * A fake socket is injected; no real WhatsApp connection.
  */
 
-import { jest, describe, beforeEach, it, expect } from "@jest/globals";
+import { jest, describe, beforeEach, afterEach, it, expect } from "@jest/globals";
+import { TIMEOUTS } from "../../src/constants/timeouts.js";
 
 jest.unstable_mockModule("@whiskeysockets/baileys", () => ({
   default: jest.fn(),
@@ -40,6 +47,8 @@ const { MiawClient } = await import("../../src/client/MiawClient.js");
 const PN = "6281111111111@s.whatsapp.net";
 const LID = "123456789012345@lid";
 const GROUP = "120363000000000000@g.us";
+const OTHER_PN = "6282222222222@s.whatsapp.net";
+const OTHER_LID = "999999999999999@lid";
 const SESSION = "session-1";
 
 /** Build a synthetic Baileys text message. */
@@ -114,11 +123,15 @@ function seedAnchor(client: any, chatJid: string, anchorJid: string): void {
 async function startLoad(
   ctx: ReturnType<typeof makeClient>,
   jid: string,
-  timeoutMs = 1000
+  timeoutMs = 1000,
+  anchor?: { id: string; fromMe: boolean; timestamp: number }
 ): Promise<{ pending: Promise<any> }> {
   // Wrapped: an async function would otherwise flatten (await) the returned promise.
-  const pending = ctx.client.loadMoreMessages(jid, 50, timeoutMs);
-  while (!ctx.client.pendingHistoryRequests.has(SESSION)) {
+  const pending = ctx.client.loadMoreMessages(jid, 50, timeoutMs, anchor);
+  // A load that fails before asking WhatsApp never registers; do not wait for it.
+  let settled = false;
+  void pending.then(() => (settled = true));
+  while (!settled && !ctx.client.pendingHistoryRequests.has(SESSION)) {
     await new Promise((r) => setImmediate(r));
   }
   return { pending };
@@ -184,16 +197,76 @@ describe("loadMoreMessages on-demand answer", () => {
     expect(ctx.client.messagesStore.get(PN)).toHaveLength(3);
   });
 
-  it("leaves other chats in the same answer on the normal path", async () => {
+  it("stores an @lid answer for a PN anchor in the requested PN chat", async () => {
+    const ctx = makeClient();
+    seedAnchor(ctx.client, PN, PN);
+
+    const { pending } = await startLoad(ctx, PN);
+    ctx.emitHistory(older(3, LID), SESSION);
+
+    await expect(pending).resolves.toEqual({ success: true, messagesLoaded: 3, hasMore: true });
+    expect(ctx.client.messagesStore.get(PN)).toHaveLength(4);
+    expect(ctx.client.messagesStore.has(LID)).toBe(false);
+  });
+
+  it("stores a PN answer for an @lid anchor in the requested PN chat", async () => {
     const ctx = makeClient();
     seedAnchor(ctx.client, PN, LID);
-    const OTHER_LID = "999999999999999@lid";
+
+    const { pending } = await startLoad(ctx, PN);
+    ctx.emitHistory(older(2, PN), SESSION);
+
+    await expect(pending).resolves.toEqual({ success: true, messagesLoaded: 2, hasMore: true });
+    expect(ctx.client.messagesStore.get(PN)).toHaveLength(3);
+  });
+
+  it("leaves a message of another phone number in a 1:1 answer on the normal path", async () => {
+    const ctx = makeClient();
+    seedAnchor(ctx.client, PN, LID);
+
+    const { pending } = await startLoad(ctx, PN);
+    ctx.emitHistory([...older(1, LID), textMsg("X1", OTHER_PN, 500)], SESSION);
+
+    await expect(pending).resolves.toEqual({ success: true, messagesLoaded: 1, hasMore: true });
+    expect(ctx.client.messagesStore.get(OTHER_PN)).toHaveLength(1);
+    expect(ctx.client.messagesStore.get(PN)).toHaveLength(2);
+  });
+
+  it("leaves a message of an @lid known as another chat on the normal path", async () => {
+    const ctx = makeClient();
+    seedAnchor(ctx.client, PN, LID);
+    ctx.client.captureLidPnPair(OTHER_LID, OTHER_PN);
 
     const { pending } = await startLoad(ctx, PN);
     ctx.emitHistory([...older(1, LID), textMsg("X1", OTHER_LID, 500)], SESSION);
 
     await expect(pending).resolves.toEqual({ success: true, messagesLoaded: 1, hasMore: true });
-    expect(ctx.client.messagesStore.get(OTHER_LID)).toHaveLength(1);
+    expect(ctx.client.messagesStore.get(OTHER_PN)).toHaveLength(1);
+    expect(ctx.client.messagesStore.get(PN)).toHaveLength(2);
+  });
+
+  it("leaves a group message in a 1:1 answer on the normal path", async () => {
+    const ctx = makeClient();
+    seedAnchor(ctx.client, PN, LID);
+
+    const { pending } = await startLoad(ctx, PN);
+    ctx.emitHistory([...older(1, LID), textMsg("X1", GROUP, 500, { participant: PN })], SESSION);
+
+    await expect(pending).resolves.toEqual({ success: true, messagesLoaded: 1, hasMore: true });
+    expect(ctx.client.messagesStore.get(GROUP)).toHaveLength(1);
+    expect(ctx.client.messagesStore.get(PN)).toHaveLength(2);
+  });
+
+  it("leaves a 1:1 message in a group answer on the normal path", async () => {
+    const ctx = makeClient();
+    seedAnchor(ctx.client, GROUP, GROUP);
+
+    const { pending } = await startLoad(ctx, GROUP);
+    ctx.emitHistory([...older(1, GROUP, "G"), textMsg("X1", LID, 500)], SESSION);
+
+    await expect(pending).resolves.toEqual({ success: true, messagesLoaded: 1, hasMore: true });
+    expect(ctx.client.messagesStore.get(LID)).toHaveLength(1);
+    expect(ctx.client.messagesStore.get(GROUP)).toHaveLength(2);
   });
 
   it("reports a timeout with timedOut: true", async () => {
@@ -207,6 +280,18 @@ describe("loadMoreMessages on-demand answer", () => {
       error: "Timeout waiting for history (5ms)",
       timedOut: true,
     });
+  });
+
+  it("stores an answer that arrives after the timeout in the requested chat", async () => {
+    const ctx = makeClient();
+    seedAnchor(ctx.client, PN, LID);
+
+    const { pending } = await startLoad(ctx, PN, 5);
+    await pending;
+    ctx.emitHistory(older(2, LID), SESSION);
+
+    expect(ctx.client.messagesStore.get(PN)).toHaveLength(3);
+    expect(ctx.client.messagesStore.has(LID)).toBe(false);
     expect(ctx.client.pendingHistoryRequests.size).toBe(0);
   });
 
@@ -223,6 +308,143 @@ describe("loadMoreMessages on-demand answer", () => {
 
     expect(res.success).toBe(false);
     expect(res.timedOut).toBeUndefined();
+    expect(ctx.fetchMessageHistory).not.toHaveBeenCalled();
+  });
+});
+
+describe("late answer window", () => {
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it("forgets a timed out request once the window is over", async () => {
+    jest.useFakeTimers({ doNotFake: ["setImmediate"] });
+    const ctx = makeClient();
+    seedAnchor(ctx.client, PN, LID);
+
+    const { pending } = await startLoad(ctx, PN, 1000);
+    jest.advanceTimersByTime(1000);
+    await expect(pending).resolves.toMatchObject({ timedOut: true });
+    expect(ctx.client.pendingHistoryRequests.size).toBe(1);
+
+    jest.advanceTimersByTime(TIMEOUTS.HISTORY_LATE_ANSWER);
+    expect(ctx.client.pendingHistoryRequests.size).toBe(0);
+
+    ctx.emitHistory(older(1, LID), SESSION);
+    expect(ctx.client.messagesStore.get(LID)).toHaveLength(1);
+  });
+});
+
+describe("loadMoreMessages with an explicit anchor", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  /** Store `id` in `chatJid` with a raw key on `keyJid`. */
+  function seed(client: any, chatJid: string, keyJid: string, id: string, ts: number, fromMe = false): any {
+    const raw = textMsg(id, keyJid, ts, { fromMe, participant: "" });
+    client.storeMessage({ id, from: chatJid, fromMe, type: "text", text: id, timestamp: ts, isGroup: false, raw });
+    return raw;
+  }
+
+  it("starts from the named message of the chat, not from its oldest one", async () => {
+    const ctx = makeClient();
+    seed(ctx.client, PN, PN, "OLDEST", 1000);
+    const named = seed(ctx.client, PN, LID, "NAMED", 3000, true);
+
+    const { pending } = await startLoad(ctx, PN, 1000, { id: "NAMED", fromMe: true, timestamp: 3060 });
+    expect(ctx.fetchMessageHistory).toHaveBeenCalledWith(50, named.key, 3000 * 1000);
+    ctx.emitHistory(older(2, LID), SESSION);
+
+    await expect(pending).resolves.toEqual({ success: true, messagesLoaded: 2, hasMore: true });
+  });
+
+  it("finds the named message in another bucket when the chat's own is empty", async () => {
+    const ctx = makeClient();
+    const named = seed(ctx.client, LID, LID, "NAMED", 3000);
+
+    const { pending } = await startLoad(ctx, PN, 1000, { id: "NAMED", fromMe: false, timestamp: 3000 });
+    expect(ctx.fetchMessageHistory).toHaveBeenCalledWith(50, named.key, 3000 * 1000);
+    ctx.emitHistory(older(2, LID), SESSION);
+
+    await expect(pending).resolves.toEqual({ success: true, messagesLoaded: 2, hasMore: true });
+    expect(ctx.client.messagesStore.get(PN)).toHaveLength(2);
+  });
+
+  it("does not take a message with the same id but the other fromMe", async () => {
+    const ctx = makeClient();
+    seed(ctx.client, PN, LID, "NAMED", 3000, false);
+
+    await startLoad(ctx, PN, 1000, { id: "NAMED", fromMe: true, timestamp: 3000 });
+
+    expect(ctx.fetchMessageHistory).toHaveBeenCalledWith(50, { remoteJid: PN, id: "NAMED", fromMe: true }, 3000 * 1000);
+  });
+
+  it.each([
+    ["another phone number", OTHER_PN, OTHER_PN],
+    ["a group", GROUP, GROUP],
+  ])("does not take the named message from the bucket of %s", async (_label, bucket, keyJid) => {
+    const ctx = makeClient();
+    seed(ctx.client, bucket, keyJid, "NAMED", 3000);
+
+    await startLoad(ctx, PN, 1000, { id: "NAMED", fromMe: false, timestamp: 3000 });
+
+    expect(ctx.fetchMessageHistory).toHaveBeenCalledWith(50, { remoteJid: PN, id: "NAMED", fromMe: false }, 3000 * 1000);
+  });
+
+  it("does not take the named message from an @lid known as another chat", async () => {
+    const ctx = makeClient();
+    ctx.client.captureLidPnPair(OTHER_LID, OTHER_PN);
+    seed(ctx.client, OTHER_LID, OTHER_LID, "NAMED", 3000);
+
+    await startLoad(ctx, PN, 1000, { id: "NAMED", fromMe: false, timestamp: 3000 });
+
+    expect(ctx.fetchMessageHistory).toHaveBeenCalledWith(50, { remoteJid: PN, id: "NAMED", fromMe: false }, 3000 * 1000);
+  });
+
+  it("uses the anchor's timestamp when the stored one is not a number", async () => {
+    const ctx = makeClient();
+    const named = seed(ctx.client, PN, LID, "NAMED", 3000);
+    // A Long, as it comes back from the store file.
+    named.messageTimestamp = { low: 3000, high: 0, unsigned: true };
+
+    await startLoad(ctx, PN, 1000, { id: "NAMED", fromMe: false, timestamp: 3060 });
+
+    expect(ctx.fetchMessageHistory).toHaveBeenCalledWith(50, named.key, 3060 * 1000);
+  });
+
+  it("asks with the chat's own jid when the store does not hold the named message", async () => {
+    const ctx = makeClient();
+    seed(ctx.client, PN, PN, "NEWER", 5000);
+
+    const { pending } = await startLoad(ctx, PN, 1000, { id: "GONE", fromMe: false, timestamp: 4000 });
+    expect(ctx.fetchMessageHistory).toHaveBeenCalledWith(50, { remoteJid: PN, id: "GONE", fromMe: false }, 4000 * 1000);
+    ctx.emitHistory(older(3, LID), SESSION);
+
+    await expect(pending).resolves.toEqual({ success: true, messagesLoaded: 3, hasMore: true });
+    expect(ctx.client.messagesStore.get(PN)).toHaveLength(4);
+  });
+
+  it("loads a chat whose bucket is empty", async () => {
+    const ctx = makeClient();
+
+    const { pending } = await startLoad(ctx, PN, 1000, { id: "GONE", fromMe: true, timestamp: 4000 });
+    expect(ctx.fetchMessageHistory).toHaveBeenCalledWith(50, { remoteJid: PN, id: "GONE", fromMe: true }, 4000 * 1000);
+    ctx.emitHistory(older(2, LID), SESSION);
+
+    await expect(pending).resolves.toEqual({ success: true, messagesLoaded: 2, hasMore: true });
+    expect(ctx.client.messagesStore.get(PN)).toHaveLength(2);
+  });
+
+  it("still fails on an empty bucket without an anchor", async () => {
+    const ctx = makeClient();
+
+    const res = await ctx.client.loadMoreMessages(PN);
+
+    expect(res).toEqual({
+      success: false,
+      error: "No messages in store to paginate from. Send or receive a message first.",
+    });
     expect(ctx.fetchMessageHistory).not.toHaveBeenCalled();
   });
 });
