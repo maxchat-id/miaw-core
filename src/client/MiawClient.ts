@@ -243,7 +243,6 @@ export class MiawClient extends EventEmitter {
   private pendingHistoryRequests: Map<string, {
     jid: string;
     resolve: (result: { success: boolean; messagesLoaded: number; hasMore: boolean }) => void;
-    initialCount: number;
   }> = new Map();
   private labelEventCount = 0;
   private lastLabelSyncTime?: Date;
@@ -677,23 +676,42 @@ export class MiawClient extends EventEmitter {
       // Update chats from history
       this.updateChatsStore(chats);
 
+      // An answer to a pending loadMoreMessages request
+      const request = peerDataRequestSessionId
+        ? this.pendingHistoryRequests.get(peerDataRequestSessionId)
+        : undefined;
+
       // Update messages from history
       // Baileys v7: messages is a flat WAMessage[] array (not nested)
+      // The store is written once for the whole event, not once per message.
+      let anyNew = false;
+      let answered = 0;
+      let messagesLoaded = 0;
       for (const msg of messages) {
-        this.addMessageToStore(msg);
+        // An answer holds one chat, keyed by how the phone stores it (@lid or
+        // PN) whatever the anchor's remoteJid was; an @lid one would otherwise
+        // land in the @lid bucket instead of the chat asked about.
+        const chatJid = request && this.mayBelongToChat(msg?.key?.remoteJid, request.jid) ? request.jid : undefined;
+        const stored = this.addMessageToStore(msg, chatJid);
+        if (!stored) continue;
+        if (stored.isNew) anyNew = true;
+        if (request && stored.chatJid === request.jid) {
+          answered++;
+          if (stored.isNew) messagesLoaded++;
+        }
+      }
+      if (anyNew) {
+        this.saveMessagesToFile();
       }
 
-      // Check for pending loadMoreMessages requests
-      if (peerDataRequestSessionId && this.pendingHistoryRequests.has(peerDataRequestSessionId)) {
-        const request = this.pendingHistoryRequests.get(peerDataRequestSessionId)!;
-        const newCount = (this.messagesStore.get(request.jid) || []).length;
-        const messagesLoaded = newCount - request.initialCount;
-
-        this.pendingHistoryRequests.delete(peerDataRequestSessionId);
+      if (request) {
+        this.pendingHistoryRequests.delete(peerDataRequestSessionId!);
+        // Fewer messages than asked for does not prove the chat has no older
+        // ones; only an empty answer does.
         request.resolve({
           success: true,
           messagesLoaded,
-          hasMore: !isLatest,
+          hasMore: answered > 0,
         });
 
         this.logger.debug(`History request ${peerDataRequestSessionId} completed: ${messagesLoaded} messages loaded`);
@@ -1468,10 +1486,25 @@ export class MiawClient extends EventEmitter {
   }
 
   /**
-   * Add a message to the store
-   * @param msg - Baileys message object
+   * Whether a message keyed by `remoteJid` can belong to the chat `chatJid`:
+   * the chat's own jid, or an @lid not known to be another chat.
    */
-  private addMessageToStore(msg: any): void {
+  private mayBelongToChat(remoteJid: string | null | undefined, chatJid: string): boolean {
+    if (!remoteJid) return false;
+    if (remoteJid === chatJid) return true;
+    if (chatJid.endsWith("@g.us") || !remoteJid.endsWith("@lid")) return false;
+    const resolved = this.resolveLidToJid(remoteJid);
+    return resolved === chatJid || resolved === remoteJid;
+  }
+
+  /**
+   * Add a history message to the store without writing the store to disk;
+   * the caller writes once for the whole batch.
+   * @param msg - Baileys message object
+   * @param chatJid - Chat to store it under instead of the resolved remoteJid
+   * @returns The chat it belongs to and whether it was new; undefined if dropped
+   */
+  private addMessageToStore(msg: any, chatJid?: string): { chatJid: string; isNew: boolean } | undefined {
     // Capture LID<->PN mapping from the history message key (rc13 alt fields)
     // so @lid from/participant resolve consistently with the live message path.
     if (msg?.key && !msg.key.fromMe) {
@@ -1480,10 +1513,12 @@ export class MiawClient extends EventEmitter {
     }
 
     const normalized = MessageHandler.normalize({ messages: [msg], type: "notify" }, this.logger);
-    if (!normalized) return;
+    if (!normalized) return undefined;
 
     // Resolve @lid JIDs to @s.whatsapp.net for consistent storage
-    if (normalized.from) {
+    if (chatJid) {
+      normalized.from = chatJid;
+    } else if (normalized.from) {
       normalized.from = this.resolveLidToJid(normalized.from);
     }
     if (normalized.participant) {
@@ -1492,7 +1527,7 @@ export class MiawClient extends EventEmitter {
 
     // Store (deduped by id). The history-sync path never emits "message"; it
     // only populates the store.
-    this.storeMessage(normalized);
+    return { chatJid: normalized.from, isNew: this.storeMessage(normalized, false) };
   }
 
   /**
@@ -3649,9 +3684,10 @@ export class MiawClient extends EventEmitter {
    * echo, offline/reconnect backlog, or history sync) is stored only once.
    *
    * @param normalized - Normalized message to store
+   * @param persist - Write the store to disk when the message is new
    * @returns true if the message was newly stored; false if it was a duplicate
    */
-  private storeMessage(normalized: MiawMessage): boolean {
+  private storeMessage(normalized: MiawMessage, persist = true): boolean {
     const chatJid = normalized.from;
     const bucket = this.messagesStore.get(chatJid);
 
@@ -3665,7 +3701,9 @@ export class MiawClient extends EventEmitter {
       this.messagesStore.set(chatJid, [normalized]);
     }
 
-    this.saveMessagesToFile();
+    if (persist) {
+      this.saveMessagesToFile();
+    }
     return true;
   }
 
@@ -3777,13 +3815,16 @@ export class MiawClient extends EventEmitter {
    * @param jidOrPhone - Chat JID or phone number
    * @param count - Number of messages to fetch (max 50)
    * @param timeoutMs - Timeout in milliseconds (default 30000)
+   * @param anchor - Message to load older ones than (timestamp in seconds);
+   *   without it, the oldest message stored for the chat
    * @returns Result with number of messages loaded and whether more are available
    */
   async loadMoreMessages(
     jidOrPhone: string,
     count: number = 50,
-    timeoutMs: number = 30000
-  ): Promise<{ success: boolean; messagesLoaded?: number; hasMore?: boolean; error?: string }> {
+    timeoutMs: number = 30000,
+    anchor?: { id: string; fromMe: boolean; timestamp: number }
+  ): Promise<{ success: boolean; messagesLoaded?: number; hasMore?: boolean; error?: string; timedOut?: boolean }> {
     try {
       if (!this.socket) {
         return { success: false, error: "Not connected. Call connect() first." };
@@ -3796,39 +3837,58 @@ export class MiawClient extends EventEmitter {
       const jid = MessageHandler.formatPhoneToJid(jidOrPhone);
       const messages = this.messagesStore.get(jid) || [];
 
-      if (messages.length === 0) {
-        return { success: false, error: "No messages in store to paginate from. Send or receive a message first." };
-      }
-
-      // Find the oldest message (messages are stored newest first after history sync)
-      // We need the raw Baileys message for the key and timestamp
-      let oldestMessage: MiawMessage | null = null;
-      let oldestTimestamp = Infinity;
-
-      for (const msg of messages) {
-        if (msg.timestamp < oldestTimestamp) {
-          oldestTimestamp = msg.timestamp;
-          oldestMessage = msg;
+      let msgKey: any;
+      let msgTimestamp: any;
+      if (anchor) {
+        // The stored key is the one WhatsApp knows; the chat's own messages
+        // may sit in an @lid bucket, so those that can be this chat are searched.
+        const isAnchor = (msg: MiawMessage) => msg.id === anchor.id && msg.fromMe === anchor.fromMe && msg.raw?.key;
+        let stored = messages.find(isAnchor);
+        if (!stored) {
+          for (const [bucketJid, bucket] of this.messagesStore) {
+            if (!this.mayBelongToChat(bucketJid, jid)) continue;
+            stored = bucket.find(isAnchor);
+            if (stored) break;
+          }
         }
-      }
+        // Not stored: WhatsApp answers a key it knows by id and fromMe, with
+        // either form of the chat's jid and a timestamp that is only close.
+        msgKey = stored?.raw.key ?? { remoteJid: jid, id: anchor.id, fromMe: anchor.fromMe };
+        // A stored timestamp read back from the store file may not be a number.
+        msgTimestamp = Number(stored?.raw.messageTimestamp) || anchor.timestamp;
+      } else {
+        if (messages.length === 0) {
+          return { success: false, error: "No messages in store to paginate from. Send or receive a message first." };
+        }
 
-      if (!oldestMessage || !oldestMessage.raw) {
-        return { success: false, error: "Cannot find message with raw data for pagination cursor." };
-      }
+        // Find the oldest message (messages are stored newest first after history sync)
+        // We need the raw Baileys message for the key and timestamp
+        let oldestMessage: MiawMessage | null = null;
+        let oldestTimestamp = Infinity;
 
-      const rawMsg = oldestMessage.raw;
-      const msgKey = rawMsg.key;
-      const msgTimestamp = rawMsg.messageTimestamp;
+        for (const msg of messages) {
+          if (msg.timestamp < oldestTimestamp) {
+            oldestTimestamp = msg.timestamp;
+            oldestMessage = msg;
+          }
+        }
 
-      if (!msgKey || !msgTimestamp) {
-        return { success: false, error: "Message missing key or timestamp for pagination." };
+        if (!oldestMessage || !oldestMessage.raw) {
+          return { success: false, error: "Cannot find message with raw data for pagination cursor." };
+        }
+
+        msgKey = oldestMessage.raw.key;
+        msgTimestamp = oldestMessage.raw.messageTimestamp;
+
+        if (!msgKey || !msgTimestamp) {
+          return { success: false, error: "Message missing key or timestamp for pagination." };
+        }
       }
 
       // Clamp count to max 50
       const fetchCount = Math.min(count, 50);
-      const initialCount = messages.length;
 
-      this.logger.debug(`Fetching ${fetchCount} older messages for ${jid} (current: ${initialCount})`);
+      this.logger.debug(`Fetching ${fetchCount} older messages for ${jid} (current: ${messages.length})`);
 
       // Call Baileys fetchMessageHistory
       const sessionId = await this.socket.fetchMessageHistory(
@@ -3843,17 +3903,20 @@ export class MiawClient extends EventEmitter {
       return new Promise((resolve) => {
         // Set up timeout
         const timeout = setTimeout(() => {
-          this.pendingHistoryRequests.delete(sessionId);
+          // WhatsApp does not send an answer twice: one that arrives after the
+          // timeout must still land in the requested chat.
+          const forget = setTimeout(() => this.pendingHistoryRequests.delete(sessionId), TIMEOUTS.HISTORY_LATE_ANSWER);
+          forget.unref?.();
           resolve({
             success: false,
             error: `Timeout waiting for history (${timeoutMs}ms)`,
+            timedOut: true,
           });
         }, timeoutMs);
 
         // Store the pending request
         this.pendingHistoryRequests.set(sessionId, {
           jid,
-          initialCount,
           resolve: (result) => {
             clearTimeout(timeout);
             resolve(result);
