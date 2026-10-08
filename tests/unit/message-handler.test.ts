@@ -2,8 +2,23 @@
  * Unit Tests for MessageHandler
  */
 
+import { readFileSync } from "node:fs";
 import { MessageHandler } from "../../src/handlers/MessageHandler.js";
 import { MiawMessage } from "../../src/types/index.js";
+
+const businessMessageFixtures = JSON.parse(
+  readFileSync(
+    new URL("../fixtures/business-message-fixtures.json", import.meta.url),
+    "utf8"
+  )
+);
+
+function fixtureUpsert(name: "templateMessage" | "interactiveMessage") {
+  return {
+    messages: [businessMessageFixtures[name]],
+    type: "notify" as const,
+  };
+}
 
 describe("MessageHandler", () => {
   describe("formatPhoneToJid", () => {
@@ -217,6 +232,26 @@ describe("MessageHandler", () => {
       const result = MessageHandler.normalize(baileysMessage);
       expect(result?.text).toBe("Extended text");
       expect(result?.type).toBe("text");
+    });
+
+    it("should normalize production-derived template message text", () => {
+      const result = MessageHandler.normalize(fixtureUpsert("templateMessage"));
+
+      expect(result?.type).toBe("text");
+      expect(result?.text).toBe(
+        businessMessageFixtures._meta.expectedText.templateMessage
+      );
+      expect(result?.raw).toBe(businessMessageFixtures.templateMessage);
+    });
+
+    it("should normalize production-derived interactive message text", () => {
+      const result = MessageHandler.normalize(fixtureUpsert("interactiveMessage"));
+
+      expect(result?.type).toBe("text");
+      expect(result?.text).toBe(
+        businessMessageFixtures._meta.expectedText.interactiveMessage
+      );
+      expect(result?.raw).toBe(businessMessageFixtures.interactiveMessage);
     });
 
     it("should normalize image message with metadata", () => {

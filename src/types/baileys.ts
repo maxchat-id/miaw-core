@@ -95,6 +95,30 @@ export interface BaileyStickerMessage {
   contextInfo?: BaileysContextInfo;
 }
 
+export interface BaileysInteractiveMessage {
+  header?: {
+    title?: string;
+  };
+  body?: {
+    text?: string;
+  };
+  footer?: {
+    text?: string;
+  };
+}
+
+export interface BaileysHydratedTemplate {
+  hydratedTitleText?: string;
+  hydratedContentText?: string;
+  hydratedFooterText?: string;
+}
+
+export interface BaileysTemplateMessage {
+  hydratedTemplate?: BaileysHydratedTemplate;
+  hydratedFourRowTemplate?: BaileysHydratedTemplate;
+  interactiveMessageTemplate?: BaileysInteractiveMessage;
+}
+
 /**
  * Message content types from Baileys
  */
@@ -109,6 +133,8 @@ export interface BaileysMessageContent {
   documentMessage?: BaileysDocumentMessage;
   audioMessage?: BaileysAudioMessage;
   stickerMessage?: BaileyStickerMessage;
+  templateMessage?: BaileysTemplateMessage;
+  interactiveMessage?: BaileysInteractiveMessage;
   viewOnceMessage?: { message?: BaileysMessageContent };
   viewOnceMessageV2?: { message?: BaileysMessageContent };
   viewOnceMessageV2Extension?: { message?: BaileysMessageContent };
