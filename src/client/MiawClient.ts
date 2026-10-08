@@ -250,7 +250,17 @@ function settle(fn: () => unknown): void {
   }
 }
 
+type StoreMessageResult = "inserted" | "upgraded" | "duplicate";
+
 export class MiawClient extends EventEmitter {
+  private static readonly PLACEHOLDER_STUB_TYPES = new Set<unknown>([
+    2,
+    39,
+    75,
+    "CIPHERTEXT",
+    "E2E_ENCRYPTED",
+    "E2E_ENCRYPTED_NOW",
+  ]);
   private options: Required<Omit<MiawClientOptions, "proxy" | "agent" | "fetchAgent" | "usePairingCode" | "phoneNumber" | "browser">> & Pick<MiawClientOptions, "proxy" | "agent" | "fetchAgent" | "usePairingCode" | "phoneNumber" | "browser">;
   private socket: WASocket | null = null;
   private authHandler: AuthHandler;
@@ -999,8 +1009,12 @@ export class MiawClient extends EventEmitter {
           // but are NOT emitted on "message" so existing bots don't reply to
           // their own sends. Emit only newly-stored INBOUND messages, so
           // reconnect re-delivery of already-stored messages never re-fires.
-          const isNew = this.storeMessage(normalized);
-          if (isNew && !normalized.fromMe) {
+          const storeResult = this.storeMessage(normalized);
+          if (
+            storeResult !== "duplicate" &&
+            !normalized.fromMe &&
+            !this.isPlaceholder(normalized)
+          ) {
             this.emit("message", normalized);
           }
         }
@@ -3870,16 +3884,29 @@ export class MiawClient extends EventEmitter {
    * echo, offline/reconnect backlog, or history sync) is stored only once.
    *
    * @param normalized - Normalized message to store
-   * @returns true if the message was newly stored; false if it was a duplicate
+   * @returns Whether the message was inserted, upgraded, or already present
    */
-  private storeMessage(normalized: MiawMessage): boolean {
+  private storeMessage(normalized: MiawMessage): StoreMessageResult {
     const chatJid = normalized.from;
     const bucket = this.messagesStore.get(chatJid);
 
     if (bucket) {
-      // Dedup by id. An empty id (missing key.id) can't be deduped -> append.
-      if (normalized.id && bucket.some((m) => m.id === normalized.id)) {
-        return false;
+      // An empty id (missing key.id) can't be deduped, so append it.
+      const existingIndex = normalized.id
+        ? bucket.findIndex((message) => message.id === normalized.id)
+        : -1;
+
+      if (existingIndex >= 0) {
+        const existing = bucket[existingIndex];
+        if (
+          this.isPlaceholder(existing) &&
+          !this.isPlaceholder(normalized)
+        ) {
+          bucket[existingIndex] = normalized;
+          this.saveMessagesToFile();
+          return "upgraded";
+        }
+        return "duplicate";
       }
       bucket.push(normalized);
     } else {
@@ -3887,7 +3914,26 @@ export class MiawClient extends EventEmitter {
     }
 
     this.saveMessagesToFile();
-    return true;
+    return "inserted";
+  }
+
+  private isPlaceholder(message: MiawMessage): boolean {
+    if (message.type !== "unknown" || message.text || message.media) {
+      return false;
+    }
+
+    const rawMessage = message.raw?.message;
+    if (
+      rawMessage &&
+      typeof rawMessage === "object" &&
+      Object.keys(rawMessage).length > 0
+    ) {
+      return false;
+    }
+
+    return MiawClient.PLACEHOLDER_STUB_TYPES.has(
+      message.raw?.messageStubType
+    );
   }
 
   /**
@@ -3963,7 +4009,10 @@ export class MiawClient extends EventEmitter {
   getMessageCounts(): Map<string, number> {
     const counts = new Map<string, number>();
     for (const [jid, messages] of this.messagesStore.entries()) {
-      counts.set(jid, messages.length);
+      counts.set(
+        jid,
+        messages.filter((message) => !this.isPlaceholder(message)).length
+      );
     }
     return counts;
   }
@@ -3981,7 +4030,7 @@ export class MiawClient extends EventEmitter {
 
       return {
         success: true,
-        messages,
+        messages: messages.filter((message) => !this.isPlaceholder(message)),
       };
     } catch (error) {
       this.logger.error("Failed to get chat messages:", error);

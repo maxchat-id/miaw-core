@@ -7,6 +7,9 @@ import {
   BaileysDocumentMessage,
   BaileysAudioMessage,
   BaileyStickerMessage,
+  BaileysInteractiveMessage,
+  BaileysMessageContent,
+  BaileysTemplateMessage,
 } from "../types/baileys.js";
 import { isBaileysMessageUpsert, getErrorMessage } from "../utils/type-guards.js";
 
@@ -65,12 +68,18 @@ export class MessageHandler {
         message.message?.viewOnceMessageV2Extension?.message;
       const actualMessage = viewOnceMessage || message.message;
       const isViewOnce = !!viewOnceMessage;
+      const businessText = actualMessage
+        ? this.extractBusinessMessageText(actualMessage)
+        : undefined;
 
       if (actualMessage?.conversation) {
         text = actualMessage.conversation;
         type = "text";
       } else if (actualMessage?.extendedTextMessage?.text) {
         text = actualMessage.extendedTextMessage.text;
+        type = "text";
+      } else if (businessText) {
+        text = businessText;
         type = "text";
       } else if (actualMessage?.imageMessage) {
         const imgMsg = actualMessage.imageMessage;
@@ -125,6 +134,47 @@ export class MessageHandler {
       }
       return null;
     }
+  }
+
+  private static extractBusinessMessageText(
+    message: BaileysMessageContent
+  ): string | undefined {
+    return (
+      this.extractTemplateText(message.templateMessage) ??
+      this.extractInteractiveText(message.interactiveMessage)
+    );
+  }
+
+  private static extractTemplateText(
+    message?: BaileysTemplateMessage
+  ): string | undefined {
+    const hydrated = message?.hydratedTemplate ?? message?.hydratedFourRowTemplate;
+    return (
+      this.joinVisibleParts([
+        hydrated?.hydratedTitleText,
+        hydrated?.hydratedContentText,
+        hydrated?.hydratedFooterText,
+      ]) ?? this.extractInteractiveText(message?.interactiveMessageTemplate)
+    );
+  }
+
+  private static extractInteractiveText(
+    message?: BaileysInteractiveMessage
+  ): string | undefined {
+    return this.joinVisibleParts([
+      message?.header?.title,
+      message?.body?.text,
+      message?.footer?.text,
+    ]);
+  }
+
+  private static joinVisibleParts(parts: unknown[]): string | undefined {
+    const visibleParts = parts
+      .filter((part): part is string => typeof part === "string")
+      .map((part) => part.trim())
+      .filter(Boolean);
+
+    return visibleParts.length > 0 ? visibleParts.join("\n") : undefined;
   }
 
   /**
