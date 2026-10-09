@@ -95,14 +95,23 @@ describe("handleDisconnect connection state", () => {
     expect(client.connectionState).toBe("reconnecting");
   });
 
-  it("reports loggedOut as disconnected and clears the session", () => {
+  it("reports loggedOut as disconnected and invalidates message state", () => {
     const client = makeClient();
+    client.messagesStore.set("old@s.whatsapp.net", [{ id: "OLD" }]);
+    client.messageIdIndex.set("old@s.whatsapp.net", new Map([["OLD", 0]]));
+    client.currentMessageRevision = 1;
+    client.messageCheckpointTimer = setTimeout(() => {}, 10_000);
 
     const shouldReconnect = client.handleDisconnect(disconnectWith(401));
 
     expect(shouldReconnect).toBe(false);
     expect(client.connectionState).toBe("disconnected");
     expect(client.authHandler.clearSession).toHaveBeenCalledTimes(1);
+    expect(client.messagesStore.size).toBe(0);
+    expect(client.messageIdIndex.size).toBe(0);
+    expect(client.currentMessageRevision).toBe(0);
+    expect(client.messageCheckpointTimer).toBeNull();
+    expect(client.persistenceEpoch).toBe(1);
   });
 
   it("reports connectionReplaced as disconnected without clearing the session", () => {

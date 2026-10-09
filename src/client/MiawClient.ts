@@ -234,6 +234,7 @@ export class MiawClient extends EventEmitter {
   private connectionWatchdogTimer: NodeJS.Timeout | null = null;
   private reconnectAttempts = 0;
   private reconnectTimer: NodeJS.Timeout | null = null;
+  private connectionAttemptGeneration = 0;
   private disposed = false;
   // Ids of messages sent via this client's API. Used to suppress the echo that
   // baileys replays through messages.upsert, so only phone-originated own-sends
@@ -257,8 +258,14 @@ export class MiawClient extends EventEmitter {
   private inFlightMessageRevision = 0;
   private messageCheckpointPromise: Promise<void> | null = null;
   private messageCheckpointMode: MessageCheckpointMode | null = null;
+  private messageCheckpointEpoch: number | null = null;
   private messageCheckpointTimer: NodeJS.Timeout | null = null;
   private persistenceEpoch = 0;
+  private messageIngestionGeneration = 0;
+  private activeMessageUpserts = new Set<Promise<void>>();
+  private messageLifecycleFlushPromise: Promise<void> | null = null;
+  private messageLifecycleFlushEpoch: number | null = null;
+  private disposePromise: Promise<void> | null = null;
   private activeMessageTempPaths = new Set<string>();
   private labelsStore: Map<string, Label> = new Map();
   // Store label-chat associations (labelId -> Set of chatJids)
@@ -324,6 +331,8 @@ export class MiawClient extends EventEmitter {
    * Connect to WhatsApp
    */
   async connect(): Promise<void> {
+    if (this.disposed) return;
+
     // Check for stale "connecting" state (stuck for more than configured timeout)
     if (this.connectionState === "connecting") {
       const elapsed = Date.now() - this.connectionStateTimestamp;
@@ -342,8 +351,17 @@ export class MiawClient extends EventEmitter {
       return;
     }
 
+    const connectionAttempt = ++this.connectionAttemptGeneration;
+    const isCurrentAttempt = () =>
+      !this.disposed && connectionAttempt === this.connectionAttemptGeneration;
+
     try {
       this.updateConnectionState("connecting");
+
+      // A reconnect must not hydrate an older disk checkpoint over newer
+      // in-memory messages from the previous socket.
+      await this.quiesceMessagePersistence();
+      if (!isCurrentAttempt()) return;
 
       // Load persisted stores from disk before connecting
       // This ensures data is available even if Baileys history sync doesn't fire
@@ -356,15 +374,18 @@ export class MiawClient extends EventEmitter {
 
       // Load auth state
       const { state, saveCreds } = await this.authHandler.initialize();
+      if (!isCurrentAttempt()) return;
 
       // Store auth state for logout access (needed when disconnected)
       this.authState = { creds: state.creds };
 
       // Resolve the WA Web version (prefers the real current version to avoid 428)
       const version = await this.resolveWAVersion();
+      if (!isCurrentAttempt()) return;
 
       // Resolve proxy agents if configured
       const proxyAgents = await this.resolveProxyAgents();
+      if (!isCurrentAttempt()) return;
       // Kept for downloadMedia(): Baileys never plumbs a proxy into its
       // download path, so we have to supply the dispatcher ourselves.
       this.downloadDispatcher = proxyAgents?.downloadDispatcher;
@@ -423,6 +444,7 @@ export class MiawClient extends EventEmitter {
 
       this.logger.info("Connection initiated");
     } catch (error) {
+      if (!isCurrentAttempt()) return;
       this.logger.error("Failed to connect:", error);
       this.emit("error", error as Error);
 
@@ -575,6 +597,8 @@ export class MiawClient extends EventEmitter {
   private registerSocketEvents(saveCreds: () => Promise<void>): void {
     if (!this.socket) return;
 
+    const messageIngestionGeneration = ++this.messageIngestionGeneration;
+
     // Connection updates
     this.socket.ev.on("connection.update", async (update) => {
       const { connection, lastDisconnect, qr } = update;
@@ -680,6 +704,8 @@ export class MiawClient extends EventEmitter {
 
     // History sync - populates contacts, chats, and messages from history
     this.socket.ev.on("messaging-history.set", ({ chats, contacts, messages, lidPnMappings, isLatest, peerDataRequestSessionId }) => {
+      if (messageIngestionGeneration !== this.messageIngestionGeneration) return;
+
       if (this.options.debug) {
         this.logger.debug("\n========== MESSAGING HISTORY SYNC ==========");
         this.logger.debug(`Contacts: ${contacts.length}, Chats: ${chats.length}, Messages: ${messages.length}, LID maps: ${lidPnMappings?.length ?? 0}`);
@@ -747,7 +773,15 @@ export class MiawClient extends EventEmitter {
     });
 
     // Messages
-    this.socket.ev.on("messages.upsert", async (m) => {
+    this.socket.ev.on("messages.upsert", (m) => {
+      if (messageIngestionGeneration !== this.messageIngestionGeneration) {
+        return Promise.resolve();
+      }
+
+      const persistenceEpoch = this.persistenceEpoch;
+      const task = Promise.resolve().then(async () => {
+      if (persistenceEpoch !== this.persistenceEpoch) return;
+
       // Baileys only ever emits type 'notify' (live) or 'append' (our own
       // sends + offline/reconnect backlog). The type is a live-vs-backlog
       // signal, NOT a direction signal, so we must process BOTH to capture
@@ -757,6 +791,8 @@ export class MiawClient extends EventEmitter {
       if (m.type !== "notify" && m.type !== "append") return;
 
       for (const msg of m.messages) {
+        if (persistenceEpoch !== this.persistenceEpoch) return;
+
         // Debug: Log raw Baileys message structure
         if (this.options.debug) {
           this.logger.debug("\n========== RAW BAILEYS MESSAGE ==========");
@@ -821,7 +857,10 @@ export class MiawClient extends EventEmitter {
           if (!normalized.senderPhone) {
             const lidJid = normalized.isGroup ? normalized.participant : normalized.from;
             if (lidJid?.endsWith("@lid")) {
-              const pn = await this.resolvePnFromNativeStore(lidJid);
+              const pn = await this.resolvePnFromNativeStore(
+                lidJid,
+                persistenceEpoch
+              );
               if (pn) {
                 if (normalized.isGroup) {
                   normalized.participant = pn;
@@ -839,6 +878,8 @@ export class MiawClient extends EventEmitter {
           // the paired phone) — API sends are matched via selfSentIds and
           // suppressed so bots don't react to their own sends. isNew gates both
           // so reconnect re-delivery of stored messages never re-fires.
+          if (persistenceEpoch !== this.persistenceEpoch) return;
+
           const storeResult = this.storeMessage(normalized);
           const isNew = storeResult !== "duplicate";
           if (isNew && !normalized.fromMe && !this.isPlaceholder(normalized)) {
@@ -854,6 +895,11 @@ export class MiawClient extends EventEmitter {
           }
         }
       }
+      }).finally(() => {
+        this.activeMessageUpserts.delete(task);
+      });
+      this.activeMessageUpserts.add(task);
+      return task;
     });
 
     // Reactions
@@ -1131,7 +1177,10 @@ export class MiawClient extends EventEmitter {
    * @param lidJid - A '@lid' JID
    * @returns The phone JID (@s.whatsapp.net) or null if unresolved
    */
-  private async resolvePnFromNativeStore(lidJid: string): Promise<string | null> {
+  private async resolvePnFromNativeStore(
+    lidJid: string,
+    persistenceEpoch?: number
+  ): Promise<string | null> {
     if (!lidJid?.endsWith("@lid")) {
       return null;
     }
@@ -1141,6 +1190,12 @@ export class MiawClient extends EventEmitter {
     }
     try {
       const pn = await store.getPNForLID(lidJid);
+      if (
+        persistenceEpoch !== undefined &&
+        persistenceEpoch !== this.persistenceEpoch
+      ) {
+        return null;
+      }
       if (pn) {
         // The native store returns device-specific JIDs (e.g. '123:0@s.whatsapp.net');
         // normalize to a clean user JID so cache entries (and normalized.from /
@@ -1574,40 +1629,81 @@ export class MiawClient extends EventEmitter {
    * @returns true if session was cleared, false if no session existed
    */
   clearSession(): boolean {
-    return this.authHandler.clearSession();
+    return this.invalidateSessionData();
   }
 
   /**
    * Dispose client and clean up resources
    */
-  async dispose(): Promise<void> {
-    // Mark disposed first so any in-flight connect/reconnect attempt bails out
-    // before emitting (an unhandled 'error' emit would crash the process).
+  dispose(): Promise<void> {
+    if (this.disposePromise) return this.disposePromise;
+
+    // Mark disposed before the first await so connect/reconnect cannot create
+    // another socket while teardown drains message ingestion.
     this.disposed = true;
+    this.connectionAttemptGeneration++;
+    this.disposePromise = this.performDispose();
+    return this.disposePromise;
+  }
 
-    // Clear reconnect timer
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
-
-    // Reset logout flag
-    this.loggingOut = false;
-
-    // Clear LID cache
-    this.lidToJidMap.clear();
-
-    // Remove all event listeners
+  private async performDispose(): Promise<void> {
+    const persistence = this.quiesceMessagePersistence();
+    const socket = this.socket;
+    if (socket) this.removeSocketEvents();
     this.removeAllListeners();
 
-    // Close socket if connected
-    if (this.socket) {
-      this.removeSocketEvents();
-      this.socket.end(undefined);
-      this.socket = null;
+    await this.settleMessageLifecycle(persistence, [
+      () => {
+        if (this.reconnectTimer) {
+          clearTimeout(this.reconnectTimer);
+          this.reconnectTimer = null;
+        }
+      },
+      () => {
+        this.loggingOut = false;
+        this.lidToJidMap.clear();
+      },
+      () => {
+        if (socket && this.socket === socket) {
+          try {
+            socket.end(undefined);
+          } finally {
+            this.socket = null;
+          }
+        }
+      },
+      () => this.updateConnectionState("disconnected"),
+    ]);
+  }
+
+  private async settleMessageLifecycle(
+    persistence: Promise<void>,
+    cleanupSteps: Array<() => void>
+  ): Promise<void> {
+    let persistenceFailed = false;
+    let persistenceError: unknown;
+    try {
+      await persistence;
+    } catch (error) {
+      persistenceFailed = true;
+      persistenceError = error;
     }
 
-    this.updateConnectionState("disconnected");
+    let cleanupFailed = false;
+    let cleanupError: unknown;
+    for (const cleanup of cleanupSteps) {
+      try {
+        cleanup();
+      } catch (error) {
+        if (!cleanupFailed) {
+          cleanupFailed = true;
+          cleanupError = error;
+        }
+      }
+    }
+
+    if (persistenceFailed) throw persistenceError;
+    if (cleanupFailed) throw cleanupError;
   }
 
   /**
@@ -1660,7 +1756,7 @@ export class MiawClient extends EventEmitter {
     // Don't reconnect if logged out - clear session for fresh QR code on next connect
     if (statusCode === DisconnectReason.loggedOut) {
       this.logger.info("Logged out, clearing session for fresh authentication");
-      this.authHandler.clearSession();
+      this.invalidateSessionData();
       return false;
     }
 
@@ -3813,6 +3909,101 @@ export class MiawClient extends EventEmitter {
     );
   }
 
+  private cancelMessageCheckpointTimer(): void {
+    if (!this.messageCheckpointTimer) return;
+    clearTimeout(this.messageCheckpointTimer);
+    this.messageCheckpointTimer = null;
+  }
+
+  /**
+   * Stop the current socket generation, drain its async upserts, and flush the
+   * latest resulting revision. Concurrent lifecycle callers share the barrier.
+   */
+  private quiesceMessagePersistence(): Promise<void> {
+    this.messageIngestionGeneration++;
+    this.cancelMessageCheckpointTimer();
+    const epoch = this.persistenceEpoch;
+    const existingLifecycle = this.messageLifecycleFlushPromise;
+    const existingLifecycleEpoch = this.messageLifecycleFlushEpoch;
+    if (existingLifecycle && existingLifecycleEpoch === epoch) {
+      return existingLifecycle;
+    }
+
+    const operation = (async () => {
+      if (existingLifecycle) {
+        try {
+          await existingLifecycle;
+        } catch {
+          // A previous account's lifecycle failure cannot block the new epoch.
+        }
+      }
+
+      const staleCheckpoint = this.messageCheckpointPromise;
+      if (
+        staleCheckpoint &&
+        this.messageCheckpointEpoch !== epoch
+      ) {
+        try {
+          await staleCheckpoint;
+        } catch {
+          // Its epoch guard prevents a stale commit; wait only for settlement.
+        }
+      }
+
+      if (epoch !== this.persistenceEpoch) {
+        throw new MessagePersistenceCancelledError(
+          "Message persistence was invalidated"
+        );
+      }
+
+      const upsertResults = await Promise.allSettled([
+        ...this.activeMessageUpserts,
+      ]);
+      this.cancelMessageCheckpointTimer();
+      if (epoch !== this.persistenceEpoch) {
+        throw new MessagePersistenceCancelledError(
+          "Message persistence was invalidated"
+        );
+      }
+
+      await this.flushMessagesToFile();
+      const failedUpsert = upsertResults.find(
+        (result): result is PromiseRejectedResult =>
+          result.status === "rejected"
+      );
+      if (failedUpsert) throw failedUpsert.reason;
+    })();
+
+    const tracked = operation.finally(() => {
+      if (this.messageLifecycleFlushPromise === tracked) {
+        this.messageLifecycleFlushPromise = null;
+        this.messageLifecycleFlushEpoch = null;
+      }
+    });
+    this.messageLifecycleFlushPromise = tracked;
+    this.messageLifecycleFlushEpoch = epoch;
+    return tracked;
+  }
+
+  /**
+   * Invalidate old-account persistence synchronously before deleting files.
+   * An active writer can finish its temp write, but its epoch check cannot
+   * commit after this point.
+   */
+  private invalidateSessionData(): boolean {
+    this.persistenceEpoch++;
+    this.connectionAttemptGeneration++;
+    this.messageIngestionGeneration++;
+    this.cancelMessageCheckpointTimer();
+    this.messagesStore.clear();
+    this.messageIdIndex.clear();
+    this.currentMessageRevision = 0;
+    this.persistedMessageRevision = 0;
+    this.inFlightMessageRevision = 0;
+    this.authState = null;
+    return this.authHandler.clearSession();
+  }
+
   /** Schedule one checkpoint at a fixed deadline without resetting it. */
   private saveMessagesToFile(): void {
     if (
@@ -3843,9 +4034,11 @@ export class MiawClient extends EventEmitter {
     targetRevision: number,
     mode: MessageCheckpointMode
   ): Promise<void> {
+    const callerEpoch = this.persistenceEpoch;
     while (this.persistedMessageRevision < targetRevision) {
       let checkpoint = this.messageCheckpointPromise;
       let checkpointMode = this.messageCheckpointMode;
+      let checkpointEpoch = this.messageCheckpointEpoch;
       let ownsCheckpoint = false;
 
       if (!checkpoint) {
@@ -3855,23 +4048,33 @@ export class MiawClient extends EventEmitter {
         const epoch = this.persistenceEpoch;
         this.inFlightMessageRevision = checkpointRevision;
         this.messageCheckpointMode = mode;
+        this.messageCheckpointEpoch = epoch;
 
         const operation = this.writeMessageCheckpoint(payload, epoch);
         const tracked = operation.finally(() => {
           if (this.messageCheckpointPromise === tracked) {
             this.messageCheckpointPromise = null;
             this.messageCheckpointMode = null;
+            this.messageCheckpointEpoch = null;
             this.inFlightMessageRevision = 0;
           }
         });
         this.messageCheckpointPromise = tracked;
         checkpoint = tracked;
         checkpointMode = mode;
+        checkpointEpoch = epoch;
       }
 
       try {
         await checkpoint;
       } catch (error) {
+        if (
+          !ownsCheckpoint &&
+          callerEpoch === this.persistenceEpoch &&
+          checkpointEpoch !== callerEpoch
+        ) {
+          continue;
+        }
         if (error instanceof MessagePersistenceCancelledError) {
           throw error;
         }
@@ -7464,32 +7667,41 @@ export class MiawClient extends EventEmitter {
    * Use logout() if you want to fully log out and require a new QR code.
    */
   async disconnect(): Promise<void> {
+    this.connectionAttemptGeneration++;
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
+    const persistence = this.quiesceMessagePersistence();
+    const socket = this.socket;
+    if (socket) this.removeSocketEvents();
 
-    if (this.socket) {
-      // Use end() instead of logout() to preserve session
-      // logout() would clear credentials and require new QR scan
-      this.socket.end(undefined);
-      this.socket = null;
-    }
-
-    // Cleanup console filter if it was enabled (reference counted)
-    if (!this.options.debug) {
-      disableConsoleFilter();
-    }
-
-    this.updateConnectionState("disconnected");
-    this.logger.info("Disconnected (session preserved)");
-
-    // The `disconnected` event previously fired only from handleDisconnect(),
-    // i.e. for involuntary drops - so an explicit disconnect() silently skipped
-    // it even though the event is documented simply as "Client disconnected".
-    // The "intentional" reason lets listeners tell the two apart; nothing in
-    // the library reconnects in response to this event.
-    this.emit("disconnected", "intentional", undefined);
+    await this.settleMessageLifecycle(persistence, [
+      () => {
+        if (this.reconnectTimer) {
+          clearTimeout(this.reconnectTimer);
+          this.reconnectTimer = null;
+        }
+      },
+      () => {
+        if (socket && this.socket === socket) {
+          try {
+            // Use end() instead of logout() to preserve session.
+            socket.end(undefined);
+          } finally {
+            this.socket = null;
+          }
+        }
+      },
+      () => {
+        if (!this.options.debug) disableConsoleFilter();
+      },
+      () => this.updateConnectionState("disconnected"),
+      () => this.logger.info("Disconnected (session preserved)"),
+      // The "intentional" reason distinguishes explicit disconnects from
+      // involuntary drops; nothing in the library reconnects for this event.
+      () => this.emit("disconnected", "intentional", undefined),
+    ]);
   }
 
   /**
@@ -7508,6 +7720,7 @@ export class MiawClient extends EventEmitter {
   async logout(): Promise<void> {
     // Set flag to prevent auto-reconnect during logout
     this.loggingOut = true;
+    this.connectionAttemptGeneration++;
 
     // Clear any pending reconnection
     if (this.reconnectTimer) {
@@ -7537,7 +7750,7 @@ export class MiawClient extends EventEmitter {
 
     if (!jid) {
       this.logger.warn("No credentials found - cannot send logout request to server");
-      this.updateConnectionState("disconnected");
+      this.finishLocalLogout();
       return;
     }
 
@@ -7592,26 +7805,49 @@ export class MiawClient extends EventEmitter {
       }
     }
 
-    // Clean up socket
-    if (this.socket) {
-      this.removeSocketEvents();
-      this.socket.end(undefined);
-      this.socket = null;
-    }
+    this.finishLocalLogout();
+  }
 
-    // Clear session files
-    this.authHandler.clearSession();
+  private finishLocalLogout(): void {
+    let cleanupFailed = false;
+    let cleanupError: unknown;
+    const cleanup = (step: () => void) => {
+      try {
+        step();
+      } catch (error) {
+        if (!cleanupFailed) {
+          cleanupFailed = true;
+          cleanupError = error;
+        }
+      }
+    };
 
-    // Reset logout flag
-    this.loggingOut = false;
+    const socket = this.socket;
+    cleanup(() => {
+      if (socket) this.removeSocketEvents();
+    });
+    cleanup(() => {
+      if (socket && this.socket === socket) {
+        try {
+          socket.end(undefined);
+        } finally {
+          this.socket = null;
+        }
+      }
+    });
+    cleanup(() => {
+      this.invalidateSessionData();
+    });
+    cleanup(() => {
+      this.loggingOut = false;
+    });
+    cleanup(() => {
+      if (!this.options.debug) disableConsoleFilter();
+    });
+    cleanup(() => this.updateConnectionState("disconnected"));
+    cleanup(() => this.logger.info("Logged out (session cleared)"));
 
-    // Cleanup console filter if it was enabled (reference counted)
-    if (!this.options.debug) {
-      disableConsoleFilter();
-    }
-
-    this.updateConnectionState("disconnected");
-    this.logger.info("Logged out (session cleared)");
+    if (cleanupFailed) throw cleanupError;
   }
 
   /**

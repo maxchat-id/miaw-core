@@ -318,6 +318,33 @@ describe("message-store atomic checkpoints", () => {
       : [];
   }
 
+  function registerLifecycleSocket(client: any): {
+    emitUpsert: (...messages: RawMessage[]) => Promise<void>;
+    end: jest.Mock;
+  } {
+    const handlers: Record<string, (arg: any) => any> = {};
+    const end = jest.fn();
+    const removeAllListeners = jest.fn((event: string) => {
+      delete handlers[event];
+    });
+    client.socket = {
+      ev: {
+        on: (event: string, handler: (arg: any) => any) => {
+          handlers[event] = handler;
+        },
+        removeAllListeners,
+      },
+      end,
+    };
+    client.registerSocketEvents(async () => {});
+    const upsert = handlers["messages.upsert"];
+
+    return {
+      emitUpsert: (...messages) => upsert({ type: "notify", messages }),
+      end: end as unknown as jest.Mock,
+    };
+  }
+
   it("writes compact JSON atomically and reloads the same schema", async () => {
     const client = persistenceClient();
     store(client, "A");
@@ -712,5 +739,524 @@ describe("message-store atomic checkpoints", () => {
     expect(existsSync(unrelated)).toBe(true);
     expect(lstatSync(ownedDirectory).isDirectory()).toBe(true);
     expect(lstatSync(symlink).isSymbolicLink()).toBe(true);
+  });
+
+  it.each(["disconnect", "dispose"] as const)(
+    "%s waits for active LID resolution before persisting and closing",
+    async (method) => {
+      const client = persistenceClient();
+      const socket = registerLifecycleSocket(client);
+      let releaseResolution!: () => void;
+      let markResolutionStarted!: () => void;
+      const resolutionStarted = new Promise<void>((resolve) => {
+        markResolutionStarted = resolve;
+      });
+      const resolutionRelease = new Promise<void>((resolve) => {
+        releaseResolution = resolve;
+      });
+      jest
+        .spyOn(client, "resolvePnFromNativeStore")
+        .mockImplementation(async () => {
+          markResolutionStarted();
+          await resolutionRelease;
+          return "6281234567890@s.whatsapp.net";
+        });
+
+      const upsert = socket.emitUpsert({
+        ...textMessage("LIFECYCLE", 0),
+        key: {
+          id: "LIFECYCLE",
+          remoteJid: "123456789@lid",
+          fromMe: false,
+        },
+      });
+      await resolutionStarted;
+      let lifecycleResolved = false;
+      const lifecycle = client[method]().then(() => {
+        lifecycleResolved = true;
+      });
+      await Promise.resolve();
+      const waitedForResolution = !lifecycleResolved;
+      const wroteBeforeResolution = existsSync(messagesPath());
+
+      releaseResolution();
+      await Promise.all([upsert, lifecycle]);
+
+      expect(waitedForResolution).toBe(true);
+      expect(wroteBeforeResolution).toBe(false);
+      const stored = Object.values(
+        JSON.parse(readFileSync(messagesPath(), "utf8"))
+      )[0] as Array<{ id: string }>;
+      expect(stored.map((message) => message.id)).toEqual(["LIFECYCLE"]);
+      expect(socket.end).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it("tracks an upsert before a message listener can start disconnect", async () => {
+    const client = persistenceClient();
+    const socket = registerLifecycleSocket(client);
+    let releaseResolution!: () => void;
+    let markResolutionStarted!: () => void;
+    const resolutionStarted = new Promise<void>((resolve) => {
+      markResolutionStarted = resolve;
+    });
+    const resolutionRelease = new Promise<void>((resolve) => {
+      releaseResolution = resolve;
+    });
+    jest
+      .spyOn(client, "resolvePnFromNativeStore")
+      .mockImplementation(async () => {
+        markResolutionStarted();
+        await resolutionRelease;
+        return "6281234567890@s.whatsapp.net";
+      });
+    jest.spyOn(client, "flushMessagesToFile").mockResolvedValue(undefined);
+    let disconnecting!: Promise<void>;
+    client.on("message", (message: { id: string }) => {
+      if (message.id === "FIRST") disconnecting = client.disconnect();
+    });
+
+    const upsert = socket.emitUpsert(
+      textMessage("FIRST", 0),
+      {
+        ...textMessage("SECOND", 0),
+        key: {
+          id: "SECOND",
+          remoteJid: "123456789@lid",
+          fromMe: false,
+        },
+      }
+    );
+    await resolutionStarted;
+    let disconnected = false;
+    void disconnecting.then(() => {
+      disconnected = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const waitedForWholeBatch = !disconnected;
+
+    releaseResolution();
+    await Promise.all([upsert, disconnecting]);
+
+    expect(waitedForWholeBatch).toBe(true);
+    expect(client.currentMessageRevision).toBe(2);
+    expect(socket.end).toHaveBeenCalledTimes(1);
+  });
+
+  it("cancels reconnect scheduling before waiting for persistence", async () => {
+    jest.useFakeTimers();
+    const client = persistenceClient();
+    registerLifecycleSocket(client);
+    client.connectionState = "reconnecting";
+    const connect = jest.spyOn(client, "connect").mockResolvedValue(undefined);
+    let releaseFlush!: () => void;
+    const flushRelease = new Promise<void>((resolve) => {
+      releaseFlush = resolve;
+    });
+    jest
+      .spyOn(client, "flushMessagesToFile")
+      .mockImplementation(() => flushRelease);
+    client.reconnectTimer = setTimeout(() => {
+      void client.connect();
+    }, 100);
+
+    const disconnecting = client.disconnect();
+    await jest.advanceTimersByTimeAsync(100);
+
+    expect(connect).not.toHaveBeenCalled();
+    releaseFlush();
+    await disconnecting;
+  });
+
+  it.each(["disconnect", "dispose"] as const)(
+    "%s tears down the socket when lifecycle persistence exhausts retries",
+    async (method) => {
+      const client = persistenceClient();
+      const socket = registerLifecycleSocket(client);
+      store(client, "DIRTY", true);
+      jest
+        .spyOn(client, "waitForMessageCheckpointRetry")
+        .mockResolvedValue(undefined);
+      jest
+        .spyOn(client, "writeMessagesSnapshot")
+        .mockRejectedValue(new Error("lifecycle persistence failed"));
+      socket.end.mockImplementation(() => {
+        throw new Error("socket cleanup failed");
+      });
+
+      await expect(client[method]()).rejects.toThrow(
+        "lifecycle persistence failed"
+      );
+
+      expect(socket.end).toHaveBeenCalledTimes(1);
+      expect(client.socket).toBeNull();
+      expect(client.connectionState).toBe("disconnected");
+    }
+  );
+
+  it("blocks reconnect hydration behind dirty persistence", async () => {
+    const client = persistenceClient();
+    client.options.autoReconnect = false;
+    client.on("error", () => {});
+    store(client, "NEWER");
+    let releaseFlush!: () => void;
+    let markFlushStarted!: () => void;
+    const flushStarted = new Promise<void>((resolve) => {
+      markFlushStarted = resolve;
+    });
+    const flushRelease = new Promise<void>((resolve) => {
+      releaseFlush = resolve;
+    });
+    jest.spyOn(client, "flushMessagesToFile").mockImplementation(async () => {
+      markFlushStarted();
+      await flushRelease;
+    });
+    const load = jest
+      .spyOn(client, "loadMessagesFromFile")
+      .mockImplementation(() => {});
+
+    const connecting = client.connect();
+    await Promise.race([
+      flushStarted,
+      new Promise<void>((resolve) => setImmediate(resolve)),
+    ]);
+    const flushStartedBeforeLoad =
+      client.flushMessagesToFile.mock.calls.length === 1 &&
+      load.mock.calls.length === 0;
+
+    releaseFlush();
+    await connecting;
+    expect(flushStartedBeforeLoad).toBe(true);
+    expect(load).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["disconnect", "dispose"] as const)(
+    "lets %s cancel an in-flight connect before it creates a socket",
+    async (method) => {
+      const client = persistenceClient();
+      let resolveInitialize!: (value: unknown) => void;
+      let markInitializeStarted!: () => void;
+      const initializeStarted = new Promise<void>((resolve) => {
+        markInitializeStarted = resolve;
+      });
+      jest.spyOn(client.authHandler, "initialize").mockImplementation(() => {
+        markInitializeStarted();
+        return new Promise((resolve) => {
+          resolveInitialize = resolve;
+        });
+      });
+      const version = jest.spyOn(client, "resolveWAVersion");
+      const logError = jest.spyOn(client.logger, "error");
+      const reconnect = jest.spyOn(client, "scheduleReconnect");
+
+      const connecting = client.connect();
+      await initializeStarted;
+      await client[method]();
+      resolveInitialize({
+        state: { creds: {}, keys: {} },
+        saveCreds: async () => {},
+      });
+
+      await expect(connecting).resolves.toBeUndefined();
+      expect(version).not.toHaveBeenCalled();
+      expect(logError).not.toHaveBeenCalled();
+      expect(reconnect).not.toHaveBeenCalled();
+      expect(client.connectionState).toBe("disconnected");
+    }
+  );
+
+  it("lets a new epoch checkpoint replace a cancelled old writer", async () => {
+    const client = persistenceClient();
+    store(client, "OLD");
+    let releaseWrite!: () => void;
+    let markWriteStarted!: () => void;
+    const writeStarted = new Promise<void>((resolve) => {
+      markWriteStarted = resolve;
+    });
+    const writeRelease = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    const originalWrite = client.writeMessagesSnapshot.bind(client);
+    jest
+      .spyOn(client, "writeMessagesSnapshot")
+      .mockImplementationOnce(async (...args: unknown[]) => {
+        markWriteStarted();
+        await writeRelease;
+        await originalWrite(...(args as [string, string]));
+      });
+
+    const oldFlush = client.flushMessagesToFile();
+    await writeStarted;
+    client.clearSession();
+    store(client, "NEW");
+    const newFlush = client.flushMessagesToFile();
+    releaseWrite();
+
+    await expect(oldFlush).rejects.toThrow(
+      "Message persistence was invalidated"
+    );
+    await newFlush;
+    const stored = Object.values(
+      JSON.parse(readFileSync(messagesPath(), "utf8"))
+    )[0] as Array<{ id: string }>;
+    expect(stored.map((message) => message.id)).toEqual(["NEW"]);
+    expect(client.messagesStore.size).toBe(1);
+    expect(client.messageIdIndex.size).toBe(1);
+    expect(client.currentMessageRevision).toBe(1);
+    expect(client.persistedMessageRevision).toBe(1);
+  });
+
+  it("waits for an invalidated writer before reconnect hydration", async () => {
+    const client = persistenceClient();
+    client.options.autoReconnect = false;
+    client.on("error", () => {});
+    store(client, "OLD");
+    let releaseWrite!: () => void;
+    let markWriteStarted!: () => void;
+    const writeStarted = new Promise<void>((resolve) => {
+      markWriteStarted = resolve;
+    });
+    const writeRelease = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    const originalWrite = client.writeMessagesSnapshot.bind(client);
+    jest
+      .spyOn(client, "writeMessagesSnapshot")
+      .mockImplementationOnce(async (...args: unknown[]) => {
+        markWriteStarted();
+        await writeRelease;
+        await originalWrite(...(args as [string, string]));
+      });
+
+    const oldFlush = client.flushMessagesToFile();
+    await writeStarted;
+    client.clearSession();
+    const load = jest
+      .spyOn(client, "loadMessagesFromFile")
+      .mockImplementation(() => {});
+    const connecting = client.connect();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const loadedBeforeSettlement = load.mock.calls.length > 0;
+
+    releaseWrite();
+    await expect(oldFlush).rejects.toThrow(
+      "Message persistence was invalidated"
+    );
+    await connecting;
+
+    expect(loadedBeforeSettlement).toBe(false);
+    expect(load).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops the rest of an upsert batch after reentrant session clearing", async () => {
+    const client = persistenceClient();
+    const socket = registerLifecycleSocket(client);
+    client.on("message", (message: { id: string }) => {
+      if (message.id === "FIRST") client.clearSession();
+    });
+
+    await socket.emitUpsert(
+      textMessage("FIRST", 0),
+      textMessage("SECOND", 0)
+    );
+
+    expect(client.messagesStore.size).toBe(0);
+    expect(client.messageIdIndex.size).toBe(0);
+    expect(client.currentMessageRevision).toBe(0);
+    expect(existsSync(messagesPath())).toBe(false);
+  });
+
+  it("does not persist native LID resolution after session invalidation", async () => {
+    const client = persistenceClient();
+    const socket = registerLifecycleSocket(client);
+    let releaseResolution!: () => void;
+    let markResolutionStarted!: () => void;
+    const resolutionStarted = new Promise<void>((resolve) => {
+      markResolutionStarted = resolve;
+    });
+    const resolutionRelease = new Promise<void>((resolve) => {
+      releaseResolution = resolve;
+    });
+    client.socket.signalRepository = {
+      lidMapping: {
+        getPNForLID: jest.fn(async () => {
+          markResolutionStarted();
+          await resolutionRelease;
+          return "6281234567890:0@s.whatsapp.net";
+        }),
+      },
+    };
+    const addMapping = jest.spyOn(client, "addLidMapping");
+
+    const upsert = socket.emitUpsert({
+      ...textMessage("OLD-LID", 0),
+      key: {
+        id: "OLD-LID",
+        remoteJid: "123456789@lid",
+        fromMe: false,
+      },
+    });
+    await resolutionStarted;
+    client.clearSession();
+    releaseResolution();
+    await upsert;
+
+    expect(addMapping).not.toHaveBeenCalled();
+    expect(client.messagesStore.size).toBe(0);
+    expect(existsSync(messagesPath())).toBe(false);
+  });
+
+  it("drops an active old-account upsert when the session is cleared", async () => {
+    const client = persistenceClient();
+    const socket = registerLifecycleSocket(client);
+    let releaseResolution!: () => void;
+    let markResolutionStarted!: () => void;
+    const resolutionStarted = new Promise<void>((resolve) => {
+      markResolutionStarted = resolve;
+    });
+    const resolutionRelease = new Promise<void>((resolve) => {
+      releaseResolution = resolve;
+    });
+    jest
+      .spyOn(client, "resolvePnFromNativeStore")
+      .mockImplementation(async () => {
+        markResolutionStarted();
+        await resolutionRelease;
+        return "6281234567890@s.whatsapp.net";
+      });
+
+    const upsert = socket.emitUpsert({
+      ...textMessage("OLD-IN-FLIGHT", 0),
+      key: {
+        id: "OLD-IN-FLIGHT",
+        remoteJid: "123456789@lid",
+        fromMe: false,
+      },
+    });
+    await resolutionStarted;
+    client.clearSession();
+    releaseResolution();
+    await upsert;
+
+    expect(client.messagesStore.size).toBe(0);
+    expect(client.currentMessageRevision).toBe(0);
+    expect(existsSync(messagesPath())).toBe(false);
+  });
+
+  it("removes a checkpoint when session clearing follows its commit", async () => {
+    const client = persistenceClient();
+    store(client, "OLD");
+
+    await client.flushMessagesToFile();
+    expect(existsSync(messagesPath())).toBe(true);
+
+    client.clearSession();
+
+    expect(existsSync(messagesPath())).toBe(false);
+    expect(client.messagesStore.size).toBe(0);
+    expect(client.currentMessageRevision).toBe(0);
+    expect(client.persistedMessageRevision).toBe(0);
+  });
+
+  it("clears local session state when logout has no credentials", async () => {
+    const client = persistenceClient();
+    store(client, "OLD");
+    const clear = jest.spyOn(client.authHandler, "clearSession");
+
+    await client.logout();
+
+    expect(clear).toHaveBeenCalledTimes(1);
+    expect(client.messagesStore.size).toBe(0);
+    expect(client.messageIdIndex.size).toBe(0);
+    expect(client.currentMessageRevision).toBe(0);
+  });
+
+  it("clears session state even when logout socket cleanup throws", async () => {
+    const client = persistenceClient();
+    const socket = registerLifecycleSocket(client);
+    store(client, "OLD", true);
+    socket.end.mockImplementation(() => {
+      throw new Error("logout socket cleanup failed");
+    });
+    const clear = jest.spyOn(client.authHandler, "clearSession");
+
+    await expect(client.logout()).rejects.toThrow(
+      "logout socket cleanup failed"
+    );
+
+    expect(clear).toHaveBeenCalledTimes(1);
+    expect(client.socket).toBeNull();
+    expect(client.messagesStore.size).toBe(0);
+    expect(client.messageIdIndex.size).toBe(0);
+    expect(client.currentMessageRevision).toBe(0);
+  });
+
+  it("shares one persistence barrier across disconnect and dispose", async () => {
+    const client = persistenceClient();
+    const socket = registerLifecycleSocket(client);
+    store(client, "DIRTY");
+    let releaseWrite!: () => void;
+    let markWriteStarted!: () => void;
+    const writeStarted = new Promise<void>((resolve) => {
+      markWriteStarted = resolve;
+    });
+    const writeRelease = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    const originalWrite = client.writeMessagesSnapshot.bind(client);
+    const write = jest
+      .spyOn(client, "writeMessagesSnapshot")
+      .mockImplementation(async (...args: unknown[]) => {
+        markWriteStarted();
+        await writeRelease;
+        await originalWrite(...(args as [string, string]));
+      });
+
+    const disconnecting = client.disconnect();
+    await writeStarted;
+    const disposing = client.dispose();
+    releaseWrite();
+    await Promise.all([disconnecting, disposing]);
+
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(socket.end).toHaveBeenCalledTimes(1);
+    expect(client.persistedMessageRevision).toBe(1);
+  });
+
+  it("memoizes dispose while lifecycle persistence is active", async () => {
+    const client = persistenceClient();
+    const socket = registerLifecycleSocket(client);
+    store(client, "DIRTY");
+    let releaseFlush!: () => void;
+    let markFlushStarted!: () => void;
+    const flushStarted = new Promise<void>((resolve) => {
+      markFlushStarted = resolve;
+    });
+    const flushRelease = new Promise<void>((resolve) => {
+      releaseFlush = resolve;
+    });
+    const flush = jest
+      .spyOn(client, "flushMessagesToFile")
+      .mockImplementation(async () => {
+        markFlushStarted();
+        await flushRelease;
+      });
+
+    const first = client.dispose();
+    const second = client.dispose();
+    await Promise.race([
+      flushStarted,
+      new Promise<void>((resolve) => setImmediate(resolve)),
+    ]);
+    const sharedPromise = first === second;
+    const flushCallsWhileActive = flush.mock.calls.length;
+
+    releaseFlush();
+    await Promise.all([first, second]);
+    expect(sharedPromise).toBe(true);
+    expect(flushCallsWhileActive).toBe(1);
+    await client.dispose();
+    expect(flush).toHaveBeenCalledTimes(1);
+    expect(socket.end).toHaveBeenCalledTimes(1);
   });
 });
