@@ -9,6 +9,7 @@ import {
   PresenceStatus,
   type MiawClientOptions,
   type MiawMessage,
+  type MiawMessageButton,
   type SendMessageResult,
   type CheckNumberResult,
   type MediaInfo,
@@ -125,6 +126,13 @@ describe("Type Guards and Validation", () => {
 
   describe("MiawMessage", () => {
     it("should create a valid text message", () => {
+      const buttons: MiawMessageButton[] = [
+        {
+          type: "URL",
+          text: "Open",
+          value: "https://example.invalid/open",
+        },
+      ];
       const message: MiawMessage = {
         id: "msg123",
         from: "1234567890@s.whatsapp.net",
@@ -135,10 +143,12 @@ describe("Type Guards and Validation", () => {
         isGroup: false,
         fromMe: false,
         type: "text",
+        buttons,
       };
       expect(message.id).toBe("msg123");
       expect(message.type).toBe("text");
       expect(message.text).toBe("Hello World");
+      expect(message.buttons).toEqual(buttons);
     });
 
     it("should create a valid image message", () => {

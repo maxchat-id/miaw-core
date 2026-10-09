@@ -1,4 +1,8 @@
-import { MiawMessage, MediaInfo } from "../types/index.js";
+import {
+  MiawMessage,
+  MiawMessageButton,
+  MediaInfo,
+} from "../types/index.js";
 import type { MiawLogger } from "../types/logger.js";
 import {
   BaileysMessageUpsert,
@@ -76,6 +80,9 @@ export class MessageHandler {
       const businessText = actualMessage
         ? this.extractBusinessMessageText(actualMessage)
         : undefined;
+      const buttons = actualMessage
+        ? this.extractBusinessMessageButtons(actualMessage)
+        : undefined;
 
       if (actualMessage?.conversation) {
         text = actualMessage.conversation;
@@ -126,6 +133,7 @@ export class MessageHandler {
         type,
         media,
         quotedMessageId: MessageHandler.extractQuotedId(actualMessage),
+        ...(buttons && { buttons }),
         raw: message,
       };
 
@@ -162,6 +170,60 @@ export class MessageHandler {
         hydrated?.hydratedFooterText,
       ]) ?? this.extractInteractiveText(message?.interactiveMessageTemplate)
     );
+  }
+
+  private static extractBusinessMessageButtons(
+    message: BaileysMessageContent
+  ): MiawMessageButton[] | undefined {
+    const template = message.templateMessage;
+    const hydrated =
+      template?.hydratedTemplate ?? template?.hydratedFourRowTemplate;
+    const buttons = hydrated?.hydratedButtons
+      ?.map((button): MiawMessageButton | undefined => {
+        if (!button) {
+          return undefined;
+        }
+        if (button.quickReplyButton) {
+          return this.buildMessageButton(
+            "QUICK_REPLY",
+            button.quickReplyButton.displayText,
+            button.quickReplyButton.id
+          );
+        }
+        if (button.urlButton) {
+          return this.buildMessageButton(
+            "URL",
+            button.urlButton.displayText,
+            button.urlButton.url
+          );
+        }
+        if (button.callButton) {
+          return this.buildMessageButton(
+            "PHONE",
+            button.callButton.displayText,
+            button.callButton.phoneNumber
+          );
+        }
+        return undefined;
+      })
+      .filter((button): button is MiawMessageButton => button !== undefined);
+
+    return buttons?.length ? buttons : undefined;
+  }
+
+  private static buildMessageButton(
+    type: MiawMessageButton["type"],
+    text: unknown,
+    value: unknown
+  ): MiawMessageButton | undefined {
+    if (typeof text !== "string" || typeof value !== "string") {
+      return undefined;
+    }
+
+    const normalizedText = text.trim();
+    return normalizedText && value.trim()
+      ? { type, text: normalizedText, value }
+      : undefined;
   }
 
   private static extractInteractiveText(

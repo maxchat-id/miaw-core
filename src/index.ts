@@ -11,6 +11,7 @@ export type {
   MiawClientOptions,
   RuntimeOptions,
   MiawMessage,
+  MiawMessageButton,
   MediaInfo,
   ConnectionState,
   SendTextOptions,

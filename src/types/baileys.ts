@@ -107,10 +107,27 @@ export interface BaileysInteractiveMessage {
   };
 }
 
+export interface BaileysHydratedButton {
+  index?: number;
+  quickReplyButton?: {
+    displayText?: string;
+    id?: string;
+  };
+  urlButton?: {
+    displayText?: string;
+    url?: string;
+  };
+  callButton?: {
+    displayText?: string;
+    phoneNumber?: string;
+  };
+}
+
 export interface BaileysHydratedTemplate {
   hydratedTitleText?: string;
   hydratedContentText?: string;
   hydratedFooterText?: string;
+  hydratedButtons?: BaileysHydratedButton[];
 }
 
 export interface BaileysTemplateMessage {

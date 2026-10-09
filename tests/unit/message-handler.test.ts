@@ -202,6 +202,7 @@ describe("MessageHandler", () => {
       expect(result?.senderName).toBe("John Doe");
       expect(result?.text).toBe("Hello World");
       expect(result?.type).toBe("text");
+      expect(result?.buttons).toBeUndefined();
       expect(result?.isGroup).toBe(false);
       expect(result?.fromMe).toBe(false);
       expect(result?.timestamp).toBe(1234567890);
@@ -242,6 +243,53 @@ describe("MessageHandler", () => {
         businessMessageFixtures._meta.expectedText.templateMessage
       );
       expect(result?.raw).toBe(businessMessageFixtures.templateMessage);
+      expect(result?.buttons).toEqual([
+        {
+          type: "URL",
+          text: "Fixture action",
+          value: "https://example.invalid/media",
+        },
+      ]);
+    });
+
+    it("should normalize and filter hydrated template button types", () => {
+      const raw = structuredClone(businessMessageFixtures.templateMessage);
+      raw.message.templateMessage.hydratedTemplate.hydratedButtons = [
+        {
+          index: 0,
+          quickReplyButton: { displayText: " Reply ", id: " reply-id " },
+        },
+        {
+          index: 1,
+          urlButton: {
+            displayText: "Open",
+            url: "https://example.invalid/open",
+          },
+        },
+        {
+          index: 2,
+          callButton: { displayText: "Call", phoneNumber: "15550000000" },
+        },
+        { index: 3, quickReplyButton: { displayText: "", id: "empty" } },
+        { index: 4, urlButton: { displayText: "Missing URL" } },
+        null,
+      ];
+      delete raw.message.templateMessage.hydratedFourRowTemplate;
+
+      const result = MessageHandler.normalize({
+        messages: [raw],
+        type: "notify",
+      });
+
+      expect(result?.buttons).toEqual([
+        { type: "QUICK_REPLY", text: "Reply", value: " reply-id " },
+        {
+          type: "URL",
+          text: "Open",
+          value: "https://example.invalid/open",
+        },
+        { type: "PHONE", text: "Call", value: "15550000000" },
+      ]);
     });
 
     it("should normalize production-derived interactive message text", () => {

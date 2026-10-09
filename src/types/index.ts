@@ -154,6 +154,13 @@ export interface MediaInfo {
   viewOnce?: boolean;
 }
 
+/** A visible action attached to a normalized business template message. */
+export interface MiawMessageButton {
+  type: "QUICK_REPLY" | "URL" | "PHONE";
+  text: string;
+  value: string;
+}
+
 /**
  * Normalized message structure - simplified from Baileys
  */
@@ -210,6 +217,9 @@ export interface MiawMessage {
 
   /** Id of the quoted (replied-to) message, if this message is a reply */
   quotedMessageId?: string;
+
+  /** Visible actions attached to a business template message */
+  buttons?: MiawMessageButton[];
 
   /** Original raw message from Baileys (for advanced use) */
   raw?: any;
