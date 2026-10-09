@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Message history now persists through compact, asynchronous, atomic checkpoints
+  instead of rewriting the full store synchronously for every live message.
+  Bursts coalesce behind a fixed one-second deadline, large snapshots yield to
+  the event loop, and graceful `disconnect()` / `dispose()` flush the latest
+  revision. `SIGKILL` or host power loss can still lose changes since the last
+  completed checkpoint; the previous checkpoint remains valid.
+
 ## [1.11.0] - 2026-08-15
 
 **Runtime-tunable options, own-send and receipt events.** All additive; no

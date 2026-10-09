@@ -348,10 +348,21 @@ describe("message-store atomic checkpoints", () => {
   it("writes compact JSON atomically and reloads the same schema", async () => {
     const client = persistenceClient();
     store(client, "A");
+    const stored = client.messagesStore.values().next().value[0];
+    stored.raw = {
+      optional: undefined,
+      nonFinite: Number.NaN,
+      bytes: Buffer.from("payload"),
+    };
+    stored.toJSON = function (key: string) {
+      return { ...this, serializedArrayIndex: key };
+    };
+    const expectedPayload = JSON.stringify(Object.fromEntries(client.messagesStore));
 
     await client.flushMessagesToFile();
 
     const payload = readFileSync(messagesPath(), "utf8");
+    expect(payload).toBe(expectedPayload);
     expect(payload).not.toContain("\n");
     expect(Object.values(JSON.parse(payload))[0]).toHaveLength(1);
     expect(ownedTemps()).toEqual([]);
@@ -366,6 +377,86 @@ describe("message-store atomic checkpoints", () => {
       success: true,
       messages: [{ id: "A", text: "payload-A" }],
     });
+  });
+
+  it("yields while serializing large revision snapshots", async () => {
+    const client = persistenceClient();
+    for (let index = 0; index <= 100; index++) {
+      store(client, `BATCH-${index}`);
+    }
+    const firstMessage = client.messagesStore.values().next().value[100];
+    firstMessage.raw = { message: {}, pollUpdates: [] };
+
+    let releaseSerialization!: () => void;
+    let markSerializationYielded!: () => void;
+    const serializationYielded = new Promise<void>((resolve) => {
+      markSerializationYielded = resolve;
+    });
+    const serializationRelease = new Promise<void>((resolve) => {
+      releaseSerialization = resolve;
+    });
+    const wait = jest
+      .spyOn(client, "waitForMessageSerializationTurn")
+      .mockImplementationOnce(async () => {
+        markSerializationYielded();
+        await serializationRelease;
+      });
+    const write = jest.spyOn(client, "writeMessagesSnapshot");
+
+    const firstFlush = client.flushMessagesToFile();
+    await serializationYielded;
+    const bucket = client.messagesStore.values().next().value;
+    bucket[100] = {
+      ...firstMessage,
+      raw: { ...firstMessage.raw, pollUpdates: [{ vote: "LATER" }] },
+    };
+    store(client, "LATER");
+    const laterFlush = client.flushMessagesToFile();
+    releaseSerialization();
+    await Promise.all([firstFlush, laterFlush]);
+
+    expect(wait).toHaveBeenCalled();
+    expect(write).toHaveBeenCalledTimes(2);
+    expect(write.mock.calls[0][1]).not.toContain("LATER");
+    expect(write.mock.calls[1][1]).toContain("LATER");
+    expect(write.mock.calls[0][1]).not.toContain('"vote"');
+    expect(write.mock.calls[1][1]).toContain('"vote":"LATER"');
+    const stored = Object.values(
+      JSON.parse(readFileSync(messagesPath(), "utf8"))
+    )[0] as Array<{ id: string }>;
+    expect(stored).toHaveLength(102);
+  });
+
+  it("stops an invalidated checkpoint during cooperative serialization", async () => {
+    const client = persistenceClient();
+    for (let index = 0; index <= 100; index++) {
+      store(client, `CANCEL-${index}`);
+    }
+
+    let releaseSerialization!: () => void;
+    let markSerializationYielded!: () => void;
+    const serializationYielded = new Promise<void>((resolve) => {
+      markSerializationYielded = resolve;
+    });
+    const serializationRelease = new Promise<void>((resolve) => {
+      releaseSerialization = resolve;
+    });
+    jest
+      .spyOn(client, "waitForMessageSerializationTurn")
+      .mockImplementationOnce(async () => {
+        markSerializationYielded();
+        await serializationRelease;
+      });
+    const write = jest.spyOn(client, "writeMessagesSnapshot");
+
+    const flush = client.flushMessagesToFile();
+    await serializationYielded;
+    client.clearSession();
+    releaseSerialization();
+
+    await expect(flush).rejects.toThrow("Message persistence was invalidated");
+    expect(write).not.toHaveBeenCalled();
+    expect(existsSync(messagesPath())).toBe(false);
   });
 
   it("shares one physical write across concurrent flush callers", async () => {

@@ -213,6 +213,7 @@ class LruCache {
  */
 type StoreMessageResult = "inserted" | "upgraded" | "duplicate";
 type MessageCheckpointMode = "timer" | "lifecycle";
+type MessageStoreSnapshot = Record<string, MiawMessage[]>;
 
 class MessagePersistenceCancelledError extends Error {}
 
@@ -226,6 +227,7 @@ export class MiawClient extends EventEmitter {
     "E2E_ENCRYPTED_NOW",
   ]);
   private static readonly MESSAGE_CHECKPOINT_RETRY_DELAYS = [250, 1000] as const;
+  private static readonly MESSAGE_SERIALIZATION_BATCH_SIZE = 50;
   private options: Required<Omit<MiawClientOptions, "proxy" | "agent" | "fetchAgent" | "usePairingCode" | "phoneNumber" | "browser">> & Pick<MiawClientOptions, "proxy" | "agent" | "fetchAgent" | "usePairingCode" | "phoneNumber" | "browser">;
   private socket: WASocket | null = null;
   private authHandler: AuthHandler;
@@ -2408,17 +2410,26 @@ export class MiawClient extends EventEmitter {
     }
 
     // Find the original poll-creation message we stored.
-    const stored = (this.messagesStore.get(chatId) || []).find(
-      (m) => m.id === pollMessageId || m.raw?.key?.id === pollMessageId
+    const bucket = this.messagesStore.get(chatId) || [];
+    const storedIndex = bucket.findIndex(
+      (message) =>
+        message.id === pollMessageId || message.raw?.key?.id === pollMessageId
     );
+    const stored = bucket[storedIndex];
     if (!stored?.raw?.message) {
       return;
     }
 
-    // Accumulate incoming vote updates onto the stored message (in-memory) so
-    // the aggregate reflects the running tally across multiple update events.
-    const raw = stored.raw;
-    raw.pollUpdates = [...(raw.pollUpdates || []), ...pollUpdates];
+    // Replace rather than mutate the stored object so an active checkpoint's
+    // revision snapshot cannot change underneath cooperative serialization.
+    const raw = Object.assign(
+      Object.create(Object.getPrototypeOf(stored.raw)),
+      stored.raw,
+      { pollUpdates: [...(stored.raw.pollUpdates || []), ...pollUpdates] }
+    );
+    bucket[storedIndex] = { ...stored, raw };
+    this.currentMessageRevision++;
+    this.saveMessagesToFile();
 
     const aggregated = getAggregateVotesInPollMessage(
       { message: raw.message, pollUpdates: raw.pollUpdates },
@@ -4044,13 +4055,15 @@ export class MiawClient extends EventEmitter {
       if (!checkpoint) {
         ownsCheckpoint = true;
         const checkpointRevision = this.currentMessageRevision;
-        const payload = this.serializeMessagesStore();
+        const snapshot = this.captureMessagesStoreSnapshot();
         const epoch = this.persistenceEpoch;
         this.inFlightMessageRevision = checkpointRevision;
         this.messageCheckpointMode = mode;
         this.messageCheckpointEpoch = epoch;
 
-        const operation = this.writeMessageCheckpoint(payload, epoch);
+        const operation = this.serializeMessagesStore(snapshot, epoch).then(
+          (payload) => this.writeMessageCheckpoint(payload, epoch)
+        );
         const tracked = operation.finally(() => {
           if (this.messageCheckpointPromise === tracked) {
             this.messageCheckpointPromise = null;
@@ -4091,12 +4104,73 @@ export class MiawClient extends EventEmitter {
     }
   }
 
-  private serializeMessagesStore(): string {
-    const messagesData: Record<string, MiawMessage[]> = {};
+  private captureMessagesStoreSnapshot(): MessageStoreSnapshot {
+    const snapshot: MessageStoreSnapshot = {};
     for (const [jid, messages] of this.messagesStore) {
-      messagesData[jid] = messages;
+      snapshot[jid] = [...messages];
     }
-    return JSON.stringify(messagesData);
+    return snapshot;
+  }
+
+  private async serializeMessagesStore(
+    snapshot: MessageStoreSnapshot,
+    epoch: number
+  ): Promise<string> {
+    if (epoch !== this.persistenceEpoch) {
+      throw new MessagePersistenceCancelledError(
+        "Message persistence was invalidated"
+      );
+    }
+
+    const parts = ["{"];
+    let serializedMessages = 0;
+    let chatIndex = 0;
+
+    for (const [jid, messages] of Object.entries(snapshot)) {
+      if (chatIndex > 0) parts.push(",");
+      parts.push(JSON.stringify(jid), ":[");
+
+      for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
+        if (
+          serializedMessages > 0 &&
+          serializedMessages % MiawClient.MESSAGE_SERIALIZATION_BATCH_SIZE ===
+            0
+        ) {
+          await this.waitForMessageSerializationTurn();
+          if (epoch !== this.persistenceEpoch) {
+            throw new MessagePersistenceCancelledError(
+              "Message persistence was invalidated"
+            );
+          }
+        }
+
+        if (messageIndex > 0) parts.push(",");
+        parts.push(
+          this.serializeMessageArrayElement(messages[messageIndex], messageIndex)
+        );
+        serializedMessages++;
+      }
+
+      parts.push("]");
+      chatIndex++;
+    }
+
+    parts.push("}");
+    return parts.join("");
+  }
+
+  private serializeMessageArrayElement(
+    message: MiawMessage,
+    messageIndex: number
+  ): string {
+    const key = String(messageIndex);
+    const prefix = `{${JSON.stringify(key)}:`;
+    const wrapped = JSON.stringify({ [key]: message });
+    return wrapped === "{}" ? "null" : wrapped.slice(prefix.length, -1);
+  }
+
+  private waitForMessageSerializationTurn(): Promise<void> {
+    return new Promise((resolve) => setImmediate(resolve));
   }
 
   private async writeMessageCheckpoint(
