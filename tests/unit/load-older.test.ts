@@ -549,7 +549,7 @@ describe("store writes", () => {
     expect(ctx.save).toHaveBeenCalledTimes(1);
   });
 
-  it("still writes once per live message", async () => {
+  it("routes each changed live message through the scheduler", async () => {
     const ctx = makeClient();
     await ctx.emitUpsert(textMsg("L1", PN, 3000));
     await ctx.emitUpsert(textMsg("L2", PN, 3001));

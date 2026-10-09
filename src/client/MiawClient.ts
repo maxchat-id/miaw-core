@@ -105,6 +105,7 @@ import {
 } from "../types/index.js";
 import * as path from "node:path";
 import * as fs from "node:fs";
+import { randomUUID } from "node:crypto";
 import { AuthHandler } from "../handlers/AuthHandler.js";
 import { MessageHandler } from "../handlers/MessageHandler.js";
 import { TIMEOUTS, THRESHOLDS } from "../constants/timeouts.js";
@@ -211,6 +212,9 @@ class LruCache {
  * Main client class for interacting with WhatsApp
  */
 type StoreMessageResult = "inserted" | "upgraded" | "duplicate";
+type MessageCheckpointMode = "timer" | "lifecycle";
+
+class MessagePersistenceCancelledError extends Error {}
 
 export class MiawClient extends EventEmitter {
   private static readonly PLACEHOLDER_STUB_TYPES = new Set<unknown>([
@@ -221,6 +225,7 @@ export class MiawClient extends EventEmitter {
     "E2E_ENCRYPTED",
     "E2E_ENCRYPTED_NOW",
   ]);
+  private static readonly MESSAGE_CHECKPOINT_RETRY_DELAYS = [250, 1000] as const;
   private options: Required<Omit<MiawClientOptions, "proxy" | "agent" | "fetchAgent" | "usePairingCode" | "phoneNumber" | "browser">> & Pick<MiawClientOptions, "proxy" | "agent" | "fetchAgent" | "usePairingCode" | "phoneNumber" | "browser">;
   private socket: WASocket | null = null;
   private authHandler: AuthHandler;
@@ -246,6 +251,15 @@ export class MiawClient extends EventEmitter {
   private contactsStore: Map<string, ContactInfo> = new Map();
   private chatsStore: Map<string, ChatInfo> = new Map();
   private messagesStore: Map<string, MiawMessage[]> = new Map();
+  private messageIdIndex: Map<string, Map<string, number>> = new Map();
+  private currentMessageRevision = 0;
+  private persistedMessageRevision = 0;
+  private inFlightMessageRevision = 0;
+  private messageCheckpointPromise: Promise<void> | null = null;
+  private messageCheckpointMode: MessageCheckpointMode | null = null;
+  private messageCheckpointTimer: NodeJS.Timeout | null = null;
+  private persistenceEpoch = 0;
+  private activeMessageTempPaths = new Set<string>();
   private labelsStore: Map<string, Label> = new Map();
   // Store label-chat associations (labelId -> Set of chatJids)
   private labelChatsStore: Map<string, Set<string>> = new Map();
@@ -1767,6 +1781,7 @@ export class MiawClient extends EventEmitter {
         this.updateConnectionState("disconnected");
       }
     }, this.options.stuckStateTimeout);
+    this.connectionWatchdogTimer.unref();
   }
 
   /**
@@ -3716,20 +3731,28 @@ export class MiawClient extends EventEmitter {
   ): StoreMessageResult {
     const chatJid = normalized.from;
     const bucket = this.messagesStore.get(chatJid);
+    const storedMessage = { ...normalized };
 
     if (bucket) {
+      let bucketIndex = this.messageIdIndex.get(chatJid);
+      if (!bucketIndex) {
+        bucketIndex = this.buildMessageIdIndex(bucket);
+        this.messageIdIndex.set(chatJid, bucketIndex);
+      }
+
       // An empty id (missing key.id) can't be deduped, so append it.
       const existingIndex = normalized.id
-        ? bucket.findIndex((message) => message.id === normalized.id)
-        : -1;
+        ? bucketIndex.get(normalized.id)
+        : undefined;
 
-      if (existingIndex >= 0) {
+      if (existingIndex !== undefined) {
         const existing = bucket[existingIndex];
         if (
           this.isPlaceholder(existing) &&
           !this.isPlaceholder(normalized)
         ) {
-          bucket[existingIndex] = normalized;
+          bucket[existingIndex] = storedMessage;
+          this.currentMessageRevision++;
           if (persist) {
             this.saveMessagesToFile();
           }
@@ -3737,15 +3760,38 @@ export class MiawClient extends EventEmitter {
         }
         return "duplicate";
       }
-      bucket.push(normalized);
+
+      const newIndex = bucket.length;
+      bucket.push(storedMessage);
+      if (normalized.id) {
+        bucketIndex.set(normalized.id, newIndex);
+      }
     } else {
-      this.messagesStore.set(chatJid, [normalized]);
+      this.messagesStore.set(chatJid, [storedMessage]);
+      this.messageIdIndex.set(
+        chatJid,
+        normalized.id ? new Map([[normalized.id, 0]]) : new Map()
+      );
     }
 
+    this.currentMessageRevision++;
     if (persist) {
       this.saveMessagesToFile();
     }
     return "inserted";
+  }
+
+  private buildMessageIdIndex(
+    messages: MiawMessage[]
+  ): Map<string, number> {
+    const index = new Map<string, number>();
+    messages.forEach((message, arrayIndex) => {
+      const id = message && typeof message === "object" ? message.id : undefined;
+      if (typeof id === "string" && id && !index.has(id)) {
+        index.set(id, arrayIndex);
+      }
+    });
+    return index;
   }
 
   private isPlaceholder(message: MiawMessage): boolean {
@@ -3767,37 +3813,188 @@ export class MiawClient extends EventEmitter {
     );
   }
 
-  /**
-   * Save messages to disk for persistence across reconnections
-   * Baileys v7 history sync doesn't always fire, so we persist messages locally
-   */
+  /** Schedule one checkpoint at a fixed deadline without resetting it. */
   private saveMessagesToFile(): void {
+    if (
+      this.messageCheckpointTimer ||
+      this.persistedMessageRevision >= this.currentMessageRevision
+    ) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      this.messageCheckpointTimer = null;
+      void this.flushMessagesToFile("timer").catch((error) => {
+        this.logger.warn("Failed to save messages to file:", error);
+      });
+    }, TIMEOUTS.MESSAGE_STORE_CHECKPOINT);
+    timer.unref();
+    this.messageCheckpointTimer = timer;
+  }
+
+  /** Flush through the revision visible to this caller. */
+  private flushMessagesToFile(
+    mode: MessageCheckpointMode = "lifecycle"
+  ): Promise<void> {
+    return this.persistMessagesThrough(this.currentMessageRevision, mode);
+  }
+
+  private async persistMessagesThrough(
+    targetRevision: number,
+    mode: MessageCheckpointMode
+  ): Promise<void> {
+    while (this.persistedMessageRevision < targetRevision) {
+      let checkpoint = this.messageCheckpointPromise;
+      let checkpointMode = this.messageCheckpointMode;
+      let ownsCheckpoint = false;
+
+      if (!checkpoint) {
+        ownsCheckpoint = true;
+        const checkpointRevision = this.currentMessageRevision;
+        const payload = this.serializeMessagesStore();
+        const epoch = this.persistenceEpoch;
+        this.inFlightMessageRevision = checkpointRevision;
+        this.messageCheckpointMode = mode;
+
+        const operation = this.writeMessageCheckpoint(payload, epoch);
+        const tracked = operation.finally(() => {
+          if (this.messageCheckpointPromise === tracked) {
+            this.messageCheckpointPromise = null;
+            this.messageCheckpointMode = null;
+            this.inFlightMessageRevision = 0;
+          }
+        });
+        this.messageCheckpointPromise = tracked;
+        checkpoint = tracked;
+        checkpointMode = mode;
+      }
+
+      try {
+        await checkpoint;
+      } catch (error) {
+        if (error instanceof MessagePersistenceCancelledError) {
+          throw error;
+        }
+        // A later timer deadline gets its own budget, and lifecycle flushing
+        // gets a fresh budget after joining a failed timer checkpoint.
+        if (
+          !ownsCheckpoint &&
+          (mode === "timer" || checkpointMode === "timer")
+        ) {
+          continue;
+        }
+        throw error;
+      }
+    }
+  }
+
+  private serializeMessagesStore(): string {
+    const messagesData: Record<string, MiawMessage[]> = {};
+    for (const [jid, messages] of this.messagesStore) {
+      messagesData[jid] = messages;
+    }
+    return JSON.stringify(messagesData);
+  }
+
+  private async writeMessageCheckpoint(
+    payload: string,
+    epoch: number
+  ): Promise<void> {
+    let lastError: unknown;
+    const delays = [
+      0,
+      ...MiawClient.MESSAGE_CHECKPOINT_RETRY_DELAYS,
+    ];
+
+    for (const delayMs of delays) {
+      if (delayMs > 0) {
+        await this.waitForMessageCheckpointRetry(delayMs);
+      }
+
+      try {
+        await this.persistMessagesSnapshot(payload, epoch);
+        this.persistedMessageRevision = Math.max(
+          this.persistedMessageRevision,
+          this.inFlightMessageRevision
+        );
+        return;
+      } catch (error) {
+        if (error instanceof MessagePersistenceCancelledError) {
+          throw error;
+        }
+        lastError = error;
+      }
+    }
+
+    throw lastError;
+  }
+
+  private waitForMessageCheckpointRetry(delayMs: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+
+  private async persistMessagesSnapshot(
+    payload: string,
+    epoch: number
+  ): Promise<void> {
+    const messagesPath = path.resolve(this.getMessagesFilePath());
+    const messagesDir = path.dirname(messagesPath);
+    await fs.promises.mkdir(messagesDir, { recursive: true });
+
+    const tempPath = `${messagesPath}.tmp-${process.pid}-${randomUUID()}`;
+    this.activeMessageTempPaths.add(tempPath);
     try {
-      const messagesPath = this.getMessagesFilePath();
-      const messagesDir = path.dirname(messagesPath);
-
-      // Ensure directory exists
-      if (!fs.existsSync(messagesDir)) {
-        fs.mkdirSync(messagesDir, { recursive: true });
+      await this.writeMessagesSnapshot(tempPath, payload);
+      if (epoch !== this.persistenceEpoch) {
+        throw new MessagePersistenceCancelledError(
+          "Message persistence was invalidated"
+        );
       }
-
-      // Convert Map to object for JSON serialization
-      // Structure: { "jid1": [msg1, msg2], "jid2": [msg3] }
-      const messagesData: Record<string, MiawMessage[]> = {};
-      for (const [jid, messages] of this.messagesStore.entries()) {
-        messagesData[jid] = messages;
+      this.commitMessagesSnapshot(tempPath, messagesPath);
+    } finally {
+      this.activeMessageTempPaths.delete(tempPath);
+      try {
+        await fs.promises.rm(tempPath, { force: true });
+      } catch (error) {
+        this.logger.warn("Failed to clean message temp file:", error);
       }
+    }
+  }
 
-      // Count total messages
-      const totalMessages = Array.from(this.messagesStore.values()).reduce(
-        (sum, msgs) => sum + msgs.length,
-        0
-      );
+  private writeMessagesSnapshot(
+    tempPath: string,
+    payload: string
+  ): Promise<void> {
+    return fs.promises.writeFile(tempPath, payload, "utf8");
+  }
 
-      fs.writeFileSync(messagesPath, JSON.stringify(messagesData, null, 2), "utf8");
-      this.logger.debug(`Saved ${totalMessages} messages across ${this.messagesStore.size} chats to ${messagesPath}`);
+  private commitMessagesSnapshot(
+    tempPath: string,
+    messagesPath: string
+  ): void {
+    fs.renameSync(tempPath, messagesPath);
+  }
+
+  private cleanupStaleMessageTempFiles(messagesPath: string): void {
+    const resolvedPath = path.resolve(messagesPath);
+    const messagesDir = path.dirname(resolvedPath);
+    const ownedPrefix = `${path.basename(resolvedPath)}.tmp-`;
+    if (!fs.existsSync(messagesDir)) return;
+
+    try {
+      for (const name of fs.readdirSync(messagesDir)) {
+        if (!name.startsWith(ownedPrefix)) continue;
+
+        const candidate = path.join(messagesDir, name);
+        if (this.activeMessageTempPaths.has(candidate)) continue;
+
+        const stats = fs.lstatSync(candidate);
+        if (stats.isFile()) {
+          fs.unlinkSync(candidate);
+        }
+      }
     } catch (error) {
-      this.logger.warn("Failed to save messages to file:", error);
+      this.logger.warn("Failed to clean stale message temp files:", error);
     }
   }
 
@@ -3808,26 +4005,40 @@ export class MiawClient extends EventEmitter {
   private loadMessagesFromFile(): void {
     try {
       const messagesPath = this.getMessagesFilePath();
+      this.cleanupStaleMessageTempFiles(messagesPath);
 
       if (!fs.existsSync(messagesPath)) {
         this.logger.debug("No messages file found, starting with empty store");
         return;
       }
 
-      const messagesData = JSON.parse(fs.readFileSync(messagesPath, "utf8"));
+      const messagesData: unknown = JSON.parse(
+        fs.readFileSync(messagesPath, "utf8")
+      );
 
-      if (messagesData && typeof messagesData === "object") {
-        // Clear existing store and populate from file
-        this.messagesStore.clear();
-        let totalMessages = 0;
-        for (const [jid, messages] of Object.entries(messagesData)) {
-          if (Array.isArray(messages)) {
-            this.messagesStore.set(jid, messages as MiawMessage[]);
-            totalMessages += messages.length;
-          }
-        }
-        this.logger.info(`Loaded ${totalMessages} messages across ${this.messagesStore.size} chats from disk`);
+      if (
+        !messagesData ||
+        typeof messagesData !== "object" ||
+        Array.isArray(messagesData)
+      ) {
+        return;
       }
+
+      const loadedStore = new Map<string, MiawMessage[]>();
+      const loadedIndex = new Map<string, Map<string, number>>();
+      let totalMessages = 0;
+      for (const [jid, messages] of Object.entries(messagesData)) {
+        if (!Array.isArray(messages)) continue;
+
+        const bucket = messages as MiawMessage[];
+        loadedStore.set(jid, bucket);
+        loadedIndex.set(jid, this.buildMessageIdIndex(bucket));
+        totalMessages += bucket.length;
+      }
+
+      this.messagesStore = loadedStore;
+      this.messageIdIndex = loadedIndex;
+      this.logger.info(`Loaded ${totalMessages} messages across ${this.messagesStore.size} chats from disk`);
     } catch (error) {
       this.logger.warn("Failed to load messages from file:", error);
     }
@@ -3861,7 +4072,9 @@ export class MiawClient extends EventEmitter {
 
       return {
         success: true,
-        messages: messages.filter((message) => !this.isPlaceholder(message)),
+        messages: messages
+          .filter((message) => !this.isPlaceholder(message))
+          .map((message) => ({ ...message })),
       };
     } catch (error) {
       this.logger.error("Failed to get chat messages:", error);
