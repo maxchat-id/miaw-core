@@ -27,6 +27,7 @@
     "test:cli": "NODE_OPTIONS='--experimental-vm-modules' jest --testPathPattern='tests/integration/cli' --runInBand --forceExit",
     "test:manual": "tsx tests/interactive-test.ts",
     "test:manual:build": "npm run build && node dist/tests/interactive-test.js",
+    "bench:message-store": "node --expose-gc --import tsx tests/performance/message-store.bench.ts",
     "cli": "tsx bin/miaw-cli.ts"
   },
   "keywords": [

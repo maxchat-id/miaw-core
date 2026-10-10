@@ -5,7 +5,7 @@ export default tseslint.config(
     eslint.configs.recommended,
     ...tseslint.configs.recommended,
     {
-        ignores: ["dist/**", "node_modules/**", "coverage/**", "*.js"],
+        ignores: ["dist/**", "node_modules/**", "coverage/**", ".gstack/**", "*.js"],
     },
     {
         files: ["src/**/*.ts", "tests/**/*.ts", "examples/**/*.ts", "bin/**/*.ts"],
