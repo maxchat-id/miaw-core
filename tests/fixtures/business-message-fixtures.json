@@ -1,0 +1,176 @@
+{
+  "_meta": {
+    "expectedText": {
+      "interactiveMessage": "Fixture body line 1\nFixture body line 2",
+      "templateMessage": "Fixture body line 1\nFixture body line 2\nFixture footer"
+    },
+    "notes": [
+      "All JIDs, message IDs, business text, URLs, media keys, hashes, and sender names were replaced before leaving the server.",
+      "Field names and payload nesting are preserved.",
+      "No real same-ID placeholder-to-content pair was present in the store."
+    ],
+    "sanitizedAt": "2026-10-08",
+    "source": "Sanitized production-derived WhatsApp store fixture from dev-mis"
+  },
+  "ciphertextPlaceholder": {
+    "broadcast": false,
+    "key": {
+      "addressingMode": "lid",
+      "fromMe": false,
+      "id": "fixture-ciphertextPlaceholder",
+      "participant": "15550000002@s.whatsapp.net",
+      "participantAlt": "15550000002@s.whatsapp.net",
+      "remoteJid": "15550000001@s.whatsapp.net"
+    },
+    "messageStubParameters": [
+      "Fixture transport placeholder"
+    ],
+    "messageStubType": 2,
+    "messageTimestamp": 1700000000,
+    "pushName": "Fixture Business"
+  },
+  "e2eEncryptedNowPlaceholder": {
+    "isMentionedInStatus": false,
+    "key": {
+      "fromMe": true,
+      "id": "fixture-e2eEncryptedNowPlaceholder",
+      "remoteJid": "15550000001@s.whatsapp.net"
+    },
+    "messageStubType": "E2E_ENCRYPTED_NOW",
+    "messageTimestamp": "1700000000",
+    "status": "PENDING"
+  },
+  "e2eEncryptedPlaceholder": {
+    "isMentionedInStatus": false,
+    "key": {
+      "fromMe": true,
+      "id": "fixture-e2eEncryptedPlaceholder",
+      "remoteJid": "15550000001@s.whatsapp.net"
+    },
+    "messageStubType": "E2E_ENCRYPTED",
+    "messageTimestamp": "1700000000",
+    "status": "PENDING"
+  },
+  "groupParticipantLeave": {
+    "key": {
+      "fromMe": false,
+      "id": "fixture-groupParticipantLeave",
+      "participant": "15550000002@s.whatsapp.net",
+      "remoteJid": "120363000000000000@g.us"
+    },
+    "messageStubParameters": [
+      "{\"id\":\"15550000002@s.whatsapp.net\",\"phoneNumber\":\"15550000002@s.whatsapp.net\",\"admin\":null}"
+    ],
+    "messageStubType": "GROUP_PARTICIPANT_LEAVE",
+    "messageTimestamp": "1700000000",
+    "participant": "15550000002@s.whatsapp.net"
+  },
+  "interactiveMessage": {
+    "isMentionedInStatus": false,
+    "key": {
+      "fromMe": false,
+      "id": "fixture-interactiveMessage",
+      "remoteJid": "15550000001@s.whatsapp.net"
+    },
+    "message": {
+      "interactiveMessage": {
+        "body": {
+          "text": "Fixture body line 1\nFixture body line 2"
+        },
+        "header": {
+          "hasMediaAttachment": true,
+          "videoMessage": {
+            "caption": "Fixture media caption",
+            "fileEncSha256": "AA==",
+            "fileLength": "1",
+            "fileSha256": "AA==",
+            "mediaKey": "AA==",
+            "mimetype": "video/mp4",
+            "seconds": 28,
+            "staticUrl": "https://example.invalid/media"
+          }
+        },
+        "nativeFlowMessage": {
+          "buttons": [
+            {
+              "buttonParamsJson": "{}",
+              "name": "cta_url"
+            }
+          ],
+          "messageParamsJson": "{}"
+        }
+      },
+      "messageContextInfo": {
+        "messageSecret": "AA=="
+      }
+    },
+    "messageSecret": "AA==",
+    "messageTimestamp": "1700000000"
+  },
+  "templateMessage": {
+    "isMentionedInStatus": false,
+    "key": {
+      "fromMe": false,
+      "id": "fixture-templateMessage",
+      "remoteJid": "15550000001@s.whatsapp.net"
+    },
+    "message": {
+      "templateMessage": {
+        "hydratedFourRowTemplate": {
+          "hydratedButtons": [
+            {
+              "index": 0,
+              "urlButton": {
+                "displayText": "Fixture action",
+                "url": "https://example.invalid/media"
+              }
+            }
+          ],
+          "hydratedContentText": "Fixture body line 1\nFixture body line 2",
+          "hydratedFooterText": "Fixture footer",
+          "imageMessage": {
+            "caption": "Fixture media caption",
+            "directPath": "https://example.invalid/media",
+            "fileEncSha256": "AA==",
+            "fileLength": "1",
+            "fileSha256": "AA==",
+            "height": 450,
+            "mediaKey": "AA==",
+            "mediaKeyTimestamp": "1",
+            "mimetype": "image/jpeg",
+            "url": "https://example.invalid/media",
+            "width": 800
+          }
+        },
+        "hydratedTemplate": {
+          "hydratedButtons": [
+            {
+              "index": 0,
+              "urlButton": {
+                "displayText": "Fixture action",
+                "url": "https://example.invalid/media"
+              }
+            }
+          ],
+          "hydratedContentText": "Fixture body line 1\nFixture body line 2",
+          "hydratedFooterText": "Fixture footer",
+          "imageMessage": {
+            "caption": "Fixture media caption",
+            "directPath": "https://example.invalid/media",
+            "fileEncSha256": "AA==",
+            "fileLength": "1",
+            "fileSha256": "AA==",
+            "height": 450,
+            "mediaKey": "AA==",
+            "mediaKeyTimestamp": "1",
+            "mimetype": "image/jpeg",
+            "url": "https://example.invalid/media",
+            "width": 800
+          }
+        },
+        "templateId": "fixture-templateMessage"
+      }
+    },
+    "messageTimestamp": "1700000000"
+  }
+}

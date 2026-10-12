@@ -2,8 +2,23 @@
  * Unit Tests for MessageHandler
  */
 
+import { readFileSync } from "node:fs";
 import { MessageHandler } from "../../src/handlers/MessageHandler.js";
 import { MiawMessage } from "../../src/types/index.js";
+
+const businessMessageFixtures = JSON.parse(
+  readFileSync(
+    new URL("../fixtures/business-message-fixtures.json", import.meta.url),
+    "utf8"
+  )
+);
+
+function fixtureUpsert(name: "templateMessage" | "interactiveMessage") {
+  return {
+    messages: [businessMessageFixtures[name]],
+    type: "notify" as const,
+  };
+}
 
 describe("MessageHandler", () => {
   describe("formatPhoneToJid", () => {
@@ -187,6 +202,7 @@ describe("MessageHandler", () => {
       expect(result?.senderName).toBe("John Doe");
       expect(result?.text).toBe("Hello World");
       expect(result?.type).toBe("text");
+      expect(result?.buttons).toBeUndefined();
       expect(result?.isGroup).toBe(false);
       expect(result?.fromMe).toBe(false);
       expect(result?.timestamp).toBe(1234567890);
@@ -217,6 +233,73 @@ describe("MessageHandler", () => {
       const result = MessageHandler.normalize(baileysMessage);
       expect(result?.text).toBe("Extended text");
       expect(result?.type).toBe("text");
+    });
+
+    it("should normalize production-derived template message text", () => {
+      const result = MessageHandler.normalize(fixtureUpsert("templateMessage"));
+
+      expect(result?.type).toBe("text");
+      expect(result?.text).toBe(
+        businessMessageFixtures._meta.expectedText.templateMessage
+      );
+      expect(result?.raw).toBe(businessMessageFixtures.templateMessage);
+      expect(result?.buttons).toEqual([
+        {
+          type: "URL",
+          text: "Fixture action",
+          value: "https://example.invalid/media",
+        },
+      ]);
+    });
+
+    it("should normalize and filter hydrated template button types", () => {
+      const raw = structuredClone(businessMessageFixtures.templateMessage);
+      raw.message.templateMessage.hydratedTemplate.hydratedButtons = [
+        {
+          index: 0,
+          quickReplyButton: { displayText: " Reply ", id: " reply-id " },
+        },
+        {
+          index: 1,
+          urlButton: {
+            displayText: "Open",
+            url: "https://example.invalid/open",
+          },
+        },
+        {
+          index: 2,
+          callButton: { displayText: "Call", phoneNumber: "15550000000" },
+        },
+        { index: 3, quickReplyButton: { displayText: "", id: "empty" } },
+        { index: 4, urlButton: { displayText: "Missing URL" } },
+        null,
+      ];
+      delete raw.message.templateMessage.hydratedFourRowTemplate;
+
+      const result = MessageHandler.normalize({
+        messages: [raw],
+        type: "notify",
+      });
+
+      expect(result?.buttons).toEqual([
+        { type: "QUICK_REPLY", text: "Reply", value: " reply-id " },
+        {
+          type: "URL",
+          text: "Open",
+          value: "https://example.invalid/open",
+        },
+        { type: "PHONE", text: "Call", value: "15550000000" },
+      ]);
+    });
+
+    it("should normalize production-derived interactive message text", () => {
+      const result = MessageHandler.normalize(fixtureUpsert("interactiveMessage"));
+
+      expect(result?.type).toBe("text");
+      expect(result?.text).toBe(
+        businessMessageFixtures._meta.expectedText.interactiveMessage
+      );
+      expect(result?.raw).toBe(businessMessageFixtures.interactiveMessage);
     });
 
     it("should normalize image message with metadata", () => {

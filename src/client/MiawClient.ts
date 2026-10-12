@@ -210,7 +210,17 @@ class LruCache {
 /**
  * Main client class for interacting with WhatsApp
  */
+type StoreMessageResult = "inserted" | "upgraded" | "duplicate";
+
 export class MiawClient extends EventEmitter {
+  private static readonly PLACEHOLDER_STUB_TYPES = new Set<unknown>([
+    2,
+    39,
+    75,
+    "CIPHERTEXT",
+    "E2E_ENCRYPTED",
+    "E2E_ENCRYPTED_NOW",
+  ]);
   private options: Required<Omit<MiawClientOptions, "proxy" | "agent" | "fetchAgent" | "usePairingCode" | "phoneNumber" | "browser">> & Pick<MiawClientOptions, "proxy" | "agent" | "fetchAgent" | "usePairingCode" | "phoneNumber" | "browser">;
   private socket: WASocket | null = null;
   private authHandler: AuthHandler;
@@ -694,10 +704,10 @@ export class MiawClient extends EventEmitter {
         const chatJid = request && this.mayBelongToChat(msg?.key?.remoteJid, request.jid) ? request.jid : undefined;
         const stored = this.addMessageToStore(msg, chatJid);
         if (!stored) continue;
-        if (stored.isNew) anyNew = true;
+        if (stored.changed) anyNew = true;
         if (request && stored.chatJid === request.jid) {
           answered++;
-          if (stored.isNew) messagesLoaded++;
+          if (stored.publicChanged) messagesLoaded++;
         }
       }
       if (anyNew) {
@@ -815,12 +825,14 @@ export class MiawClient extends EventEmitter {
           // the paired phone) — API sends are matched via selfSentIds and
           // suppressed so bots don't react to their own sends. isNew gates both
           // so reconnect re-delivery of stored messages never re-fires.
-          const isNew = this.storeMessage(normalized);
-          if (isNew && !normalized.fromMe) {
+          const storeResult = this.storeMessage(normalized);
+          const isNew = storeResult !== "duplicate";
+          if (isNew && !normalized.fromMe && !this.isPlaceholder(normalized)) {
             this.emit("message", normalized);
           } else if (
             isNew &&
             normalized.fromMe &&
+            !this.isPlaceholder(normalized) &&
             normalized.id &&
             !this.consumeSelfSent(normalized.id)
           ) {
@@ -1502,9 +1514,14 @@ export class MiawClient extends EventEmitter {
    * the caller writes once for the whole batch.
    * @param msg - Baileys message object
    * @param chatJid - Chat to store it under instead of the resolved remoteJid
-   * @returns The chat it belongs to and whether it was new; undefined if dropped
+   * @returns The chat, whether storage changed, and whether public history changed
    */
-  private addMessageToStore(msg: any, chatJid?: string): { chatJid: string; isNew: boolean } | undefined {
+  private addMessageToStore(
+    msg: any,
+    chatJid?: string
+  ):
+    | { chatJid: string; changed: boolean; publicChanged: boolean }
+    | undefined {
     // Capture LID<->PN mapping from the history message key (rc13 alt fields)
     // so @lid from/participant resolve consistently with the live message path.
     if (msg?.key && !msg.key.fromMe) {
@@ -1527,7 +1544,13 @@ export class MiawClient extends EventEmitter {
 
     // Store (deduped by id). The history-sync path never emits "message"; it
     // only populates the store.
-    return { chatJid: normalized.from, isNew: this.storeMessage(normalized, false) };
+    const result = this.storeMessage(normalized, false);
+    return {
+      chatJid: normalized.from,
+      changed: result !== "duplicate",
+      publicChanged:
+        result !== "duplicate" && !this.isPlaceholder(normalized),
+    };
   }
 
   /**
@@ -3684,17 +3707,35 @@ export class MiawClient extends EventEmitter {
    * echo, offline/reconnect backlog, or history sync) is stored only once.
    *
    * @param normalized - Normalized message to store
-   * @param persist - Write the store to disk when the message is new
-   * @returns true if the message was newly stored; false if it was a duplicate
+   * @param persist - Write the store to disk when the message changes
+   * @returns Whether the message was inserted, upgraded, or already present
    */
-  private storeMessage(normalized: MiawMessage, persist = true): boolean {
+  private storeMessage(
+    normalized: MiawMessage,
+    persist = true
+  ): StoreMessageResult {
     const chatJid = normalized.from;
     const bucket = this.messagesStore.get(chatJid);
 
     if (bucket) {
-      // Dedup by id. An empty id (missing key.id) can't be deduped -> append.
-      if (normalized.id && bucket.some((m) => m.id === normalized.id)) {
-        return false;
+      // An empty id (missing key.id) can't be deduped, so append it.
+      const existingIndex = normalized.id
+        ? bucket.findIndex((message) => message.id === normalized.id)
+        : -1;
+
+      if (existingIndex >= 0) {
+        const existing = bucket[existingIndex];
+        if (
+          this.isPlaceholder(existing) &&
+          !this.isPlaceholder(normalized)
+        ) {
+          bucket[existingIndex] = normalized;
+          if (persist) {
+            this.saveMessagesToFile();
+          }
+          return "upgraded";
+        }
+        return "duplicate";
       }
       bucket.push(normalized);
     } else {
@@ -3704,7 +3745,26 @@ export class MiawClient extends EventEmitter {
     if (persist) {
       this.saveMessagesToFile();
     }
-    return true;
+    return "inserted";
+  }
+
+  private isPlaceholder(message: MiawMessage): boolean {
+    if (message.type !== "unknown" || message.text || message.media) {
+      return false;
+    }
+
+    const rawMessage = message.raw?.message;
+    if (
+      rawMessage &&
+      typeof rawMessage === "object" &&
+      Object.keys(rawMessage).length > 0
+    ) {
+      return false;
+    }
+
+    return MiawClient.PLACEHOLDER_STUB_TYPES.has(
+      message.raw?.messageStubType
+    );
   }
 
   /**
@@ -3780,7 +3840,10 @@ export class MiawClient extends EventEmitter {
   getMessageCounts(): Map<string, number> {
     const counts = new Map<string, number>();
     for (const [jid, messages] of this.messagesStore.entries()) {
-      counts.set(jid, messages.length);
+      counts.set(
+        jid,
+        messages.filter((message) => !this.isPlaceholder(message)).length
+      );
     }
     return counts;
   }
@@ -3798,7 +3861,7 @@ export class MiawClient extends EventEmitter {
 
       return {
         success: true,
-        messages,
+        messages: messages.filter((message) => !this.isPlaceholder(message)),
       };
     } catch (error) {
       this.logger.error("Failed to get chat messages:", error);

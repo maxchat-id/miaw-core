@@ -61,6 +61,14 @@ function textMsg(id: string, remoteJid: string, ts: number, extra: any = {}): an
   };
 }
 
+function placeholderMsg(id: string, remoteJid: string, ts: number): any {
+  return {
+    key: { id, remoteJid, fromMe: false },
+    messageStubType: 75,
+    messageTimestamp: ts,
+  };
+}
+
 function makeClient(): {
   client: any;
   save: jest.Mock;
@@ -195,6 +203,41 @@ describe("loadMoreMessages on-demand answer", () => {
 
     await expect(pending).resolves.toEqual({ success: true, messagesLoaded: 2, hasMore: true });
     expect(ctx.client.messagesStore.get(PN)).toHaveLength(3);
+  });
+
+  it("does not count a hidden placeholder as a loaded public message", async () => {
+    const ctx = makeClient();
+    seedAnchor(ctx.client, PN, LID);
+
+    const { pending } = await startLoad(ctx, PN);
+    ctx.emitHistory([placeholderMsg("STUB", LID, 1000)], SESSION);
+
+    await expect(pending).resolves.toEqual({
+      success: true,
+      messagesLoaded: 0,
+      hasMore: true,
+    });
+    expect(ctx.client.messagesStore.get(PN)).toHaveLength(2);
+    expect((await ctx.client.getChatMessages(PN)).messages).toHaveLength(1);
+  });
+
+  it("counts a same-answer placeholder upgrade once", async () => {
+    const ctx = makeClient();
+    seedAnchor(ctx.client, PN, LID);
+
+    const { pending } = await startLoad(ctx, PN);
+    ctx.emitHistory([
+      placeholderMsg("UPGRADE", LID, 1000),
+      textMsg("UPGRADE", LID, 1000),
+    ], SESSION);
+
+    await expect(pending).resolves.toEqual({
+      success: true,
+      messagesLoaded: 1,
+      hasMore: true,
+    });
+    expect(ctx.client.messagesStore.get(PN)).toHaveLength(2);
+    expect((await ctx.client.getChatMessages(PN)).messages).toHaveLength(2);
   });
 
   it("stores an @lid answer for a PN anchor in the requested PN chat", async () => {
