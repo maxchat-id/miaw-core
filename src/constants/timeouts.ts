@@ -48,6 +48,9 @@ export const TIMEOUTS = {
 
   /** Final message pause (50 milliseconds) */
   FINAL_MESSAGE_PAUSE: 50,
+
+  /** Fixed deadline for coalescing message-store checkpoints (1 second) */
+  MESSAGE_STORE_CHECKPOINT: 1_000,
 } as const;
 
 /**

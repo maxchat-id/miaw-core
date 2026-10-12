@@ -190,9 +190,16 @@ describe("v1.6.0 rich messages", () => {
       const client = makeConnectedClient();
       const chatId = "62810@s.whatsapp.net";
       // Seed the original poll-creation message into the store.
-      client.messagesStore.set(chatId, [
-        { id: "POLLID", raw: { key: { id: "POLLID" }, message: { pollCreationMessage: {} } } },
-      ]);
+      const rawPrototype = { toJSON: () => ({ encoded: true }) };
+      const originalPoll = {
+        id: "POLLID",
+        raw: Object.assign(Object.create(rawPrototype), {
+          key: { id: "POLLID" },
+          message: { pollCreationMessage: {} },
+        }),
+      };
+      client.messagesStore.set(chatId, [originalPoll]);
+      const scheduleCheckpoint = jest.spyOn(client, "saveMessagesToFile");
       aggregateMock.mockReturnValue([
         { name: "Pizza", voters: ["x@s.whatsapp.net"] },
         { name: "Sushi", voters: [] },
@@ -207,6 +214,16 @@ describe("v1.6.0 rich messages", () => {
         expect.objectContaining({ pollUpdates: [{ vote: 1 }] }),
         "628999000000@s.whatsapp.net"
       );
+      expect(originalPoll.raw).not.toHaveProperty("pollUpdates");
+      expect(client.messagesStore.get(chatId)[0]).not.toBe(originalPoll);
+      expect(client.messagesStore.get(chatId)[0].raw.pollUpdates).toEqual([
+        { vote: 1 },
+      ]);
+      expect(Object.getPrototypeOf(client.messagesStore.get(chatId)[0].raw)).toBe(
+        rawPrototype
+      );
+      expect(client.currentMessageRevision).toBe(1);
+      expect(scheduleCheckpoint).toHaveBeenCalledTimes(1);
       expect(events).toHaveLength(1);
       expect(events[0]).toEqual({
         pollMessageId: "POLLID",

@@ -17,8 +17,16 @@
  * A fake socket is injected; no real WhatsApp connection.
  */
 
-import { readFileSync } from "node:fs";
-import { jest, describe, beforeEach, it, expect } from "@jest/globals";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { jest, describe, beforeEach, afterEach, it, expect } from "@jest/globals";
 
 jest.unstable_mockModule("@whiskeysockets/baileys", () => ({
   default: jest.fn(),
@@ -176,11 +184,24 @@ describe("storeMessage (dedup)", () => {
     expect(client.messagesStore.get(CHAT_A)).toHaveLength(2);
   });
 
-  it("always appends messages that have no id (cannot dedup)", () => {
+  it("indexes the first occurrence of each non-empty id", () => {
+    const { client } = makeClient();
+    client.storeMessage({ ...base, id: "A", timestamp: 1 });
+    client.storeMessage({ ...base, id: "B", timestamp: 2 });
+    client.storeMessage({ ...base, id: "A", timestamp: 3 });
+
+    expect(Array.from(client.messageIdIndex.get(CHAT_A).entries())).toEqual([
+      ["A", 0],
+      ["B", 1],
+    ]);
+  });
+
+  it("always appends messages that have no id without indexing them", () => {
     const { client } = makeClient();
     client.storeMessage({ ...base, id: "", timestamp: 1 });
     client.storeMessage({ ...base, id: "", timestamp: 2 });
     expect(client.messagesStore.get(CHAT_A)).toHaveLength(2);
+    expect(client.messageIdIndex.get(CHAT_A)).toEqual(new Map());
   });
 });
 
@@ -250,6 +271,37 @@ describe("messages.upsert capture", () => {
     expect(res.messages).toHaveLength(1);
     expect(emitted).toHaveLength(1);
     expect(emitted[0]).toMatchObject({ id: "IN1", fromMe: false });
+  });
+
+  it("does not expose indexed store fields through emitted messages", async () => {
+    const { client, emitUpsert, emitted } = makeClient();
+    await emitUpsert("notify", textMsg("IN1", CHAT_A, false, "hi"));
+
+    emitted[0].id = "consumer-mutated";
+    emitted[0].from = CHAT_B;
+    await emitUpsert("notify", textMsg("IN1", CHAT_A, false, "redelivered"));
+
+    expect(client.messagesStore.get(CHAT_A)).toHaveLength(1);
+    expect(client.messagesStore.get(CHAT_A)[0]).toMatchObject({
+      id: "IN1",
+      from: CHAT_A,
+      text: "hi",
+    });
+    expect(client.messageIdIndex.get(CHAT_A).get("IN1")).toBe(0);
+  });
+
+  it("returns shallow copies from getChatMessages", async () => {
+    const { client, emitUpsert } = makeClient();
+    await emitUpsert("notify", textMsg("IN1", CHAT_A, false, "hi"));
+
+    const first = await client.getChatMessages(CHAT_A);
+    first.messages[0].id = "consumer-mutated";
+    first.messages[0].from = CHAT_B;
+
+    const second = await client.getChatMessages(CHAT_A);
+    expect(second.messages[0]).toMatchObject({ id: "IN1", from: CHAT_A });
+    expect(second.messages[0]).not.toBe(client.messagesStore.get(CHAT_A)[0]);
+    expect(client.messageIdIndex.get(CHAT_A).get("IN1")).toBe(0);
   });
 
   it("stores and emits an inbound message from the offline backlog (type 'append')", async () => {
@@ -347,6 +399,7 @@ describe("messages.upsert capture", () => {
       text: "complete",
     });
     expect(client.messagesStore.get(CHAT_A)).toHaveLength(1);
+    expect(client.messageIdIndex.get(CHAT_A).get("same-id")).toBe(0);
     expect(client.saveMessagesToFile).toHaveBeenCalledTimes(2);
     expect(emitted).toHaveLength(1);
   });
@@ -393,5 +446,102 @@ describe("messages.upsert capture", () => {
     expect(client.messagesStore.get(CHAT_A)[0].text).toBe("history");
     expect(client.saveMessagesToFile).toHaveBeenCalledTimes(1);
     expect(emitted).toEqual([]);
+  });
+});
+
+describe("message-store disk hydration", () => {
+  let sessionPath: string;
+  const instanceId = "test-message-hydration";
+  const base = { from: CHAT_A, fromMe: false, type: "text", isGroup: false };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    sessionPath = mkdtempSync(join(tmpdir(), "miaw-message-store-"));
+    mkdirSync(join(sessionPath, instanceId), { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(sessionPath, { recursive: true, force: true });
+  });
+
+  function diskClient(): any {
+    const client: any = new MiawClient({ instanceId, sessionPath });
+    jest.spyOn(client, "saveMessagesToFile").mockImplementation(() => {});
+    return client;
+  }
+
+  function writeMessages(value: unknown): void {
+    writeFileSync(
+      join(sessionPath, instanceId, "messages.json"),
+      typeof value === "string" ? value : JSON.stringify(value),
+      "utf8"
+    );
+  }
+
+  it("builds a first-occurrence index from a tolerant legacy file", () => {
+    writeMessages({
+      [CHAT_A]: [
+        { ...base, id: "A", text: "first", timestamp: 1 },
+        { ...base, id: "A", text: "duplicate", timestamp: 2 },
+        { ...base, id: "", text: "no id", timestamp: 3 },
+      ],
+      ignored: { id: "not-an-array" },
+    });
+    const client = diskClient();
+
+    client.loadMessagesFromFile();
+
+    expect(client.messagesStore.get(CHAT_A)).toHaveLength(3);
+    expect(Array.from(client.messageIdIndex.get(CHAT_A).entries())).toEqual([
+      ["A", 0],
+    ]);
+    expect(client.messageIdIndex.has("ignored")).toBe(false);
+    expect(client.storeMessage({ ...base, id: "A", timestamp: 4 })).toBe(
+      "duplicate"
+    );
+    expect(client.messagesStore.get(CHAT_A)[0].text).toBe("first");
+  });
+
+  it("upgrades a disk-loaded placeholder at its indexed position", () => {
+    writeMessages({
+      [CHAT_A]: [
+        {
+          ...base,
+          id: "A",
+          type: "unknown",
+          timestamp: 1,
+          raw: { messageStubType: 75 },
+        },
+      ],
+    });
+    const client = diskClient();
+    client.loadMessagesFromFile();
+
+    expect(
+      client.storeMessage({
+        ...base,
+        id: "A",
+        text: "complete",
+        timestamp: 2,
+      })
+    ).toBe("upgraded");
+    expect(client.messagesStore.get(CHAT_A)).toHaveLength(1);
+    expect(client.messagesStore.get(CHAT_A)[0].text).toBe("complete");
+    expect(client.messageIdIndex.get(CHAT_A).get("A")).toBe(0);
+  });
+
+  it.each([
+    ["invalid JSON", "{"],
+    ["an array top level", []],
+  ])("leaves the current store and index untouched for %s", (_label, value) => {
+    const client = diskClient();
+    client.storeMessage({ ...base, id: "CURRENT", text: "kept", timestamp: 1 });
+    writeMessages(value);
+
+    client.loadMessagesFromFile();
+
+    expect(client.messagesStore.get(CHAT_A)).toHaveLength(1);
+    expect(client.messagesStore.get(CHAT_A)[0].id).toBe("CURRENT");
+    expect(client.messageIdIndex.get(CHAT_A).get("CURRENT")).toBe(0);
   });
 });
