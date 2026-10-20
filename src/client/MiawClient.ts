@@ -874,6 +874,8 @@ export class MiawClient extends EventEmitter {
             }
           }
 
+          await this.resolveMentionPhones(normalized);
+
           // Store message in messagesStore (deduped by id). Inbound messages
           // fire "message". Own outgoing (fromMe) are stored but only surfaced
           // on "message_own" when they were NOT sent via our API (i.e. typed on
@@ -1416,6 +1418,33 @@ export class MiawClient extends EventEmitter {
     }
 
     return result;
+  }
+
+  /**
+   * Fill in the phone of every LID-tagged person in a message: local cache
+   * first, then one batched native-store lookup. Tags that stay unresolved
+   * keep only their LID and are logged.
+   * @param message - Normalized message whose mentions are updated in place
+   */
+  private async resolveMentionPhones(message: MiawMessage): Promise<void> {
+    const pending = message.mentions?.filter((mention) => !mention.phone) ?? [];
+    if (pending.length === 0) return;
+
+    const phones = await this.resolveLidsToPhones(pending.map((mention) => mention.jid));
+    let unresolved = 0;
+    for (const mention of pending) {
+      const phone = phones[mention.jid];
+      if (phone) {
+        mention.phone = phone;
+      } else {
+        unresolved++;
+      }
+    }
+    if (unresolved > 0) {
+      this.logger.warn(
+        `[LID] ${unresolved} tagged LID(s) unresolved (instance ${this.options.instanceId}, msg ${message.id})`
+      );
+    }
   }
 
   /**
