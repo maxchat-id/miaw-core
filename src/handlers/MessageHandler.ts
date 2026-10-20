@@ -1,10 +1,12 @@
 import {
   MiawMessage,
   MiawMessageButton,
+  MiawMention,
   MediaInfo,
 } from "../types/index.js";
 import type { MiawLogger } from "../types/logger.js";
 import {
+  BaileysContextInfo,
   BaileysMessageUpsert,
   BaileysMessageContent,
   BaileysImageMessage,
@@ -118,6 +120,8 @@ export class MessageHandler {
         media = this.extractStickerMetadata(stkMsg);
       }
 
+      const mentions = MessageHandler.extractMentions(actualMessage);
+
       const normalized: MiawMessage = {
         id: message.key.id || "",
         from: message.key.remoteJid ?? "",
@@ -134,6 +138,7 @@ export class MessageHandler {
         media,
         quotedMessageId: MessageHandler.extractQuotedId(actualMessage),
         ...(buttons && { buttons }),
+        ...(mentions && { mentions }),
         raw: message,
       };
 
@@ -246,15 +251,14 @@ export class MessageHandler {
   }
 
   /**
-   * Extract the quoted (replied-to) message id from a message's contextInfo.
-   * Baileys attaches contextInfo to the concrete message sub-object
-   * (extendedTextMessage / imageMessage / …), so probe whichever is present.
+   * Get a message's contextInfo. Baileys attaches it to the concrete message
+   * sub-object (extendedTextMessage / imageMessage / …), so probe whichever
+   * is present.
    * @param msg - Baileys message content (view-once already unwrapped)
-   * @returns The quoted message id, or undefined if this is not a reply
    */
-  private static extractQuotedId(
+  private static contextInfoOf(
     msg: BaileysMessageContent | null | undefined
-  ): string | undefined {
+  ): BaileysContextInfo | undefined {
     const container =
       msg?.extendedTextMessage ??
       msg?.imageMessage ??
@@ -263,7 +267,36 @@ export class MessageHandler {
       msg?.audioMessage ??
       msg?.stickerMessage;
 
-    return container?.contextInfo?.stanzaId ?? undefined;
+    return container?.contextInfo;
+  }
+
+  /**
+   * Extract the quoted (replied-to) message id from a message's contextInfo.
+   * @param msg - Baileys message content (view-once already unwrapped)
+   * @returns The quoted message id, or undefined if this is not a reply
+   */
+  private static extractQuotedId(
+    msg: BaileysMessageContent | null | undefined
+  ): string | undefined {
+    return MessageHandler.contextInfoOf(msg)?.stanzaId ?? undefined;
+  }
+
+  /**
+   * Extract the people tagged in a message from its contextInfo. A phone JID
+   * gets its phone right away; a LID is left for the client to resolve.
+   * @param msg - Baileys message content (view-once already unwrapped)
+   * @returns The tagged people, or undefined if nobody is tagged
+   */
+  private static extractMentions(
+    msg: BaileysMessageContent | null | undefined
+  ): MiawMention[] | undefined {
+    const jids = MessageHandler.contextInfoOf(msg)?.mentionedJid?.filter(Boolean);
+    if (!jids?.length) return undefined;
+
+    return jids.map((jid) => {
+      const phone = MessageHandler.formatJidToPhone(jid);
+      return phone ? { jid, phone } : { jid };
+    });
   }
 
   /**

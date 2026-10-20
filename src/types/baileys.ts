@@ -34,11 +34,12 @@ export interface BaileysMessageKey {
 
 /**
  * Reply/quote metadata attached to a message. `stanzaId` is the id of the
- * quoted (replied-to) message.
+ * quoted (replied-to) message; `mentionedJid` lists the people tagged in it.
  */
 export interface BaileysContextInfo {
   stanzaId?: string | null;
   participant?: string | null;
+  mentionedJid?: string[] | null;
 }
 
 /**

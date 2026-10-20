@@ -161,6 +161,14 @@ export interface MiawMessageButton {
   value: string;
 }
 
+/** A person tagged (@mentioned) in a message. */
+export interface MiawMention {
+  /** JID as WhatsApp sent it: a phone JID or a privacy LID (@lid) */
+  jid: string;
+  /** Phone number, when known (always for a phone JID, for a LID only once resolved) */
+  phone?: string;
+}
+
 /**
  * Normalized message structure - simplified from Baileys
  */
@@ -220,6 +228,9 @@ export interface MiawMessage {
 
   /** Visible actions attached to a business template message */
   buttons?: MiawMessageButton[];
+
+  /** People tagged (@mentioned) in this message, in the order WhatsApp lists them */
+  mentions?: MiawMention[];
 
   /** Original raw message from Baileys (for advanced use) */
   raw?: any;
