@@ -870,6 +870,10 @@ export class MiawClient extends EventEmitter {
                   normalized.from = pn;
                 }
                 normalized.senderPhone = MessageHandler.formatJidToPhone(pn);
+              } else {
+                this.logger.warn(
+                  `[LID] Sender LID unresolved (instance ${this.options.instanceId}, msg ${normalized.id}, ${normalized.isGroup ? "group" : "dm"}, ${m.type})`
+                );
               }
             }
           }
