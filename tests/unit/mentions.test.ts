@@ -134,6 +134,51 @@ describe("tagged people on live messages", () => {
     );
   });
 
+  it("logs an unresolved LID once per window, and saves native hits in one write", async () => {
+    const getPNsForLIDs = jest
+      .fn<(lids: string[]) => Promise<{ lid: string; pn: string }[]>>()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        { lid: STORE_LID, pn: "6281300000003@s.whatsapp.net" },
+        { lid: "444444444444444@lid", pn: "6281400000004@s.whatsapp.net" },
+      ]);
+    const ctx = makeClient(getPNsForLIDs as unknown as jest.Mock);
+    ctx.client.saveLidMappingsToFile.mockClear();
+
+    await ctx.emitUpsert(taggedGroupMsg("W1", [UNKNOWN_LID]));
+    await ctx.emitUpsert(taggedGroupMsg("W2", [UNKNOWN_LID]));
+    await ctx.emitUpsert(taggedGroupMsg("W3", [STORE_LID, "444444444444444@lid"]));
+
+    expect(ctx.logger.warn).toHaveBeenCalledTimes(1);
+    expect(ctx.client.saveLidMappingsToFile).toHaveBeenCalledTimes(1);
+    expect(ctx.received[2].mentions.map((m: any) => m.phone)).toEqual([
+      "6281300000003",
+      "6281400000004",
+    ]);
+  });
+
+  it("does not log the recipient of an own message as an unresolved sender", async () => {
+    const ctx = makeClient(jest.fn<() => Promise<unknown>>().mockResolvedValue([]) as unknown as jest.Mock);
+    ctx.client.socket.signalRepository.lidMapping.getPNForLID = jest
+      .fn<() => Promise<null>>()
+      .mockResolvedValue(null);
+
+    await ctx.emitUpsert({
+      key: { id: "OWN1", remoteJid: UNKNOWN_LID, fromMe: true },
+      message: { conversation: "dari hp" },
+      messageTimestamp: 1700000000,
+    });
+    await ctx.emitUpsert({
+      key: { id: "IN1", remoteJid: UNKNOWN_LID, fromMe: false },
+      message: { conversation: "halo" },
+      messageTimestamp: 1700000001,
+    });
+
+    expect(ctx.logger.warn).toHaveBeenCalledTimes(1);
+    expect(ctx.logger.warn).toHaveBeenCalledWith(expect.stringContaining("msg IN1, dm"));
+  });
+
   it("does not look anything up when nobody is tagged", async () => {
     const getPNsForLIDs = jest.fn();
     const ctx = makeClient(getPNsForLIDs);

@@ -117,7 +117,48 @@ describe("getGroupInfo members", () => {
         lid: "111@lid",
       },
     ]);
-    // The LID that came along is learned for later lookups.
-    expect(client.resolveLidToJid("111@lid")).toBe("6281100000001@s.whatsapp.net");
+  });
+
+  it("keeps a group's pairs for its tags, away from the LID cache and its file", async () => {
+    const participants = Array.from({ length: 1500 }, (_, i) => ({
+      id: `${100000 + i}@lid`,
+      phoneNumber: `62811${String(i).padStart(7, "0")}@s.whatsapp.net`,
+      admin: null,
+    }));
+    const client = makeClient({ id: GJID, subject: "Besar", addressingMode: "lid", participants });
+    client.registerLidMapping("999@lid", "6289999999999@s.whatsapp.net");
+    client.saveLidMappingsToFile.mockClear();
+
+    const info = await client.getGroupInfo(GJID);
+
+    expect(info.participants).toHaveLength(1500);
+    expect(info.participants[1499]).toMatchObject({ phone: "628110001499", lid: "101499@lid" });
+    // The DM mapping survives and nothing is written for the group.
+    expect(client.resolveLidToJid("999@lid")).toBe("6289999999999@s.whatsapp.net");
+    expect(client.resolveLidToJid("101499@lid")).toBe("101499@lid");
+    expect(client.saveLidMappingsToFile).not.toHaveBeenCalled();
+
+    // A tag of a member in that group now resolves without any lookup.
+    const message: any = {
+      id: "T1",
+      from: GJID,
+      isGroup: true,
+      mentions: [{ jid: "101499@lid" }],
+    };
+    client.fillKnownMentionPhones(message);
+    expect(message.mentions).toEqual([{ jid: "101499@lid", phone: "628110001499" }]);
+  });
+
+  it("resolves hidden members through the native store without caching them", async () => {
+    const client = makeClient(
+      { id: GJID, subject: "Grup LID", addressingMode: "lid", participants: [{ id: "333@lid", admin: null }] },
+      [{ lid: "333@lid", pn: "6281300000003@s.whatsapp.net" }]
+    );
+
+    const info = await client.getGroupInfo(GJID);
+
+    expect(info.participants[0]).toMatchObject({ phone: "6281300000003", lid: "333@lid" });
+    expect(client.resolveLidToJid("333@lid")).toBe("333@lid");
+    expect(client.saveLidMappingsToFile).not.toHaveBeenCalled();
   });
 });

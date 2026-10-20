@@ -250,6 +250,11 @@ export class MiawClient extends EventEmitter {
   private loggingOut = false;
   private logger: MiawLogger;
   private lidToJidMap: LruCache = new LruCache();
+  // LID -> phone of the members of recently seen groups, from group metadata. Kept apart
+  // from the LID cache: a big group would evict the DM mappings from it.
+  private groupMemberPhones: Map<string, Map<string, string>> = new Map();
+  // When each unresolved LID was last logged, so a busy chat logs it once per window.
+  private lidWarnedAt: Map<string, number> = new Map();
   // Custom stores for contacts, chats, messages (Baileys v7 removed makeInMemoryStore)
   private contactsStore: Map<string, ContactInfo> = new Map();
   private chatsStore: Map<string, ChatInfo> = new Map();
@@ -870,7 +875,7 @@ export class MiawClient extends EventEmitter {
                   normalized.from = pn;
                 }
                 normalized.senderPhone = MessageHandler.formatJidToPhone(pn);
-              } else {
+              } else if (!normalized.fromMe && this.shouldWarnLid(lidJid)) {
                 this.logger.warn(
                   `[LID] Sender LID unresolved (instance ${this.options.instanceId}, msg ${normalized.id}, ${normalized.isGroup ? "group" : "dm"}, ${m.type})`
                 );
@@ -1143,9 +1148,10 @@ export class MiawClient extends EventEmitter {
     lid: string,
     jid: string,
     source: "BaileysEvent" | "Contact" | "Chat" | "Message" | "History" | "NativeStore",
-  ): void {
+    persist = true,
+  ): boolean {
     if (!lid || !jid) {
-      return;
+      return false;
     }
 
     // Normalize LID format (ensure it ends with @lid)
@@ -1163,10 +1169,11 @@ export class MiawClient extends EventEmitter {
       this.logger.debug(`Total LID mappings: ${this.lidToJidMap.size}`);
     }
 
-    // Persist to disk if this is a new mapping
-    if (isNew) {
+    // Persist to disk if this is a new mapping (callers adding a batch save once at the end)
+    if (isNew && persist) {
       this.saveLidMappingsToFile();
     }
+    return isNew;
   }
 
   /**
@@ -1378,11 +1385,18 @@ export class MiawClient extends EventEmitter {
    * against Baileys' native LID store (rc13 `getPNsForLIDs`), and any results
    * are back-filled into the local cache.
    * @param lids - LID JIDs (e.g., ['12345@lid', ...])
+   * @param learn - Back-fill native-store hits into the local cache (one file
+   *   write for the batch). Off for big batches like a group's members, which
+   *   would evict the DM mappings from the bounded cache.
    * @returns A map of input LID -> phone number string, or null if unresolved
    */
-  async resolveLidsToPhones(lids: string[]): Promise<Record<string, string | null>> {
+  async resolveLidsToPhones(
+    lids: string[],
+    learn = true
+  ): Promise<Record<string, string | null>> {
     const result: Record<string, string | null> = {};
     const misses: string[] = [];
+    const persistenceEpoch = this.persistenceEpoch;
 
     // Resolve from the local cache first; collect the misses.
     for (const lid of lids) {
@@ -1405,14 +1419,23 @@ export class MiawClient extends EventEmitter {
     if (store && misses.length > 0) {
       try {
         const pairs = await store.getPNsForLIDs(misses);
+        // A logout during the lookup must not write the old account's mappings back.
+        const canLearn = learn && persistenceEpoch === this.persistenceEpoch;
+        let learned = false;
         if (pairs) {
           for (const { lid, pn } of pairs) {
             if (lid && pn) {
               const normalizedPn = jidNormalizedUser(pn);
-              this.addLidMapping(lid, normalizedPn, "NativeStore");
+              if (canLearn) {
+                learned =
+                  this.addLidMapping(lid, normalizedPn, "NativeStore", false) || learned;
+              }
               result[lid] = MessageHandler.formatJidToPhone(normalizedPn) || null;
             }
           }
+        }
+        if (learned) {
+          this.saveLidMappingsToFile();
         }
       } catch (error) {
         if (this.options.debug) {
@@ -1431,24 +1454,63 @@ export class MiawClient extends EventEmitter {
    * @param message - Normalized message whose mentions are updated in place
    */
   private async resolveMentionPhones(message: MiawMessage): Promise<void> {
+    this.fillKnownMentionPhones(message);
     const pending = message.mentions?.filter((mention) => !mention.phone) ?? [];
     if (pending.length === 0) return;
 
     const phones = await this.resolveLidsToPhones(pending.map((mention) => mention.jid));
-    let unresolved = 0;
+    const unresolved: string[] = [];
     for (const mention of pending) {
       const phone = phones[mention.jid];
       if (phone) {
         mention.phone = phone;
       } else {
-        unresolved++;
+        unresolved.push(mention.jid);
       }
     }
-    if (unresolved > 0) {
+    const fresh = unresolved.filter((lid) => this.shouldWarnLid(lid));
+    if (fresh.length > 0) {
       this.logger.warn(
-        `[LID] ${unresolved} tagged LID(s) unresolved (instance ${this.options.instanceId}, msg ${message.id})`
+        `[LID] ${fresh.length} tagged LID(s) unresolved (instance ${this.options.instanceId}, msg ${message.id})`
       );
     }
+  }
+
+  /**
+   * Fill in, without any lookup, the phone of tagged people already known:
+   * the group's members (from its metadata) or the LID cache.
+   * @param message - Normalized message whose mentions are updated in place
+   */
+  private fillKnownMentionPhones(message: MiawMessage): void {
+    const members = message.isGroup ? this.groupMemberPhones.get(message.from) : undefined;
+    for (const mention of message.mentions ?? []) {
+      if (mention.phone) continue;
+      const phone =
+        members?.get(mention.jid) ??
+        MessageHandler.formatJidToPhone(this.resolveLidToJid(mention.jid));
+      if (phone) mention.phone = phone;
+    }
+  }
+
+  /** Keep a group's members (most recent groups only) for resolving its tags. */
+  private rememberGroupMembers(groupJid: string, members: Map<string, string>): void {
+    this.groupMemberPhones.delete(groupJid);
+    if (members.size === 0) return;
+    this.groupMemberPhones.set(groupJid, members);
+    if (this.groupMemberPhones.size > CACHE_CONFIG.GROUP_MEMBERS_MAX_GROUPS) {
+      const oldest = this.groupMemberPhones.keys().next().value;
+      if (oldest !== undefined) this.groupMemberPhones.delete(oldest);
+    }
+  }
+
+  /** Whether an unresolved LID should be logged now (once per window per LID). */
+  private shouldWarnLid(lid: string): boolean {
+    const now = Date.now();
+    const last = this.lidWarnedAt.get(lid);
+    if (last !== undefined && now - last < CACHE_CONFIG.LID_WARN_WINDOW_MS) return false;
+    if (this.lidWarnedAt.size >= CACHE_CONFIG.LID_WARN_MAX_ENTRIES) this.lidWarnedAt.clear();
+    this.lidWarnedAt.set(lid, now);
+    return true;
   }
 
   /**
@@ -1645,6 +1707,7 @@ export class MiawClient extends EventEmitter {
     if (normalized.participant) {
       normalized.participant = this.resolveLidToJid(normalized.participant);
     }
+    this.fillKnownMentionPhones(normalized);
 
     // Store (deduped by id). The history-sync path never emits "message"; it
     // only populates the store.
@@ -4600,21 +4663,26 @@ export class MiawClient extends EventEmitter {
       const metadata = await this.socket.groupMetadata(groupJid);
 
       // In a LID group every participant id is a LID, with the phone attached
-      // only when WhatsApp shares it. Learn those pairs, then resolve the rest
-      // in one batch.
-      for (const p of metadata.participants) {
-        this.captureLidPnPair(p.id, p.phoneNumber);
-        this.captureLidPnPair(p.id, p.lid);
-      }
-      const phones = await this.resolveLidsToPhones(
-        metadata.participants.map((p) => p.id)
-      );
+      // only when WhatsApp shares it. Resolve the others in one batch without
+      // filling the LID cache, and keep this group's pairs on their own for
+      // resolving its tags.
+      const sharedPhone = (p: (typeof metadata.participants)[number]) =>
+        MessageHandler.formatJidToPhone(p.id) ??
+        MessageHandler.formatJidToPhone(p.phoneNumber ?? "");
+      const hidden = metadata.participants
+        .filter((p) => !sharedPhone(p) && p.id.endsWith("@lid"))
+        .map((p) => p.id);
+      const resolved = hidden.length
+        ? await this.resolveLidsToPhones(hidden, false)
+        : {};
+      const memberPhones = new Map<string, string>();
 
       const participants: GroupParticipant[] = metadata.participants.map(
         (p) => {
-          const phone = phones[p.id] ?? undefined;
+          const phone = sharedPhone(p) ?? resolved[p.id] ?? undefined;
           const jid = phone ? MessageHandler.formatPhoneToJid(phone) : p.id;
           const lid = p.id.endsWith("@lid") ? p.id : p.lid;
+          if (lid && phone) memberPhones.set(lid, phone);
           const name =
             this.contactsStore.get(jid)?.name ?? this.contactsStore.get(p.id)?.name;
           return {
@@ -4631,6 +4699,7 @@ export class MiawClient extends EventEmitter {
           };
         }
       );
+      this.rememberGroupMembers(metadata.id, memberPhones);
 
       return {
         jid: metadata.id,
