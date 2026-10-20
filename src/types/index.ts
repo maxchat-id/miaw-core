@@ -467,6 +467,9 @@ export interface SendDocumentOptions {
 
   /** Quote/reply to a specific message (pass the MiawMessage to reply to) */
   quoted?: MiawMessage;
+
+  /** Phone numbers / JIDs to @mention in the caption (groups only) */
+  mentions?: string[];
 }
 
 /**

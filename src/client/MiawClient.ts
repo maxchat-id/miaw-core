@@ -2085,12 +2085,17 @@ export class MiawClient extends EventEmitter {
       }
 
       // Build document message payload
-      const documentContent: AnyMessageContent = {
+      const documentContent = {
         document: Buffer.isBuffer(document) ? document : { url: document },
         fileName: fileName || "document",
         mimetype: mimetype || "application/octet-stream",
         caption: options?.caption,
-      };
+      } as AnyMessageContent & { mentions?: string[] };
+      if (options?.mentions?.length) {
+        documentContent.mentions = options.mentions.map((m) =>
+          MessageHandler.formatPhoneToJid(m)
+        );
+      }
 
       // Build send options (for quoting/replying)
       const sendOptions = options?.quoted?.raw
