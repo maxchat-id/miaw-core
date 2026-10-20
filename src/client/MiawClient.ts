@@ -4594,16 +4594,37 @@ export class MiawClient extends EventEmitter {
 
       const metadata = await this.socket.groupMetadata(groupJid);
 
+      // In a LID group every participant id is a LID, with the phone attached
+      // only when WhatsApp shares it. Learn those pairs, then resolve the rest
+      // in one batch.
+      for (const p of metadata.participants) {
+        this.captureLidPnPair(p.id, p.phoneNumber);
+        this.captureLidPnPair(p.id, p.lid);
+      }
+      const phones = await this.resolveLidsToPhones(
+        metadata.participants.map((p) => p.id)
+      );
+
       const participants: GroupParticipant[] = metadata.participants.map(
-        (p) => ({
-          jid: this.resolveLidToJid(p.id),
-          role:
-            p.admin === "superadmin"
-              ? "superadmin"
-              : p.admin === "admin"
-              ? "admin"
-              : "member",
-        })
+        (p) => {
+          const phone = phones[p.id] ?? undefined;
+          const jid = phone ? MessageHandler.formatPhoneToJid(phone) : p.id;
+          const lid = p.id.endsWith("@lid") ? p.id : p.lid;
+          const name =
+            this.contactsStore.get(jid)?.name ?? this.contactsStore.get(p.id)?.name;
+          return {
+            jid,
+            role:
+              p.admin === "superadmin"
+                ? "superadmin"
+                : p.admin === "admin"
+                ? "admin"
+                : "member",
+            ...(phone && { phone }),
+            ...(lid && { lid }),
+            ...(name && { name }),
+          };
+        }
       );
 
       return {
@@ -4616,6 +4637,9 @@ export class MiawClient extends EventEmitter {
         participants,
         announce: metadata.announce,
         restrict: metadata.restrict,
+        ...(metadata.addressingMode && {
+          addressingMode: metadata.addressingMode === "lid" ? "lid" : "pn",
+        }),
       };
     } catch (error) {
       this.logger.error("Failed to get group info:", error);

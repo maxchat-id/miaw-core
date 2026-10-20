@@ -755,11 +755,20 @@ export interface ContactProfile extends ContactInfo {
  * Group participant information
  */
 export interface GroupParticipant {
-  /** Participant's JID */
+  /** Participant's JID: the phone JID when known, otherwise the LID */
   jid: string;
 
   /** Participant's role in the group */
   role: "admin" | "superadmin" | "member";
+
+  /** Phone number, when known */
+  phone?: string;
+
+  /** Privacy LID (@lid), when known */
+  lid?: string;
+
+  /** Name from the contact store, when known */
+  name?: string;
 }
 
 /**
@@ -792,6 +801,9 @@ export interface GroupInfo {
 
   /** Whether only admins can edit group info */
   restrict?: boolean;
+
+  /** How WhatsApp addresses members: by phone ("pn") or by privacy LID ("lid") */
+  addressingMode?: "pn" | "lid";
 }
 
 /**
