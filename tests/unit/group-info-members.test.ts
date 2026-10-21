@@ -3,7 +3,8 @@
  *
  * Every member gets a phone when one is known (shared by WhatsApp, cached or
  * resolved through the native store), keeps its LID, and gets a name from the
- * contact store. The group reports its addressing mode.
+ * contact store. The group reports its addressing mode. The pairs kept for
+ * tags stay within a cap on groups and on pairs across all groups.
  */
 
 import { jest, describe, it, expect } from "@jest/globals";
@@ -28,6 +29,7 @@ jest.unstable_mockModule("@whiskeysockets/baileys", () => ({
 }));
 
 const { MiawClient } = await import("../../src/client/MiawClient.js");
+const { CACHE_CONFIG } = await import("../../src/constants/cache.js");
 
 const GJID = "120363000000000000@g.us";
 
@@ -160,5 +162,43 @@ describe("getGroupInfo members", () => {
     expect(info.participants[0]).toMatchObject({ phone: "6281300000003", lid: "333@lid" });
     expect(client.resolveLidToJid("333@lid")).toBe("333@lid");
     expect(client.saveLidMappingsToFile).not.toHaveBeenCalled();
+  });
+});
+
+describe("pairs kept for tags", () => {
+  const pairsOf = (count: number, offset: number) =>
+    new Map(Array.from({ length: count }, (_, i) => [`${offset + i}@lid`, `62811${offset + i}`]));
+
+  it("drops the oldest groups once the pairs across groups pass the cap", () => {
+    const client = makeClient({ id: GJID, participants: [] });
+    const cap = CACHE_CONFIG.GROUP_MEMBERS_MAX_ENTRIES;
+    const size = Math.floor(cap / 3);
+
+    client.rememberGroupMembers("g1@g.us", pairsOf(size, 0));
+    client.rememberGroupMembers("g2@g.us", pairsOf(size, 1_000_000));
+    client.rememberGroupMembers("g3@g.us", pairsOf(size, 2_000_000));
+    client.rememberGroupMembers("g4@g.us", pairsOf(size, 3_000_000));
+
+    expect([...client.groupMemberPhones.keys()]).toEqual(["g2@g.us", "g3@g.us", "g4@g.us"]);
+    const total = [...client.groupMemberPhones.values()].reduce((sum: number, m: Map<string, string>) => sum + m.size, 0);
+    expect(total).toBeLessThanOrEqual(cap);
+  });
+
+  it("keeps the group just stored even when it alone passes the cap", () => {
+    const client = makeClient({ id: GJID, participants: [] });
+    client.rememberGroupMembers("small@g.us", pairsOf(10, 0));
+    client.rememberGroupMembers("huge@g.us", pairsOf(CACHE_CONFIG.GROUP_MEMBERS_MAX_ENTRIES + 1, 1_000_000));
+
+    expect([...client.groupMemberPhones.keys()]).toEqual(["huge@g.us"]);
+  });
+
+  it("still caps the number of groups", () => {
+    const client = makeClient({ id: GJID, participants: [] });
+    for (let i = 0; i <= CACHE_CONFIG.GROUP_MEMBERS_MAX_GROUPS; i++) {
+      client.rememberGroupMembers(`g${i}@g.us`, pairsOf(1, i));
+    }
+
+    expect(client.groupMemberPhones.size).toBe(CACHE_CONFIG.GROUP_MEMBERS_MAX_GROUPS);
+    expect(client.groupMemberPhones.has("g0@g.us")).toBe(false);
   });
 });

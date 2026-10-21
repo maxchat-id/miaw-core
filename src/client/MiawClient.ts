@@ -1537,14 +1537,28 @@ export class MiawClient extends EventEmitter {
     }
   }
 
-  /** Keep a group's members (most recent groups only) for resolving its tags. */
+  /**
+   * Keep a group's members for resolving its tags. Only the most recent groups
+   * are kept, within a cap on groups and on pairs across them.
+   */
   private rememberGroupMembers(groupJid: string, members: Map<string, string>): void {
     this.groupMemberPhones.delete(groupJid);
     if (members.size === 0) return;
     this.groupMemberPhones.set(groupJid, members);
-    if (this.groupMemberPhones.size > CACHE_CONFIG.GROUP_MEMBERS_MAX_GROUPS) {
-      const oldest = this.groupMemberPhones.keys().next().value;
-      if (oldest !== undefined) this.groupMemberPhones.delete(oldest);
+
+    let pairs = 0;
+    for (const kept of this.groupMemberPhones.values()) pairs += kept.size;
+    // Oldest first; the group just stored is never dropped.
+    for (const [jid, kept] of this.groupMemberPhones) {
+      if (
+        jid === groupJid ||
+        (this.groupMemberPhones.size <= CACHE_CONFIG.GROUP_MEMBERS_MAX_GROUPS &&
+          pairs <= CACHE_CONFIG.GROUP_MEMBERS_MAX_ENTRIES)
+      ) {
+        break;
+      }
+      this.groupMemberPhones.delete(jid);
+      pairs -= kept.size;
     }
   }
 
