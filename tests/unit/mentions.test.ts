@@ -32,6 +32,7 @@ jest.unstable_mockModule("@whiskeysockets/baileys", () => ({
 }));
 
 const { MiawClient } = await import("../../src/client/MiawClient.js");
+const { TIMEOUTS } = await import("../../src/constants/timeouts.js");
 
 const GROUP = "120363000000000000@g.us";
 const SENDER = "6281200000002@s.whatsapp.net";
@@ -187,5 +188,51 @@ describe("tagged people on live messages", () => {
 
     expect(ctx.received[0].mentions).toBeUndefined();
     expect(getPNsForLIDs).not.toHaveBeenCalled();
+  });
+});
+
+describe("arrival order of live messages", () => {
+  const plainGroupMsg = (id: string): any => ({
+    key: { id, remoteJid: GROUP, participant: SENDER, fromMe: false },
+    message: { conversation: "ya" },
+    messageTimestamp: 1700000001,
+  });
+
+  it("emits a later message after an earlier one that waits on a LID lookup", async () => {
+    let answer!: (pairs: { lid: string; pn: string }[]) => void;
+    const getPNsForLIDs = jest
+      .fn<(lids: string[]) => Promise<{ lid: string; pn: string }[]>>()
+      .mockReturnValue(new Promise((resolve) => (answer = resolve)));
+    const ctx = makeClient(getPNsForLIDs as unknown as jest.Mock);
+
+    const first = ctx.emitUpsert(taggedGroupMsg("A1", [STORE_LID]));
+    const second = ctx.emitUpsert(plainGroupMsg("B1"));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(ctx.received).toHaveLength(0);
+
+    answer([{ lid: STORE_LID, pn: "6281300000003@s.whatsapp.net" }]);
+    await Promise.all([first, second]);
+
+    expect(ctx.received.map((m: any) => m.id)).toEqual(["A1", "B1"]);
+    expect(ctx.received[0].mentions).toEqual([{ jid: STORE_LID, phone: "6281300000003" }]);
+  });
+
+  it("does not let a stuck lookup hold later messages forever", async () => {
+    const timeouts = TIMEOUTS as { MESSAGE_UPSERT_ORDER_WAIT: number };
+    const original = timeouts.MESSAGE_UPSERT_ORDER_WAIT;
+    timeouts.MESSAGE_UPSERT_ORDER_WAIT = 30;
+    try {
+      const getPNsForLIDs = jest
+        .fn<(lids: string[]) => Promise<{ lid: string; pn: string }[]>>()
+        .mockReturnValue(new Promise(() => {}));
+      const ctx = makeClient(getPNsForLIDs as unknown as jest.Mock);
+
+      void ctx.emitUpsert(taggedGroupMsg("STUCK", [STORE_LID]));
+      await ctx.emitUpsert(plainGroupMsg("B2"));
+
+      expect(ctx.received.map((m: any) => m.id)).toEqual(["B2"]);
+    } finally {
+      timeouts.MESSAGE_UPSERT_ORDER_WAIT = original;
+    }
   });
 });

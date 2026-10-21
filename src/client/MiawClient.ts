@@ -270,6 +270,9 @@ export class MiawClient extends EventEmitter {
   private persistenceEpoch = 0;
   private messageIngestionGeneration = 0;
   private activeMessageUpserts = new Set<Promise<void>>();
+  // Settles when the latest message upsert is done; the next one waits on it so
+  // messages are emitted in arrival order even when a lookup awaits.
+  private messageUpsertTail: Promise<void> = Promise.resolve();
   private messageLifecycleFlushPromise: Promise<void> | null = null;
   private messageLifecycleFlushEpoch: number | null = null;
   private disposePromise: Promise<void> | null = null;
@@ -786,7 +789,7 @@ export class MiawClient extends EventEmitter {
       }
 
       const persistenceEpoch = this.persistenceEpoch;
-      const task = Promise.resolve().then(async () => {
+      const task = this.afterPreviousUpsert(this.messageUpsertTail).then(async () => {
       if (persistenceEpoch !== this.persistenceEpoch) return;
 
       // Baileys only ever emits type 'notify' (live) or 'append' (our own
@@ -912,6 +915,10 @@ export class MiawClient extends EventEmitter {
         this.activeMessageUpserts.delete(task);
       });
       this.activeMessageUpserts.add(task);
+      this.messageUpsertTail = task.then(
+        () => undefined,
+        () => undefined
+      );
       return task;
     });
 
@@ -1445,6 +1452,20 @@ export class MiawClient extends EventEmitter {
     }
 
     return result;
+  }
+
+  /**
+   * Wait for the previous message upsert, but never longer than the order
+   * wait, so a stuck lookup cannot stall every later message.
+   * @param previous - Settles when the previous upsert is done (never rejects)
+   */
+  private afterPreviousUpsert(previous: Promise<void>): Promise<void> {
+    let timer: NodeJS.Timeout | undefined;
+    const limit = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, TIMEOUTS.MESSAGE_UPSERT_ORDER_WAIT);
+      timer.unref?.();
+    });
+    return Promise.race([previous, limit]).finally(() => clearTimeout(timer));
   }
 
   /**
