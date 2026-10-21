@@ -6,6 +6,9 @@
  *   native-store lookup.
  * - A LID that cannot be resolved stays as a bare LID and is logged with ids
  *   only (no text, no phone).
+ * - History and Load Older messages get the same native-store lookup, batched
+ *   once per history answer, before the store is saved or Load Older answers.
+ * - Live messages are emitted in arrival order while a lookup awaits.
  *
  * A fake socket is injected; no real WhatsApp connection.
  */
@@ -81,6 +84,14 @@ function makeClient(getPNsForLIDs: jest.Mock) {
     received,
     emitUpsert: (...messages: any[]) =>
       handlers["messages.upsert"]({ type: "notify", messages }),
+    emitHistory: (messages: any[], peerDataRequestSessionId?: string) =>
+      handlers["messaging-history.set"]({
+        chats: [],
+        contacts: [],
+        messages,
+        isLatest: false,
+        peerDataRequestSessionId,
+      }),
   };
 }
 
@@ -234,5 +245,77 @@ describe("arrival order of live messages", () => {
     } finally {
       timeouts.MESSAGE_UPSERT_ORDER_WAIT = original;
     }
+  });
+});
+
+describe("tagged people on history messages", () => {
+  const storedMentions = (client: any, id: string) =>
+    client.messagesStore.get(GROUP).find((message: any) => message.id === id).mentions;
+
+  it("resolves history tags with one native lookup and saves once", async () => {
+    const getPNsForLIDs = jest
+      .fn<(lids: string[]) => Promise<{ lid: string; pn: string }[]>>()
+      .mockResolvedValue([{ lid: STORE_LID, pn: "6281300000003@s.whatsapp.net" }]);
+    const ctx = makeClient(getPNsForLIDs as unknown as jest.Mock);
+    ctx.client.registerLidMapping(CACHED_LID, "6281400000004@s.whatsapp.net");
+    ctx.client.saveMessagesToFile.mockClear();
+
+    ctx.emitHistory([
+      taggedGroupMsg("H1", [CACHED_LID, STORE_LID]),
+      taggedGroupMsg("H2", [STORE_LID, UNKNOWN_LID]),
+    ]);
+    await Promise.all([...ctx.client.activeMessageUpserts]);
+
+    expect(getPNsForLIDs).toHaveBeenCalledTimes(1);
+    expect(getPNsForLIDs).toHaveBeenCalledWith([STORE_LID, UNKNOWN_LID]);
+    expect(storedMentions(ctx.client, "H1")).toEqual([
+      { jid: CACHED_LID, phone: "6281400000004" },
+      { jid: STORE_LID, phone: "6281300000003" },
+    ]);
+    expect(storedMentions(ctx.client, "H2")).toEqual([
+      { jid: STORE_LID, phone: "6281300000003" },
+      { jid: UNKNOWN_LID },
+    ]);
+    expect(ctx.client.saveMessagesToFile).toHaveBeenCalledTimes(1);
+    // History tags are not learned into the bounded LID cache.
+    expect(ctx.client.resolveLidToJid(STORE_LID)).toBe(STORE_LID);
+  });
+
+  it("answers a waiting Load Older only after its tags are resolved", async () => {
+    let answer!: (pairs: { lid: string; pn: string }[]) => void;
+    const getPNsForLIDs = jest
+      .fn<(lids: string[]) => Promise<{ lid: string; pn: string }[]>>()
+      .mockReturnValue(new Promise((resolve) => (answer = resolve)));
+    const ctx = makeClient(getPNsForLIDs as unknown as jest.Mock);
+    const seenAtAnswer: any[] = [];
+    const resolve = jest.fn(() => {
+      seenAtAnswer.push(storedMentions(ctx.client, "L1"));
+    });
+    ctx.client.pendingHistoryRequests.set("S1", { jid: GROUP, resolve });
+
+    ctx.emitHistory([taggedGroupMsg("L1", [STORE_LID])], "S1");
+    expect(resolve).not.toHaveBeenCalled();
+
+    answer([{ lid: STORE_LID, pn: "6281300000003@s.whatsapp.net" }]);
+    await Promise.all([...ctx.client.activeMessageUpserts]);
+
+    expect(resolve).toHaveBeenCalledWith({ success: true, messagesLoaded: 1, hasMore: true });
+    expect(seenAtAnswer).toEqual([[{ jid: STORE_LID, phone: "6281300000003" }]]);
+    expect(ctx.client.pendingHistoryRequests.has("S1")).toBe(false);
+  });
+
+  it("still answers Load Older when the lookup fails", async () => {
+    const getPNsForLIDs = jest
+      .fn<(lids: string[]) => Promise<{ lid: string; pn: string }[]>>()
+      .mockRejectedValue(new Error("store down"));
+    const ctx = makeClient(getPNsForLIDs as unknown as jest.Mock);
+    const resolve = jest.fn();
+    ctx.client.pendingHistoryRequests.set("S2", { jid: GROUP, resolve });
+
+    ctx.emitHistory([taggedGroupMsg("L2", [STORE_LID])], "S2");
+    await Promise.all([...ctx.client.activeMessageUpserts]);
+
+    expect(resolve).toHaveBeenCalledWith({ success: true, messagesLoaded: 1, hasMore: true });
+    expect(storedMentions(ctx.client, "L2")).toEqual([{ jid: STORE_LID }]);
   });
 });

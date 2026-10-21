@@ -715,6 +715,7 @@ export class MiawClient extends EventEmitter {
     // History sync - populates contacts, chats, and messages from history
     this.socket.ev.on("messaging-history.set", ({ chats, contacts, messages, lidPnMappings, isLatest, peerDataRequestSessionId }) => {
       if (messageIngestionGeneration !== this.messageIngestionGeneration) return;
+      const persistenceEpoch = this.persistenceEpoch;
 
       if (this.options.debug) {
         this.logger.debug("\n========== MESSAGING HISTORY SYNC ==========");
@@ -747,6 +748,7 @@ export class MiawClient extends EventEmitter {
       let anyNew = false;
       let answered = 0;
       let messagesLoaded = 0;
+      const taggedRefs: { chatJid: string; id: string }[] = [];
       for (const msg of messages) {
         // An answer holds one chat, keyed by how the phone stores it (@lid or
         // PN) whatever the anchor's remoteJid was; an @lid one would otherwise
@@ -755,26 +757,48 @@ export class MiawClient extends EventEmitter {
         const stored = this.addMessageToStore(msg, chatJid);
         if (!stored) continue;
         if (stored.changed) anyNew = true;
+        if (stored.changed && stored.hasUnresolvedTags && stored.id) {
+          taggedRefs.push({ chatJid: stored.chatJid, id: stored.id });
+        }
         if (request && stored.chatJid === request.jid) {
           answered++;
           if (stored.publicChanged) messagesLoaded++;
         }
       }
-      if (anyNew) {
-        this.saveMessagesToFile();
-      }
 
-      if (request) {
-        this.pendingHistoryRequests.delete(peerDataRequestSessionId!);
-        // Fewer messages than asked for does not prove the chat has no older
-        // ones; only an empty answer does.
-        request.resolve({
-          success: true,
-          messagesLoaded,
-          hasMore: answered > 0,
-        });
+      const finish = (): void => {
+        if (anyNew) {
+          this.saveMessagesToFile();
+        }
 
-        this.logger.debug(`History request ${peerDataRequestSessionId} completed: ${messagesLoaded} messages loaded`);
+        if (request) {
+          this.pendingHistoryRequests.delete(peerDataRequestSessionId!);
+          // Fewer messages than asked for does not prove the chat has no older
+          // ones; only an empty answer does.
+          request.resolve({
+            success: true,
+            messagesLoaded,
+            hasMore: answered > 0,
+          });
+
+          this.logger.debug(`History request ${peerDataRequestSessionId} completed: ${messagesLoaded} messages loaded`);
+        }
+      };
+
+      if (taggedRefs.length === 0) {
+        finish();
+      } else {
+        // Tags the cache could not resolve get one batched native-store lookup
+        // before the store is saved and a waiting Load Older is answered.
+        const task: Promise<void> = this.resolveStoredMentionPhones(taggedRefs, persistenceEpoch)
+          .catch((error) => {
+            this.logger.debug("[LID] Resolving history tags failed:", error);
+          })
+          .finally(() => {
+            this.activeMessageUpserts.delete(task);
+            finish();
+          });
+        this.activeMessageUpserts.add(task);
       }
 
       if (this.options.debug && isLatest) {
@@ -1707,7 +1731,13 @@ export class MiawClient extends EventEmitter {
     msg: any,
     chatJid?: string
   ):
-    | { chatJid: string; changed: boolean; publicChanged: boolean }
+    | {
+        chatJid: string;
+        id?: string;
+        changed: boolean;
+        publicChanged: boolean;
+        hasUnresolvedTags: boolean;
+      }
     | undefined {
     // Capture LID<->PN mapping from the history message key (rc13 alt fields)
     // so @lid from/participant resolve consistently with the live message path.
@@ -1735,10 +1765,74 @@ export class MiawClient extends EventEmitter {
     const result = this.storeMessage(normalized, false);
     return {
       chatJid: normalized.from,
+      id: normalized.id,
       changed: result !== "duplicate",
       publicChanged:
         result !== "duplicate" && !this.isPlaceholder(normalized),
+      hasUnresolvedTags:
+        normalized.mentions?.some(
+          (mention) => !mention.phone && mention.jid.endsWith("@lid")
+        ) ?? false,
     };
+  }
+
+  /**
+   * Fill in, with one batched native-store lookup, the phone of LID-tagged
+   * people in messages just stored from history. A patched message replaces
+   * the stored one and bumps the store revision; the caller saves.
+   * @param refs - Chat and id of each stored message with an unresolved tag
+   * @param persistenceEpoch - Epoch the messages were stored in
+   */
+  private async resolveStoredMentionPhones(
+    refs: { chatJid: string; id: string }[],
+    persistenceEpoch: number
+  ): Promise<void> {
+    const lids = new Set<string>();
+    for (const { chatJid, id } of refs) {
+      const index = this.storedMessageIndex(chatJid, id);
+      const stored = index === undefined ? undefined : this.messagesStore.get(chatJid)?.[index];
+      for (const mention of stored?.mentions ?? []) {
+        if (!mention.phone && mention.jid.endsWith("@lid")) lids.add(mention.jid);
+      }
+    }
+    if (lids.size === 0) return;
+
+    // Not learned into the LID cache: a big history would evict the DM mappings.
+    const phones = await this.resolveLidsToPhones([...lids], false);
+    if (persistenceEpoch !== this.persistenceEpoch) return;
+
+    let patched = false;
+    for (const { chatJid, id } of refs) {
+      const bucket = this.messagesStore.get(chatJid);
+      const index = this.storedMessageIndex(chatJid, id);
+      const stored = bucket && index !== undefined ? bucket[index] : undefined;
+      if (!bucket || index === undefined || !stored?.mentions) continue;
+      if (!stored.mentions.some((mention) => !mention.phone && phones[mention.jid])) continue;
+      // Replace rather than mutate, like the other store updates.
+      bucket[index] = {
+        ...stored,
+        mentions: stored.mentions.map((mention) => {
+          const phone = mention.phone ? undefined : phones[mention.jid];
+          return phone ? { ...mention, phone } : mention;
+        }),
+      };
+      patched = true;
+    }
+    if (patched) {
+      this.currentMessageRevision++;
+    }
+  }
+
+  /** Index of a stored message in its chat bucket, by message id. */
+  private storedMessageIndex(chatJid: string, id: string): number | undefined {
+    const bucket = this.messagesStore.get(chatJid);
+    if (!bucket) return undefined;
+    let bucketIndex = this.messageIdIndex.get(chatJid);
+    if (!bucketIndex) {
+      bucketIndex = this.buildMessageIdIndex(bucket);
+      this.messageIdIndex.set(chatJid, bucketIndex);
+    }
+    return bucketIndex.get(id);
   }
 
   /**
