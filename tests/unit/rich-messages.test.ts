@@ -77,6 +77,21 @@ describe("v1.6.0 rich messages", () => {
       expect(content).toEqual({ text: "plain" });
       expect("mentions" in content).toBe(false);
     });
+
+    it("adds mentions to a document caption", async () => {
+      const client = makeConnectedClient();
+      await client.sendDocument(TO, Buffer.from("pdf"), {
+        caption: "@6289 ini filenya",
+        fileName: "a.pdf",
+        mentions: ["6289"],
+      });
+
+      expect(sendMessageMock).toHaveBeenCalledWith(
+        JID,
+        expect.objectContaining({ caption: "@6289 ini filenya", mentions: ["6289@s.whatsapp.net"] }),
+        undefined
+      );
+    });
   });
 
   describe("sendLocation", () => {

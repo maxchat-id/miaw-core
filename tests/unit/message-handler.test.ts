@@ -625,6 +625,84 @@ describe("MessageHandler", () => {
       expect(result?.quotedMessageId).toBeUndefined();
     });
 
+    it("should extract tagged people from contextInfo.mentionedJid", () => {
+      const baileysMessage = {
+        messages: [
+          {
+            key: {
+              id: "tag1",
+              remoteJid: "group123@g.us",
+              participant: "1234567890@s.whatsapp.net",
+              fromMe: false,
+            },
+            pushName: "John Doe",
+            message: {
+              extendedTextMessage: {
+                text: "Halo @6281100000001 cek @159920639884701 ya",
+                contextInfo: {
+                  mentionedJid: [
+                    "6281100000001@s.whatsapp.net",
+                    "159920639884701@lid",
+                  ],
+                },
+              },
+            },
+            messageTimestamp: 1234567890,
+          },
+        ],
+        type: "notify" as const,
+      };
+
+      const result = MessageHandler.normalize(baileysMessage);
+      // Phone JIDs carry their phone; LIDs are left for the client to resolve.
+      expect(result?.mentions).toEqual([
+        { jid: "6281100000001@s.whatsapp.net", phone: "6281100000001" },
+        { jid: "159920639884701@lid" },
+      ]);
+    });
+
+    it("should extract tagged people from a media caption", () => {
+      const baileysMessage = {
+        messages: [
+          {
+            key: { id: "tag2", remoteJid: "group123@g.us", fromMe: false },
+            message: {
+              imageMessage: {
+                caption: "@6281100000001 ini fotonya",
+                mimetype: "image/jpeg",
+                contextInfo: { mentionedJid: ["6281100000001@s.whatsapp.net"] },
+              },
+            },
+            messageTimestamp: 1234567890,
+          },
+        ],
+        type: "notify" as const,
+      };
+
+      const result = MessageHandler.normalize(baileysMessage);
+      expect(result?.mentions).toEqual([
+        { jid: "6281100000001@s.whatsapp.net", phone: "6281100000001" },
+      ]);
+    });
+
+    it("should leave mentions undefined when nobody is tagged", () => {
+      const baileysMessage = {
+        messages: [
+          {
+            key: { id: "tag3", remoteJid: "group123@g.us", fromMe: false },
+            message: {
+              extendedTextMessage: { text: "no tags", contextInfo: { mentionedJid: [] } },
+            },
+            messageTimestamp: 1234567890,
+          },
+        ],
+        type: "notify" as const,
+      };
+
+      const result = MessageHandler.normalize(baileysMessage);
+      expect(result?.mentions).toBeUndefined();
+    });
+
     it("should normalize group message", () => {
       const baileysMessage = {
         messages: [

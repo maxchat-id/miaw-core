@@ -51,6 +51,9 @@ export const TIMEOUTS = {
 
   /** Fixed deadline for coalescing message-store checkpoints (1 second) */
   MESSAGE_STORE_CHECKPOINT: 1_000,
+
+  /** Longest a message upsert waits for the previous one to keep arrival order (5 seconds) */
+  MESSAGE_UPSERT_ORDER_WAIT: 5_000,
 } as const;
 
 /**

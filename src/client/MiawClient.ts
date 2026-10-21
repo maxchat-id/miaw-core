@@ -250,6 +250,11 @@ export class MiawClient extends EventEmitter {
   private loggingOut = false;
   private logger: MiawLogger;
   private lidToJidMap: LruCache = new LruCache();
+  // LID -> phone of the members of recently seen groups, from group metadata. Kept apart
+  // from the LID cache: a big group would evict the DM mappings from it.
+  private groupMemberPhones: Map<string, Map<string, string>> = new Map();
+  // When each unresolved LID was last logged, so a busy chat logs it once per window.
+  private lidWarnedAt: Map<string, number> = new Map();
   // Custom stores for contacts, chats, messages (Baileys v7 removed makeInMemoryStore)
   private contactsStore: Map<string, ContactInfo> = new Map();
   private chatsStore: Map<string, ChatInfo> = new Map();
@@ -265,6 +270,9 @@ export class MiawClient extends EventEmitter {
   private persistenceEpoch = 0;
   private messageIngestionGeneration = 0;
   private activeMessageUpserts = new Set<Promise<void>>();
+  // Settles when the latest message upsert is done; the next one waits on it so
+  // messages are emitted in arrival order even when a lookup awaits.
+  private messageUpsertTail: Promise<void> = Promise.resolve();
   private messageLifecycleFlushPromise: Promise<void> | null = null;
   private messageLifecycleFlushEpoch: number | null = null;
   private disposePromise: Promise<void> | null = null;
@@ -707,6 +715,7 @@ export class MiawClient extends EventEmitter {
     // History sync - populates contacts, chats, and messages from history
     this.socket.ev.on("messaging-history.set", ({ chats, contacts, messages, lidPnMappings, isLatest, peerDataRequestSessionId }) => {
       if (messageIngestionGeneration !== this.messageIngestionGeneration) return;
+      const persistenceEpoch = this.persistenceEpoch;
 
       if (this.options.debug) {
         this.logger.debug("\n========== MESSAGING HISTORY SYNC ==========");
@@ -739,6 +748,7 @@ export class MiawClient extends EventEmitter {
       let anyNew = false;
       let answered = 0;
       let messagesLoaded = 0;
+      const taggedRefs: { chatJid: string; id: string }[] = [];
       for (const msg of messages) {
         // An answer holds one chat, keyed by how the phone stores it (@lid or
         // PN) whatever the anchor's remoteJid was; an @lid one would otherwise
@@ -747,26 +757,48 @@ export class MiawClient extends EventEmitter {
         const stored = this.addMessageToStore(msg, chatJid);
         if (!stored) continue;
         if (stored.changed) anyNew = true;
+        if (stored.changed && stored.hasUnresolvedTags && stored.id) {
+          taggedRefs.push({ chatJid: stored.chatJid, id: stored.id });
+        }
         if (request && stored.chatJid === request.jid) {
           answered++;
           if (stored.publicChanged) messagesLoaded++;
         }
       }
-      if (anyNew) {
-        this.saveMessagesToFile();
-      }
 
-      if (request) {
-        this.pendingHistoryRequests.delete(peerDataRequestSessionId!);
-        // Fewer messages than asked for does not prove the chat has no older
-        // ones; only an empty answer does.
-        request.resolve({
-          success: true,
-          messagesLoaded,
-          hasMore: answered > 0,
-        });
+      const finish = (): void => {
+        if (anyNew) {
+          this.saveMessagesToFile();
+        }
 
-        this.logger.debug(`History request ${peerDataRequestSessionId} completed: ${messagesLoaded} messages loaded`);
+        if (request) {
+          this.pendingHistoryRequests.delete(peerDataRequestSessionId!);
+          // Fewer messages than asked for does not prove the chat has no older
+          // ones; only an empty answer does.
+          request.resolve({
+            success: true,
+            messagesLoaded,
+            hasMore: answered > 0,
+          });
+
+          this.logger.debug(`History request ${peerDataRequestSessionId} completed: ${messagesLoaded} messages loaded`);
+        }
+      };
+
+      if (taggedRefs.length === 0) {
+        finish();
+      } else {
+        // Tags the cache could not resolve get one batched native-store lookup
+        // before the store is saved and a waiting Load Older is answered.
+        const task: Promise<void> = this.resolveStoredMentionPhones(taggedRefs, persistenceEpoch)
+          .catch((error) => {
+            this.logger.debug("[LID] Resolving history tags failed:", error);
+          })
+          .finally(() => {
+            this.activeMessageUpserts.delete(task);
+            finish();
+          });
+        this.activeMessageUpserts.add(task);
       }
 
       if (this.options.debug && isLatest) {
@@ -781,7 +813,7 @@ export class MiawClient extends EventEmitter {
       }
 
       const persistenceEpoch = this.persistenceEpoch;
-      const task = Promise.resolve().then(async () => {
+      const task = this.afterPreviousUpsert(this.messageUpsertTail).then(async () => {
       if (persistenceEpoch !== this.persistenceEpoch) return;
 
       // Baileys only ever emits type 'notify' (live) or 'append' (our own
@@ -870,9 +902,15 @@ export class MiawClient extends EventEmitter {
                   normalized.from = pn;
                 }
                 normalized.senderPhone = MessageHandler.formatJidToPhone(pn);
+              } else if (!normalized.fromMe && this.shouldWarnLid(lidJid)) {
+                this.logger.warn(
+                  `[LID] Sender LID unresolved (instance ${this.options.instanceId}, msg ${normalized.id}, ${normalized.isGroup ? "group" : "dm"}, ${m.type})`
+                );
               }
             }
           }
+
+          await this.resolveMentionPhones(normalized);
 
           // Store message in messagesStore (deduped by id). Inbound messages
           // fire "message". Own outgoing (fromMe) are stored but only surfaced
@@ -901,6 +939,10 @@ export class MiawClient extends EventEmitter {
         this.activeMessageUpserts.delete(task);
       });
       this.activeMessageUpserts.add(task);
+      this.messageUpsertTail = task.then(
+        () => undefined,
+        () => undefined
+      );
       return task;
     });
 
@@ -1137,9 +1179,10 @@ export class MiawClient extends EventEmitter {
     lid: string,
     jid: string,
     source: "BaileysEvent" | "Contact" | "Chat" | "Message" | "History" | "NativeStore",
-  ): void {
+    persist = true,
+  ): boolean {
     if (!lid || !jid) {
-      return;
+      return false;
     }
 
     // Normalize LID format (ensure it ends with @lid)
@@ -1157,10 +1200,11 @@ export class MiawClient extends EventEmitter {
       this.logger.debug(`Total LID mappings: ${this.lidToJidMap.size}`);
     }
 
-    // Persist to disk if this is a new mapping
-    if (isNew) {
+    // Persist to disk if this is a new mapping (callers adding a batch save once at the end)
+    if (isNew && persist) {
       this.saveLidMappingsToFile();
     }
+    return isNew;
   }
 
   /**
@@ -1372,11 +1416,18 @@ export class MiawClient extends EventEmitter {
    * against Baileys' native LID store (rc13 `getPNsForLIDs`), and any results
    * are back-filled into the local cache.
    * @param lids - LID JIDs (e.g., ['12345@lid', ...])
+   * @param learn - Back-fill native-store hits into the local cache (one file
+   *   write for the batch). Off for big batches like a group's members, which
+   *   would evict the DM mappings from the bounded cache.
    * @returns A map of input LID -> phone number string, or null if unresolved
    */
-  async resolveLidsToPhones(lids: string[]): Promise<Record<string, string | null>> {
+  async resolveLidsToPhones(
+    lids: string[],
+    learn = true
+  ): Promise<Record<string, string | null>> {
     const result: Record<string, string | null> = {};
     const misses: string[] = [];
+    const persistenceEpoch = this.persistenceEpoch;
 
     // Resolve from the local cache first; collect the misses.
     for (const lid of lids) {
@@ -1399,14 +1450,23 @@ export class MiawClient extends EventEmitter {
     if (store && misses.length > 0) {
       try {
         const pairs = await store.getPNsForLIDs(misses);
+        // A logout during the lookup must not write the old account's mappings back.
+        const canLearn = learn && persistenceEpoch === this.persistenceEpoch;
+        let learned = false;
         if (pairs) {
           for (const { lid, pn } of pairs) {
             if (lid && pn) {
               const normalizedPn = jidNormalizedUser(pn);
-              this.addLidMapping(lid, normalizedPn, "NativeStore");
+              if (canLearn) {
+                learned =
+                  this.addLidMapping(lid, normalizedPn, "NativeStore", false) || learned;
+              }
               result[lid] = MessageHandler.formatJidToPhone(normalizedPn) || null;
             }
           }
+        }
+        if (learned) {
+          this.saveLidMappingsToFile();
         }
       } catch (error) {
         if (this.options.debug) {
@@ -1416,6 +1476,100 @@ export class MiawClient extends EventEmitter {
     }
 
     return result;
+  }
+
+  /**
+   * Wait for the previous message upsert, but never longer than the order
+   * wait, so a stuck lookup cannot stall every later message.
+   * @param previous - Settles when the previous upsert is done (never rejects)
+   */
+  private afterPreviousUpsert(previous: Promise<void>): Promise<void> {
+    let timer: NodeJS.Timeout | undefined;
+    const limit = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, TIMEOUTS.MESSAGE_UPSERT_ORDER_WAIT);
+      timer.unref?.();
+    });
+    return Promise.race([previous, limit]).finally(() => clearTimeout(timer));
+  }
+
+  /**
+   * Fill in the phone of every LID-tagged person in a message: local cache
+   * first, then one batched native-store lookup. Tags that stay unresolved
+   * keep only their LID and are logged.
+   * @param message - Normalized message whose mentions are updated in place
+   */
+  private async resolveMentionPhones(message: MiawMessage): Promise<void> {
+    this.fillKnownMentionPhones(message);
+    const pending = message.mentions?.filter((mention) => !mention.phone) ?? [];
+    if (pending.length === 0) return;
+
+    const phones = await this.resolveLidsToPhones(pending.map((mention) => mention.jid));
+    const unresolved: string[] = [];
+    for (const mention of pending) {
+      const phone = phones[mention.jid];
+      if (phone) {
+        mention.phone = phone;
+      } else {
+        unresolved.push(mention.jid);
+      }
+    }
+    const fresh = unresolved.filter((lid) => this.shouldWarnLid(lid));
+    if (fresh.length > 0) {
+      this.logger.warn(
+        `[LID] ${fresh.length} tagged LID(s) unresolved (instance ${this.options.instanceId}, msg ${message.id})`
+      );
+    }
+  }
+
+  /**
+   * Fill in, without any lookup, the phone of tagged people already known:
+   * the group's members (from its metadata) or the LID cache.
+   * @param message - Normalized message whose mentions are updated in place
+   */
+  private fillKnownMentionPhones(message: MiawMessage): void {
+    const members = message.isGroup ? this.groupMemberPhones.get(message.from) : undefined;
+    for (const mention of message.mentions ?? []) {
+      if (mention.phone) continue;
+      const phone =
+        members?.get(mention.jid) ??
+        MessageHandler.formatJidToPhone(this.resolveLidToJid(mention.jid));
+      if (phone) mention.phone = phone;
+    }
+  }
+
+  /**
+   * Keep a group's members for resolving its tags. Only the most recent groups
+   * are kept, within a cap on groups and on pairs across them.
+   */
+  private rememberGroupMembers(groupJid: string, members: Map<string, string>): void {
+    this.groupMemberPhones.delete(groupJid);
+    if (members.size === 0) return;
+    this.groupMemberPhones.set(groupJid, members);
+
+    let pairs = 0;
+    for (const kept of this.groupMemberPhones.values()) pairs += kept.size;
+    // Oldest first; the group just stored is never dropped.
+    for (const [jid, kept] of this.groupMemberPhones) {
+      if (
+        jid === groupJid ||
+        (this.groupMemberPhones.size <= CACHE_CONFIG.GROUP_MEMBERS_MAX_GROUPS &&
+          pairs <= CACHE_CONFIG.GROUP_MEMBERS_MAX_ENTRIES)
+      ) {
+        break;
+      }
+      this.groupMemberPhones.delete(jid);
+      pairs -= kept.size;
+    }
+  }
+
+  /** Whether an unresolved LID should be logged now (once per window per LID). */
+  private shouldWarnLid(lid: string): boolean {
+    const now = Date.now();
+    const last = this.lidWarnedAt.get(lid);
+    if (last !== undefined && now - last < CACHE_CONFIG.LID_WARN_WINDOW_MS) return false;
+    if (this.lidWarnedAt.size >= CACHE_CONFIG.LID_WARN_MAX_ENTRIES) this.lidWarnedAt.clear();
+    this.lidWarnedAt.set(lid, now);
+    return true;
   }
 
   /**
@@ -1591,7 +1745,13 @@ export class MiawClient extends EventEmitter {
     msg: any,
     chatJid?: string
   ):
-    | { chatJid: string; changed: boolean; publicChanged: boolean }
+    | {
+        chatJid: string;
+        id?: string;
+        changed: boolean;
+        publicChanged: boolean;
+        hasUnresolvedTags: boolean;
+      }
     | undefined {
     // Capture LID<->PN mapping from the history message key (rc13 alt fields)
     // so @lid from/participant resolve consistently with the live message path.
@@ -1612,16 +1772,81 @@ export class MiawClient extends EventEmitter {
     if (normalized.participant) {
       normalized.participant = this.resolveLidToJid(normalized.participant);
     }
+    this.fillKnownMentionPhones(normalized);
 
     // Store (deduped by id). The history-sync path never emits "message"; it
     // only populates the store.
     const result = this.storeMessage(normalized, false);
     return {
       chatJid: normalized.from,
+      id: normalized.id,
       changed: result !== "duplicate",
       publicChanged:
         result !== "duplicate" && !this.isPlaceholder(normalized),
+      hasUnresolvedTags:
+        normalized.mentions?.some(
+          (mention) => !mention.phone && mention.jid.endsWith("@lid")
+        ) ?? false,
     };
+  }
+
+  /**
+   * Fill in, with one batched native-store lookup, the phone of LID-tagged
+   * people in messages just stored from history. A patched message replaces
+   * the stored one and bumps the store revision; the caller saves.
+   * @param refs - Chat and id of each stored message with an unresolved tag
+   * @param persistenceEpoch - Epoch the messages were stored in
+   */
+  private async resolveStoredMentionPhones(
+    refs: { chatJid: string; id: string }[],
+    persistenceEpoch: number
+  ): Promise<void> {
+    const lids = new Set<string>();
+    for (const { chatJid, id } of refs) {
+      const index = this.storedMessageIndex(chatJid, id);
+      const stored = index === undefined ? undefined : this.messagesStore.get(chatJid)?.[index];
+      for (const mention of stored?.mentions ?? []) {
+        if (!mention.phone && mention.jid.endsWith("@lid")) lids.add(mention.jid);
+      }
+    }
+    if (lids.size === 0) return;
+
+    // Not learned into the LID cache: a big history would evict the DM mappings.
+    const phones = await this.resolveLidsToPhones([...lids], false);
+    if (persistenceEpoch !== this.persistenceEpoch) return;
+
+    let patched = false;
+    for (const { chatJid, id } of refs) {
+      const bucket = this.messagesStore.get(chatJid);
+      const index = this.storedMessageIndex(chatJid, id);
+      const stored = bucket && index !== undefined ? bucket[index] : undefined;
+      if (!bucket || index === undefined || !stored?.mentions) continue;
+      if (!stored.mentions.some((mention) => !mention.phone && phones[mention.jid])) continue;
+      // Replace rather than mutate, like the other store updates.
+      bucket[index] = {
+        ...stored,
+        mentions: stored.mentions.map((mention) => {
+          const phone = mention.phone ? undefined : phones[mention.jid];
+          return phone ? { ...mention, phone } : mention;
+        }),
+      };
+      patched = true;
+    }
+    if (patched) {
+      this.currentMessageRevision++;
+    }
+  }
+
+  /** Index of a stored message in its chat bucket, by message id. */
+  private storedMessageIndex(chatJid: string, id: string): number | undefined {
+    const bucket = this.messagesStore.get(chatJid);
+    if (!bucket) return undefined;
+    let bucketIndex = this.messageIdIndex.get(chatJid);
+    if (!bucketIndex) {
+      bucketIndex = this.buildMessageIdIndex(bucket);
+      this.messageIdIndex.set(chatJid, bucketIndex);
+    }
+    return bucketIndex.get(id);
   }
 
   /**
@@ -2052,12 +2277,17 @@ export class MiawClient extends EventEmitter {
       }
 
       // Build document message payload
-      const documentContent: AnyMessageContent = {
+      const documentContent = {
         document: Buffer.isBuffer(document) ? document : { url: document },
         fileName: fileName || "document",
         mimetype: mimetype || "application/octet-stream",
         caption: options?.caption,
-      };
+      } as AnyMessageContent & { mentions?: string[] };
+      if (options?.mentions?.length) {
+        documentContent.mentions = options.mentions.map((m) =>
+          MessageHandler.formatPhoneToJid(m)
+        );
+      }
 
       // Build send options (for quoting/replying)
       const sendOptions = options?.quoted?.raw
@@ -4561,17 +4791,44 @@ export class MiawClient extends EventEmitter {
 
       const metadata = await this.socket.groupMetadata(groupJid);
 
+      // In a LID group every participant id is a LID, with the phone attached
+      // only when WhatsApp shares it. Resolve the others in one batch without
+      // filling the LID cache, and keep this group's pairs on their own for
+      // resolving its tags.
+      const sharedPhone = (p: (typeof metadata.participants)[number]) =>
+        MessageHandler.formatJidToPhone(p.id) ??
+        MessageHandler.formatJidToPhone(p.phoneNumber ?? "");
+      const hidden = metadata.participants
+        .filter((p) => !sharedPhone(p) && p.id.endsWith("@lid"))
+        .map((p) => p.id);
+      const resolved = hidden.length
+        ? await this.resolveLidsToPhones(hidden, false)
+        : {};
+      const memberPhones = new Map<string, string>();
+
       const participants: GroupParticipant[] = metadata.participants.map(
-        (p) => ({
-          jid: this.resolveLidToJid(p.id),
-          role:
-            p.admin === "superadmin"
-              ? "superadmin"
-              : p.admin === "admin"
-              ? "admin"
-              : "member",
-        })
+        (p) => {
+          const phone = sharedPhone(p) ?? resolved[p.id] ?? undefined;
+          const jid = phone ? MessageHandler.formatPhoneToJid(phone) : p.id;
+          const lid = p.id.endsWith("@lid") ? p.id : p.lid;
+          if (lid && phone) memberPhones.set(lid, phone);
+          const name =
+            this.contactsStore.get(jid)?.name ?? this.contactsStore.get(p.id)?.name;
+          return {
+            jid,
+            role:
+              p.admin === "superadmin"
+                ? "superadmin"
+                : p.admin === "admin"
+                ? "admin"
+                : "member",
+            ...(phone && { phone }),
+            ...(lid && { lid }),
+            ...(name && { name }),
+          };
+        }
       );
+      this.rememberGroupMembers(metadata.id, memberPhones);
 
       return {
         jid: metadata.id,
@@ -4583,6 +4840,9 @@ export class MiawClient extends EventEmitter {
         participants,
         announce: metadata.announce,
         restrict: metadata.restrict,
+        ...(metadata.addressingMode && {
+          addressingMode: metadata.addressingMode === "lid" ? "lid" : "pn",
+        }),
       };
     } catch (error) {
       this.logger.error("Failed to get group info:", error);
