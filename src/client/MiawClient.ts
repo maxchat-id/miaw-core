@@ -621,10 +621,11 @@ export class MiawClient extends EventEmitter {
 
       // Handle connection state
       if (connection === "close") {
+        const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
         const shouldReconnect = this.handleDisconnect(lastDisconnect);
 
         if (shouldReconnect && this.options.autoReconnect) {
-          this.scheduleReconnect();
+          this.scheduleReconnect(statusCode === DisconnectReason.restartRequired);
         }
       } else if (connection === "open") {
         this.reconnectAttempts = 0;
@@ -2003,10 +2004,13 @@ export class MiawClient extends EventEmitter {
   /**
    * Schedule reconnection attempt
    */
-  private scheduleReconnect(): void {
+  private scheduleReconnect(postPairing = false): void {
     // A disposed client must never emit or reschedule — an in-flight attempt can
     // reach here after teardown; bail silently instead of crashing the process.
     if (this.disposed) return;
+
+    // The new session must complete the pairing handshake immediately.
+    if (postPairing) this.reconnectAttempts = 0;
 
     // Sessions that have never registered (fresh QR/pairing logins) are capped at
     // a small number of attempts: if WhatsApp rejects the registration handshake
@@ -2044,10 +2048,12 @@ export class MiawClient extends EventEmitter {
 
     // Exponential backoff: reconnectDelay, 2x, 4x, ... capped at RECONNECT_MAX_DELAY.
     // Prevents a persistent rejection from producing a tight retry storm.
-    const delay = Math.min(
-      this.options.reconnectDelay * 2 ** (this.reconnectAttempts - 1),
-      TIMEOUTS.RECONNECT_MAX_DELAY
-    );
+    const delay = postPairing
+      ? 0
+      : Math.min(
+          this.options.reconnectDelay * 2 ** (this.reconnectAttempts - 1),
+          TIMEOUTS.RECONNECT_MAX_DELAY
+        );
 
     // Emit event but don't set state - let connect() handle the state transition
     this.emit("reconnecting", this.reconnectAttempts);

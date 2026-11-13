@@ -14,6 +14,7 @@
  */
 
 import { jest, describe, beforeEach, afterEach, it, expect } from "@jest/globals";
+import { EventEmitter } from "node:events";
 
 jest.unstable_mockModule("@whiskeysockets/baileys", () => ({
   default: jest.fn(),
@@ -65,6 +66,32 @@ function makeClient(options: Record<string, unknown> = {}): any {
 function disconnectWith(statusCode: number): unknown {
   return { error: { output: { statusCode } } };
 }
+
+describe("post-pairing reconnect", () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it.each([0, 6])("reconnects immediately after restartRequired with %i prior attempts", (priorAttempts) => {
+    const client = makeClient({ maxReconnectAttempts: 6 });
+    client.reconnectAttempts = priorAttempts;
+    client.socket = { ev: new EventEmitter() };
+    client.registerSocketEvents(jest.fn());
+
+    client.socket.ev.emit("connection.update", {
+      connection: "close",
+      lastDisconnect: disconnectWith(515),
+    });
+
+    expect(client.reconnectAttempts).toBe(1);
+    expect(client.connect).not.toHaveBeenCalled();
+    jest.advanceTimersByTime(0);
+    expect(client.connect).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe("handleDisconnect connection state", () => {
   beforeEach(() => {
