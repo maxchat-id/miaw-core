@@ -91,6 +91,55 @@ describe("post-pairing reconnect", () => {
     jest.advanceTimersByTime(0);
     expect(client.connect).toHaveBeenCalledTimes(1);
   });
+
+  it("uses backoff for a second restartRequired before the connection opens", () => {
+    const client = makeClient({ maxReconnectAttempts: 6, reconnectDelay: 3000 });
+    client.socket = { ev: new EventEmitter() };
+    client.registerSocketEvents(jest.fn());
+
+    client.socket.ev.emit("connection.update", {
+      connection: "close",
+      lastDisconnect: disconnectWith(515),
+    });
+    jest.advanceTimersByTime(0);
+    expect(client.connect).toHaveBeenCalledTimes(1);
+
+    client.socket.ev.emit("connection.update", {
+      connection: "close",
+      lastDisconnect: disconnectWith(515),
+    });
+
+    expect(client.reconnectAttempts).toBe(2);
+    jest.advanceTimersByTime(5999);
+    expect(client.connect).toHaveBeenCalledTimes(1);
+    jest.advanceTimersByTime(1);
+    expect(client.connect).toHaveBeenCalledTimes(2);
+  });
+
+  it("waits for a pending credential save before the fast reconnect", async () => {
+    const client = makeClient();
+    client.socket = { ev: new EventEmitter() };
+    const saveCreds = jest.fn<() => Promise<void>>();
+    let finishSave: () => void = () => undefined;
+    saveCreds.mockImplementation(
+      () => new Promise<void>((resolve) => { finishSave = resolve; })
+    );
+    client.registerSocketEvents(saveCreds);
+
+    client.socket.ev.emit("creds.update");
+    client.socket.ev.emit("connection.update", {
+      connection: "close",
+      lastDisconnect: disconnectWith(515),
+    });
+    jest.advanceTimersByTime(0);
+    await Promise.resolve();
+    expect(client.connect).not.toHaveBeenCalled();
+
+    finishSave();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(client.connect).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("handleDisconnect connection state", () => {

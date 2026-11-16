@@ -236,6 +236,12 @@ export class MiawClient extends EventEmitter {
   private connectionWatchdogTimer: NodeJS.Timeout | null = null;
   private reconnectAttempts = 0;
   private reconnectTimer: NodeJS.Timeout | null = null;
+  // A 515 is normally the final step of a newly paired session. Allow its
+  // immediate reconnect once, but never let repeated 515s bypass backoff.
+  private fastRestartUsed = false;
+  // A reconnect creates a new AuthHandler, which reads credentials from disk.
+  // Keep the current write so a zero-delay reconnect cannot read stale creds.
+  private pendingCredentialsSave: Promise<void> | null = null;
   private connectionAttemptGeneration = 0;
   private disposed = false;
   // Ids of messages sent via this client's API. Used to suppress the echo that
@@ -629,6 +635,7 @@ export class MiawClient extends EventEmitter {
         }
       } else if (connection === "open") {
         this.reconnectAttempts = 0;
+        this.fastRestartUsed = false;
         this.updateConnectionState("connected");
         this.emit("ready");
         this.logger.info("Connected to WhatsApp");
@@ -658,9 +665,25 @@ export class MiawClient extends EventEmitter {
     });
 
     // Credentials update
-    this.socket.ev.on("creds.update", async () => {
-      await saveCreds();
-      this.emit("session_saved");
+    this.socket.ev.on("creds.update", () => {
+      const save = saveCreds();
+      this.pendingCredentialsSave = save;
+
+      void save.then(
+        () => {
+          if (this.pendingCredentialsSave === save) {
+            this.pendingCredentialsSave = null;
+          }
+          this.emit("session_saved");
+        },
+        (error) => {
+          if (this.pendingCredentialsSave === save) {
+            this.pendingCredentialsSave = null;
+          }
+          this.logger.error("Failed to save session credentials:", error);
+          this.emit("error", error as Error);
+        }
+      );
     });
 
     // LID mapping update - captures LID to PN (phone number) mappings
@@ -2004,13 +2027,19 @@ export class MiawClient extends EventEmitter {
   /**
    * Schedule reconnection attempt
    */
-  private scheduleReconnect(postPairing = false): void {
+  private scheduleReconnect(fastRestart = false): void {
     // A disposed client must never emit or reschedule — an in-flight attempt can
     // reach here after teardown; bail silently instead of crashing the process.
     if (this.disposed) return;
 
-    // The new session must complete the pairing handshake immediately.
-    if (postPairing) this.reconnectAttempts = 0;
+    // A 515 is usually the post-pairing restart signal, but Baileys can emit it
+    // at other times too. Only the first one before connection opens gets the
+    // zero-delay path; every later 515 remains subject to cap and backoff.
+    const useFastRestart = fastRestart && !this.fastRestartUsed;
+    if (useFastRestart) {
+      this.fastRestartUsed = true;
+      this.reconnectAttempts = 0;
+    }
 
     // Sessions that have never registered (fresh QR/pairing logins) are capped at
     // a small number of attempts: if WhatsApp rejects the registration handshake
@@ -2048,7 +2077,7 @@ export class MiawClient extends EventEmitter {
 
     // Exponential backoff: reconnectDelay, 2x, 4x, ... capped at RECONNECT_MAX_DELAY.
     // Prevents a persistent rejection from producing a tight retry storm.
-    const delay = postPairing
+    const delay = useFastRestart
       ? 0
       : Math.min(
           this.options.reconnectDelay * 2 ** (this.reconnectAttempts - 1),
@@ -2058,10 +2087,25 @@ export class MiawClient extends EventEmitter {
     // Emit event but don't set state - let connect() handle the state transition
     this.emit("reconnecting", this.reconnectAttempts);
 
-    this.reconnectTimer = setTimeout(() => {
+    this.reconnectTimer = setTimeout(async () => {
       this.logger.info(
         `Reconnecting... Attempt ${this.reconnectAttempts} (delay ${delay}ms)`
       );
+
+      // AuthHandler.initialize() reloads credentials from disk. A fast restart
+      // after QR pairing must not race the asynchronous creds.update write.
+      const pendingSave = this.pendingCredentialsSave;
+      if (pendingSave) {
+        try {
+          await pendingSave;
+        } catch {
+          // The event handler already logged and emitted the save failure. Do
+          // not reconnect from disk with stale credentials in that case.
+          return;
+        }
+      }
+
+      if (this.disposed) return;
       this.connect();  // This will set state to "connecting"
     }, delay);
   }
